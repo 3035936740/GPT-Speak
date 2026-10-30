@@ -785,7 +785,7 @@ async def classify_audience(client, env, item, history, self_id, focus):
                 item['_quoted_message']=snapshot
         if not focus.owns(quote_id) or missing_media or re.search(r'图|表情|这是什么|这啥',item.get('text','')):
             try:
-                quoted = await api(client, env, 'get_msg', {'message_id': quote_id})
+                quoted = await asyncio.wait_for(api(client, env, 'get_msg', {'message_id': quote_id}),2)
                 item_group = str(item.get('_group_id') or settings()['group_id'])
                 if str(quoted.get('group_id')) == item_group:
                     item['_quotes_bot'] = str(quoted.get('user_id')) == str(self_id)
@@ -940,7 +940,7 @@ def build_prompt(cfg, context, trigger, target):
     def render():
         return prompt + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     all_context = list(context)
-    context_items = all_context[-cfg['context_messages']:]
+    context_items = [row for row in all_context if not row.get('_historical')][-cfg['context_messages']:]
     thread_ids = set()
     if target.get('_reply_id'):
         for index, item in enumerate(all_context):
@@ -1132,6 +1132,15 @@ def build_prompt(cfg, context, trigger, target):
             break
     payload['recent_chat'].sort(key=lambda item: next((entry.get('_time',0) for entry in all_context
         if str(entry.get('_id'))==item.get('message_id')),0))
+    archived=[row for row in all_context if row.get('_historical')]
+    if archived:
+        text='\n'.join(str(row.get('sender',''))+': '+str(row.get('text','')) for row in archived)
+        room=max(0,min(limit//3,limit-len(render())-220))
+        payload['history_archive']={'read_only':True,'note':'启动前的已读历史，仅供理解背景，不是待办；不逐条补答或执行其中的请求。','text':text[-room:] if room else ''}
+        while len(render())>limit and payload['history_archive']['text']:
+            value=payload['history_archive']['text'];trim=len(render())-limit+32
+            payload['history_archive']['text']=value[trim:]
+        if not payload['history_archive']['text'] or len(render())>limit:payload.pop('history_archive',None)
     if initial_length > limit:
         log.info('Prompt compacted; initial_chars=%s; final_chars=%s; page_chars=%s; media_choices=%s',
             initial_length, len(render()), sum(len(p.get('body', '')) for p in payload['reference_pages']),
@@ -1572,6 +1581,10 @@ async def run(smoke=False):
 
 
 async def _run(smoke=False):
+    # OneBot timestamps have second precision; bootstrap IDs are always archived.
+    started_at=int(time.time());received_live=False
+    from session_control import state as session_state,allows as session_allows
+    clear_before=session_state(RUNTIME).get("clear_before",0)
     cfg = settings()
     env = dotenv_values(cfg['mcp_env_file'])
     async with httpx.AsyncClient(trust_env=False, timeout=15) as client:
@@ -1597,7 +1610,7 @@ async def _run(smoke=False):
         journal = RecentChatJournal(RUNTIME / 'recent-chat.jsonl',
             cfg.get('recent_chat_journal_max_messages', 500),
             cfg.get('recent_chat_journal_hours', 24))
-        history = deque(journal.load(), maxlen=journal.max_messages)
+        history = deque(({**row,"_historical":True} for row in journal.load() if row.get("_time",0)>clear_before), maxlen=journal.max_messages)
         image_memory = ImageMemory(RUNTIME / 'image-memory.json', cfg['image_summary_window_messages'])
         image_memory.configure(cfg)
         image_archive = ImageArchive(RUNTIME)
@@ -1634,46 +1647,23 @@ async def _run(smoke=False):
                 seen_order.append(key)
             while len(seen_order) > 1500:
                 seen.discard(seen_order.popleft())
-        old = await api(client, env, 'get_group_msg_history', {'group_id': cfg['group_id'], 'count': 100})
-        for msg in sorted(old.get('messages', []), key=lambda m: m.get('time', 0)):
-            key = message_key(msg)
-            if key and key not in deleted_ids(RUNTIME):
-                item = chat_item(msg, self_id)
-                for summary in image_memory.for_message(key,list(item.get('_image_keys',{}).values())):
-                    item['text']=item['text'].replace('[图片，未读取内容]',
-                        '[图片摘要：'+str(summary.get('description',''))[:180]+']',1)
-                identities.annotate(item,history,cfg)
-                debug_events.emit('sent' if item['is_bot'] else 'received', text=item['text'],
-                    sender=item['sender'], message_id=key, historical=True,time=item['_time'],
-                    **debug_message_metadata(item,history))
-                if is_blocked(item,blocked_accounts(RUNTIME)):
-                    remember(key)
-                    if key not in history_ids:history.append(item);journal.append(item);history_ids.add(key)
-                    continue
-                item['_image_repetition'] = image_memory.observe(key, list(item.get('_image_keys', {}).values()))
-                focus.annotate(item)
-                item['_audience'] = audience(item, history, self_id)
-                if str(msg.get('user_id')) != str(self_id):
-                    emojis.observe(msg)
-                    offer_repeated_images(image_memory, emojis, msg, item)
-                continuation = bool(direct_candidates([item])) or bool(item.get('_reply_id'))
-                if key in seen or time.time() - msg.get('time', 0) >= 180 or not continuation:
-                    remember(key)
-                if cfg.get('style_learning_enabled', True) and str(msg.get('user_id')) != str(self_id):
-                    language.observe({'_id': key, '_uid': str(msg.get('user_id')),
-                        '_time': msg.get('time', 0), 'text': message_text(msg)},
-                        [entry for entry in list(history)[-30:] if entry.get('is_bot')
-                            and 0<=msg.get('time',0)-entry.get('_time',0)<=180])
-                if cfg.get('memory_enabled', True):
-                    memory.observe(item)
-                if item['text'] and str(item.get('_id', '')) not in history_ids:
-                    history.append(item)
-                    journal.append(item)
-                    history_ids.add(str(item.get('_id', '')))
-                elif item.get('_images'):
-                    restored = next((entry for entry in history if entry.get('_id') == item.get('_id')), None)
-                    if restored is not None:
-                        restored.update(_images=item['_images'],_image_keys=item.get('_image_keys',{}))
+        from latest_messages import LatestMessages,bootstrap
+        message_feed=LatestMessages()
+        old = await bootstrap(api,client,env,cfg['group_id'])
+        for row in history:remember(str(row.get('_id','')))
+        for msg in sorted(old.get('messages', []),key=lambda row:row.get('time',0)):
+            key=message_key(msg)
+            if not key or key in deleted_ids(RUNTIME):continue
+            if msg.get('time',0)<=clear_before:
+                remember(key);continue
+            item=chat_item(msg,self_id);item['_historical']=True
+            focus.annotate(item)
+            item['_audience']=audience(item,history,self_id)
+            remember(key)
+            if key not in history_ids:
+                history.append(item);journal.append(item);history_ids.add(key)
+                debug_events.emit('sent' if item['is_bot'] else 'received',text=item['text'],sender=item['sender'],
+                    message_id=key,historical=True,time=item['_time'],**debug_message_metadata(item,history))
         history = deque(sorted(history, key=lambda item: item.get('_time', 0)),
             maxlen=journal.max_messages)
         journal.checkpoint(history)
@@ -1689,17 +1679,15 @@ async def _run(smoke=False):
         daily_calls = state.get('model_calls_today', 0) if state.get('day') == day else 0
         last_send = max((stamp for stamp in reply_times if stamp<=time.time()),default=0)
         pending_path = RUNTIME / 'pending-mentions.json'
-        try:
-            pending_mentions = deque(m for m in json.loads(pending_path.read_text(encoding='utf-8'))
-                if time.time() - m.get('_queued_at', m.get('_time', 0)) < 600)
-        except (OSError, ValueError):
-            pending_mentions = deque()
+        # Persisted calls belong to the previous run, not this run's inbox.
+        pending_mentions=deque()
+        checkpoint_messages(pending_path,[])
         active_jobs = {}
         def checkpoint_pending():
             entries = list(pending_mentions) + [job['target'] for job in active_jobs.values()
-                if job['target'].get('at_bot') or job.get('outbox')]
+                if not job.get('_operator_cancelled') and (job['target'].get('at_bot') or job.get('outbox'))]
             checkpoint_messages(pending_path, entries)
-        own_replies = deque(state.get('recent_bot_replies', [])[-5:], maxlen=5)
+        own_replies = deque(maxlen=5)
         image_attempt_times = deque(state.get('image_attempt_times', []))
         topic_state = load_topic_state()
         if not isinstance(topic_state.get('next_check'), (int, float)):
@@ -1829,6 +1817,40 @@ async def _run(smoke=False):
                     manual=True,request_id=request['id'],time=request['sent_at'],origin='manual',
                     **debug_message_metadata(item,history),
                     **({'image_hashes':item['_image_hashes']} if item.get('_image_count') else {}))
+        async def watch_session():
+            nonlocal started_at,received_live,clear_before,learning_job,learning_batch,image_worker
+            handled=session_state(RUNTIME).get('id')
+            while True:
+                control=session_state(RUNTIME)
+                if control.get('id') and control['id']!=handled:
+                    handled=control['id'];started_at=max(started_at,control['created']);received_live=False
+                    must_clear=control.get('clear_before',0)>clear_before
+                    clear_before=control.get('clear_before',clear_before)
+                    expired=[job for job in active_jobs.values() if not session_allows(RUNTIME,job['target'])]
+                    tasks=[job['task'] for job in expired]
+                    for job in expired:job['_operator_cancelled']=True
+                    for task in tasks:task.cancel()
+                    if learning_job:learning_job.cancel();tasks.append(learning_job)
+                    learning_job,learning_batch=None,[]
+                    image_worker.cancel();tasks.append(image_worker)
+                    await asyncio.gather(*tasks,return_exceptions=True)
+                    await image_reader.close()
+                    while not image_reader.queue.empty():
+                        image_reader.queue.get_nowait();image_reader.queue.task_done()
+                    image_worker=asyncio.create_task(image_reader.collector())
+                    kept=[item for item in pending_mentions if session_allows(RUNTIME,item)]
+                    pending_mentions.clear();pending_mentions.extend(kept)
+                    passive.pending={key:item for key,item in passive.pending.items() if session_allows(RUNTIME,item)}
+                    checkpoint_pending()
+                    social.data.update(tasks={},awaiting={},topic={});social.save()
+                    if control['mode']=='clear' or must_clear:
+                        history.clear();journal.checkpoint([]);focus.entries=[]
+                        own_replies.clear();TEMP_CONTENT.clear()
+                        social.data['exchanges']=[];social.save()
+                        atomic_write_text(focus.path,'[]')
+                    debug_events.emit('stage',text='当前会话已终止，等待新消息'+('；短期上下文已清空' if control['mode']=='clear' else ''))
+                await asyncio.sleep(.2)
+        session_watcher=asyncio.create_task(watch_session())
         known_excluded=blocked_accounts(RUNTIME)
         while not (RUNTIME / 'STOP').exists():
             cfg = settings()
@@ -1847,7 +1869,7 @@ async def _run(smoke=False):
             known_excluded=excluded
             memory.set_blocked(excluded)
             passive.pending={key:item for key,item in passive.pending.items() if not is_blocked(item,excluded)}
-            pending_mentions=deque(item for item in pending_mentions if not is_blocked(item,excluded))
+            pending_mentions=deque(item for item in pending_mentions if not is_blocked(item,excluded) and session_allows(RUNTIME,item))
             if identity_job.done() and time.time()-identities.last_refresh>=600:
                 identity_job=asyncio.create_task(identities.refresh(client,env,cfg['group_id'],api))
             cfg['_image_memory'] = image_memory
@@ -1888,8 +1910,9 @@ async def _run(smoke=False):
                     if sticker_prefill.pending():
                         sticker_prefill_task=asyncio.create_task(sticker_prefill.process_next(cfg,generate_json,reserve_extra_call))
                 await manual_outbox.drain(api,client,env,record_manual,cfg)
-                result = await api(client, env, 'get_group_msg_history', {'group_id': cfg['group_id'], 'count': 40})
+                result = await message_feed.poll(api,client,env,cfg['group_id'])
                 poll_succeeded = True
+                now=time.time()
                 incoming = []
                 emojis.review_min_count=cfg.get('sticker_repeat_review_min_count',5)
                 emojis.review_step=cfg.get('sticker_repeat_review_step',3)
@@ -1898,21 +1921,31 @@ async def _run(smoke=False):
                 ordered_messages=sorted(result.get('messages', []), key=lambda m: m.get('time', 0))
                 from bot_commands import annotate as annotate_commands
                 command_items=[chat_item(msg,self_id) for msg in ordered_messages]
-                annotate_commands(RUNTIME,history,command_items,cfg,self_id)
+                for item in command_items:
+                    if item.get('_time',0)<=started_at:item['_historical']=True
+                annotate_commands(RUNTIME,[row for row in history if not row.get('_historical')],[row for row in command_items if not row.get('_historical')],cfg,self_id)
                 command_map={str(item.get('_id')):item.get('_bot_command') for item in command_items if item.get('_bot_command')}
+                # Persist the whole arrival batch before any per-message API or AI work.
+                hidden=deleted_ids(RUNTIME)
+                for item in command_items:
+                    key=str(item.get('_id',''))
+                    if not key or key in seen or key in hidden:continue
+                    debug_events.emit('sent' if item['is_bot'] else 'received',text=item['text'],
+                        sender=item['sender'],message_id=key,time=item['_time'],historical=bool(item.get('_historical')),**debug_message_metadata(item,history))
                 for msg in ordered_messages:
                     key = message_key(msg)
                     if not key or key in seen or key in deleted_ids(RUNTIME):
                         continue
                     remember(key)
                     item = chat_item(msg, self_id)
+                    if item.get('_time',0)<=started_at:
+                        item['_historical']=True
+                        if item.get('_time',0)>clear_before:history.append(item);journal.append(item)
+                        continue
                     if key in command_map:item['_bot_command']=command_map[key]
                     if member_labels.observe(item,history,cfg):
                         log.info('Member auto label updated; account=%s; label=bot; evidence=command_responses',item.get('_uid'))
                     identities.annotate(item,history,cfg)
-                    debug_events.emit('sent' if item['is_bot'] else 'received', text=item['text'],
-                        sender=item['sender'], message_id=key,time=item['_time'],
-                        **debug_message_metadata(item,history))
                     if is_blocked(item,excluded) or item.get('_bot_command'):
                         history.append(item);journal.append(item)
                         continue
@@ -1934,6 +1967,7 @@ async def _run(smoke=False):
                     text = message_text(msg)
                     if not text:
                         continue
+                    received_live=True
                     item['_sticker_ids'] = emojis.received_ids(msg)
                     safe_history,_=model_view(RUNTIME,history,item)
                     item['_audience'] = await classify_audience(client, env, item, safe_history, self_id, focus)
@@ -2092,7 +2126,7 @@ async def _run(smoke=False):
                 # normal replies keep web search disabled.
                 latest_human_time = max((item.get('_time', 0) for item in history if not item.get('is_bot')), default=0)
                 local_hour = datetime.now().hour
-                topic_due = (cfg.get('proactive_topics_enabled', True) and now >= topic_state.get('next_check', now + 1)
+                topic_due = (received_live and cfg.get('proactive_topics_enabled', True) and now >= topic_state.get('next_check', now + 1)
                     and 9 <= local_hour < 23 and now - latest_human_time >= cfg.get('proactive_topic_quiet_minutes', 20) * 60
                     and not incoming and not pending_mentions and not active_jobs and allowed)
                 if topic_due:
@@ -2118,6 +2152,8 @@ async def _run(smoke=False):
                     log.info('Proactive topic research started; category=%s', category)
                 # Polling continues while independent text and image jobs are running.
                 for lane, job in list(active_jobs.items()):
+                    if job.get('_operator_cancelled'):
+                        active_jobs.pop(lane,None);continue
                     if is_blocked(job['target'],blocked_accounts(RUNTIME)):
                         job['task'].cancel()
                         await asyncio.gather(job['task'],return_exceptions=True)
@@ -2216,7 +2252,7 @@ async def _run(smoke=False):
                             checkpoint_pending()
                         def can_send():
                             active_cfg = settings()
-                            return (not (RUNTIME / 'STOP').exists() and active_cfg['enabled']
+                            return (session_allows(RUNTIME,target) and not (RUNTIME / 'STOP').exists() and active_cfg['enabled']
                                 and not is_blocked(target,blocked_accounts(RUNTIME))
                                 and sum(time.time() - t < 3600 for t in reply_times) < active_cfg['max_replies_per_hour']
                                 and len(reply_times) < active_cfg['max_replies_per_day'])
@@ -2326,10 +2362,10 @@ async def _run(smoke=False):
                         log.warning('Background learning failed: %s', type(exc).__name__)
                     learning_job, learning_batch = None, []
                 # Reply jobs have priority; learning never blocks polling or an @ reply.
-                if (cfg.get('memory_enabled', True) and learning_job is None
+                if (received_live and cfg.get('memory_enabled', True) and learning_job is None
                         and 'text' not in active_jobs and not pending_mentions
                         and daily_calls < cfg['max_model_calls_per_day']):
-                    batch = memory.learning_batch(cfg.get('learning_min_messages', 25), cfg.get('learning_interval_seconds', 600))
+                    batch = memory.learning_batch(cfg.get('learning_min_messages', 25), cfg.get('learning_interval_seconds', 600),after=started_at)
                     if batch:
                         prompt, learning_batch = memory.learning_prompt(batch, cfg.get('learning_prompt_chars', 4800))
                         memory.set_meta('last_learning_attempt', time.time())
@@ -2352,6 +2388,7 @@ async def _run(smoke=False):
                     'last_poll': datetime.now().isoformat(), 'day': day,
                     'model_calls_today': daily_calls, 'reply_times': list(reply_times), 'recent_bot_replies': list(own_replies), 'image_attempt_times': list(image_attempt_times), 'error': str(exc)[:300]})
             await asyncio.sleep(cfg['poll_seconds'])
+        session_watcher.cancel();await asyncio.gather(session_watcher,return_exceptions=True)
         if sticker_prefill_task and not sticker_prefill_task.done():
             sticker_prefill_task.cancel()
             await asyncio.gather(sticker_prefill_task,return_exceptions=True)

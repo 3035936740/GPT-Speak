@@ -40,7 +40,7 @@ class ReconnectTests(unittest.TestCase):
         atomic(self.root/'settings.json',{**bot.settings(),'group_id':100,'chat_group_whitelist':[100],'enabled':True})
         folder=runtime(self.root,100);folder.mkdir(exist_ok=True)
         atomic(folder/'state.json',{'pid':123,'online':False,'waiting_for_qq':True})
-        with patch('debug_console.alive',return_value=True),patch('debug_console.subprocess.Popen') as launch:
+        with patch('debug_console.instance_locked',return_value=True),patch('debug_console.subprocess.Popen') as launch:
             Supervisor(self.root).sync();launch.assert_not_called()
     def test_wait_reloads_env_and_clears_stale_paused_state_after_verified_login(self):
         folder=runtime(self.root,100);folder.mkdir(exist_ok=True)

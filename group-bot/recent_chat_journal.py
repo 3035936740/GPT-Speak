@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 
-FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id',
+FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical',
     '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command')
 
 

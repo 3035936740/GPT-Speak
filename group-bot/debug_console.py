@@ -27,6 +27,7 @@ from debug_images import mutate as image_mutate
 from sticker_prefill import StickerPrefill, start as start_sticker_prefill
 
 from console_help import COMMANDS,help_text
+from worker_instance import instance_locked
 
 
 def display_width(text):return sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in text)
@@ -102,7 +103,7 @@ class Supervisor:
             if new and (runtime(self.root,cfg['group_id'],cfg)/'NO_COOLDOWN').exists():(folder/'NO_COOLDOWN').touch()
             (folder/'STOP').unlink(missing_ok=True)
             state=read_json(folder/'state.json')
-            if alive(state.get('pid')):continue
+            if instance_locked(folder):continue
             stream=(folder/'console-worker.log').open('ab',buffering=0)
             args=[sys.executable,'-X','utf8',str(self.root/'bot.py')]
             if group!=cfg['group_id']:args+=['--group-id',str(group)]
@@ -125,7 +126,7 @@ class Supervisor:
             except subprocess.TimeoutExpired:process.terminate();process.wait(timeout=5)
         else:
             deadline=time.time()+25
-            while alive(read_json(folder/'state.json').get('pid')):
+            while instance_locked(folder):
                 if time.time()>deadline:raise ValueError('该群后台未停止，未修改记录')
                 time.sleep(.2)
         stream=self.streams.pop(group,None)
@@ -199,6 +200,9 @@ class Console:
                 if key in PROTECTED:raise ValueError('运行路径请停机后修改原文件')
                 text=item if isinstance(item,str) else json.dumps(item,ensure_ascii=False)
                 self.configure('set '+key+' '+text)
+            elif action=='session':
+                from session_control import request
+                return request(self.root,group,value.get('mode','stop'))
             elif action=='knowledge':
                 from knowledge_base import checked
                 store,knowledge_group=checked(self.root,group)
@@ -328,6 +332,9 @@ class Console:
         if command=='reconnect':
             from napcat_reconnect import reconnect
             reconnect(self,rest.strip() or 'napcat');return
+        if command=='session':
+            from session_control import request
+            self.notice=request(self.root,self.group,rest.strip() or 'stop')['message'];return
         if command=='knowledge':
             from knowledge_base import checked
             store,group=checked(self.root,self.group)

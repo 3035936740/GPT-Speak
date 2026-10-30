@@ -20,6 +20,7 @@ from manual_images import MAX_IMAGES,MAX_IMAGE_BYTES,MAX_TOTAL_BYTES
 from debug_images import image_bytes
 from sticker_prefill import StickerPrefill
 from debug_history import recover_chat,lane
+from worker_instance import instance_locked
 
 ASSETS={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/theme.js':'theme.js'}
 
@@ -155,6 +156,7 @@ class DebugWebUI:
         for group in cfg['chat_group_whitelist']:
             folder=runtime(self.root,group,cfg);meta=read_json(folder/'debug-group.json');state=read_json(folder/'state.json')
             groups.append({'id':group,'name':meta.get('name',str(group)),'online':bool(state.get('online')),
+                'worker_running':instance_locked(folder),
                 'enabled':bool(Config(self.root,group).load()['enabled']),
                 'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
                 'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
@@ -201,7 +203,7 @@ class DebugWebUI:
             'manual_image_limits':{'max_images':MAX_IMAGES,'max_image_bytes':MAX_IMAGE_BYTES,'max_total_bytes':MAX_TOTAL_BYTES},
             'sticker_prefill_ready':bool(state.get('pid')) and read_json(folder/'sticker-prefill-worker.json').get('pid')==state.get('pid'),
             'intervention_count':sum(row['status']=='active' for row in Interventions(self.root,selected).list()),
-            'online':bool(state.get('online')),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
+            'online':bool(state.get('online')),'worker_running':instance_locked(folder),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
             'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
             'records':len(records),'shown_records':len(filtered),'text_chars':stored_text_chars,
             'chat_text_chars':chat_text_chars,'flow_text_chars':flow_text_chars,
@@ -247,6 +249,7 @@ class DebugWebUI:
             groups.append({'id':group,'name':read_json(folder/'debug-group.json').get('name',str(group)),
                 'enabled':bool(effective['enabled']),'waiting_for_qq':bool(state.get('waiting_for_qq')),
                 'online':bool(state.get('online')),'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
+                'worker_running':instance_locked(folder),
                 'last_poll':state.get('last_poll'),'error':state.get('error',''),'model':effective['model'],
                 'effort':effective['reasoning_effort'],'fast':effective['fast_mode'],'name_persona':effective['bot_name'],
                 'model_calls_today':state.get('model_calls_today',0),'memory_stats':state.get('memory_stats',{}),

@@ -59,6 +59,7 @@ class NapCatDeliveryTests(unittest.TestCase):
                         return {'messages':[human,{'message_id':777,'time':time.time(),'user_id':169901502,
                             'sender':{'nickname':'yonagi'},'message':[{'type':'mface','data':PACKET}]}]}
                     if polls[0]>12:(runtime/'STOP').touch()
+                    human['time']=__import__('time').time()
                     return {'messages':[human]}
                 if action=='forward_group_single_msg':calls.append(action);return None
                 raise AssertionError(action)
@@ -212,14 +213,12 @@ class NapCatDeliveryTests(unittest.TestCase):
                     patch.object(bot,'maintain_images',AsyncMock()), patch.object(asyncio,'sleep',tick), \
                     patch.object(bot.debug_events,'emit') as emit:
                 await bot.run()
-            self.assertEqual(failures, 1)
+            self.assertEqual(failures, 0) # Previous-run delivery is archived, not replayed.
             self.assertEqual(generations, 1)
             self.assertEqual(len(sent), 1)
             self.assertEqual(json.loads((root/'pending-mentions.json').read_text(encoding='utf-8')), [])
             failures = [call.kwargs for call in emit.call_args_list if call.kwargs.get('role') == 'reply_failure']
-            self.assertEqual(len(failures), 1)
-            self.assertEqual(failures[0]['context_id'], 'old')
-            self.assertIn('无法找到消息740465444', failures[0]['text'])
+            self.assertEqual(len(failures), 0)
         with tempfile.TemporaryDirectory() as folder:asyncio.run(run(folder))
 
 

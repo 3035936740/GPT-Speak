@@ -381,7 +381,7 @@ $('detail-close').onclick=closeDetail;
 
 function chips(value){const box=node('div',undefined,'stat-chips'),entries=Object.entries(value||{});if(!entries.length)return node('span','—');for(const [key,count] of entries)box.append(node('span',key+' '+(typeof count==='object'?JSON.stringify(count):count)));return box;}
 function clock(value){if(!value)return '—';const date=typeof value==='number'?new Date(value*1000):new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString('zh-CN',shanghai);}
-function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(!s.online)return ['等待 QQ 连接','warn'];return ['运行中','ok'];}
+function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(s.worker_running===false&&s.pid)return ['后台未运行','warn'];if(s.last_poll&&Date.now()-Date.parse(s.last_poll)>120000)return ['刷新停滞','warn'];if(!s.online)return ['等待 QQ 连接','warn'];return ['运行中','ok'];}
 function renderStatus(){const s=snapshot.status,group=snapshot.groups.find(group=>group.id===selected),[stateText,stateTone]=groupState(s,group),global=['system','stickers'].includes(currentTab);
   $('group-title').textContent=global?(currentTab==='system'?'所有群总览':'共享表情库'):group?.name||String(selected);
   $('group-actions').hidden=global;$('group-tabs').hidden=global;document.querySelector('.group-meta').hidden=global;
@@ -672,3 +672,6 @@ $('knowledge-file').onchange=async()=>{
     openKnowledge({title:file.name.replace(/\.(txt|md|markdown)$/i,'').slice(0,150),content,source:file.name.slice(0,200)});
   }catch(error){toast(error.message,true);}
 };
+
+$('session-stop').onclick=async()=>{try{await act({action:'session',mode:'stop',group:selected},$('session-stop'));}catch{}};
+$('session-clear').onclick=async()=>{if(!confirm('终止当前会话并清空当前群的短期对话上下文？聊天存档、群记忆和知识库保留。'))return;try{await act({action:'session',mode:'clear',group:selected},$('session-clear'));}catch{}};

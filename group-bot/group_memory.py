@@ -111,11 +111,11 @@ class GroupMemory:
         self.db.execute('DELETE FROM supersessions WHERE old_id NOT IN (SELECT id FROM notes) OR new_id NOT IN (SELECT id FROM notes)')
         self.db.commit()
 
-    def learning_batch(self, minimum=25, interval=600, force=False):
+    def learning_batch(self, minimum=25, interval=600, force=False, after=0):
         self.prune()
         if not force and time.time() - self.meta('last_learning_attempt') < interval:
             return []
-        rows = self.db.execute('SELECT * FROM sources WHERE learned=0 ORDER BY stamp DESC LIMIT 28').fetchall()
+        rows = self.db.execute('SELECT * FROM sources WHERE learned=0 AND stamp>? ORDER BY stamp DESC LIMIT 28',(after,)).fetchall()
         rows=[row for row in rows if self.allowed(row)]
         if len(rows) < minimum and not force:
             return []

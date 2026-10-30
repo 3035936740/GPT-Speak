@@ -1,0 +1,52 @@
+"""Bounded latest-message polling; history is optional and never a backlog gate."""
+import asyncio
+import logging
+import time
+
+log=logging.getLogger('qq-group-bot')
+
+
+async def bootstrap(api,client,env,group):
+    try:
+        return await asyncio.wait_for(api(client,env,'get_group_msg_history',
+            {'group_id':group,'count':100,'message_seq':0,'reverseOrder':True}),5)
+    except Exception as exc:
+        log.warning('Startup history skipped; latest polling continues; error_type=%s',type(exc).__name__)
+        return {'messages':[]}
+
+
+class LatestMessages:
+    def __init__(self):
+        self.latest=0;self.next_probe=0
+
+    async def poll(self,api,client,env,group):
+        rows=[];failure=None;now=time.monotonic()
+        try:
+            data=await asyncio.wait_for(api(client,env,'get_group_msg_history',
+                {'group_id':group,'count':40,'message_seq':0,'reverseOrder':True}),5)
+            rows=data.get('messages') or []
+            if not isinstance(rows,list):raise ValueError('Invalid message history')
+        except Exception as exc:failure=exc;rows=[]
+        newest=max((float(row.get('time',0)) for row in rows),default=0)
+        if newest>self.latest and failure is None:
+            self.latest=newest;self.next_probe=now+30
+        elif now>=self.next_probe or failure:
+            self.next_probe=now+30
+            try:
+                contacts=await asyncio.wait_for(api(client,env,'get_recent_contact',{'count':100}),3)
+                if not isinstance(contacts,list):contacts=[]
+                for contact in contacts:
+                    if str(contact.get('chatType'))!='2' or str(contact.get('peerUin'))!=str(group):continue
+                    if float(contact.get('msgTime',0))<=newest and failure is None:break
+                    identity=contact.get('msgId')
+                    if not identity:break
+                    message=await asyncio.wait_for(api(client,env,'get_msg',{'message_id':identity}),3)
+                    if str(message.get('group_id'))!=str(group) or not message.get('message_id'):break
+                    rows.append(message);self.latest=max(self.latest,float(message.get('time',0)))
+                    log.info('Latest message recovered from recent contact; group=%s',group)
+                    failure=None;break
+            except Exception as exc:
+                log.warning('Latest message probe unavailable; error_type=%s',type(exc).__name__)
+        if failure:raise failure
+        unique={str(row.get('message_id',row.get('message_seq',''))):row for row in rows}
+        return {'messages':sorted(unique.values(),key=lambda row:row.get('time',0))}
