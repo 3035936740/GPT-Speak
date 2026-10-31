@@ -9,7 +9,7 @@ def urls(text):
 
 
 def assets(item):
-    links = urls(item.get('text', ''))
+    links = urls(item.get('_forward_outer_text','') if item.get('_forward') else item.get('text', ''))
     images = [u for u in item.get('_images', []) if u][:2]
     return {'links': links, 'images': images, 'source_id': item.get('_id'),
         'image_hashes':item.get('_image_hashes',[]) or list(item.get('_image_keys',{}).values()),

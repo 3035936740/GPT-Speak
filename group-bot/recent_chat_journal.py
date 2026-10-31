@@ -6,7 +6,7 @@ import time
 
 
 FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical',
-    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command')
+    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text')
 
 
 def compact(item):
@@ -26,7 +26,7 @@ def compact(item):
     for key in ('_nickname','_card'):
         if key in saved:saved[key]=str(saved[key] or '')[:80]
     saved['text'] = ('[临时内容已清空]' if item.get('_ephemeral_content')
-        else str(saved.get('text', ''))[:2000 if item.get('_manual') else 1000])
+        else str(saved.get('text', '')) if item.get('_forward') else str(saved.get('text', ''))[:2000 if item.get('_manual') else 1000])
     saved['_time'] = float(saved.get('_time', 0) or 0)
     if '_reply_id' in saved and saved['_reply_id'] is not None:
         saved['_reply_id'] = str(saved['_reply_id'])[:80]

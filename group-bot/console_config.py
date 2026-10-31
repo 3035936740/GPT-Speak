@@ -14,6 +14,7 @@ from storage_io import atomic_write_text, read_text
 
 DEFAULTS = {'bot_name':'yonagi', 'bot_aliases':['Ethereal Paradise','EP'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
+    'forward_messages_enabled':True,'forward_images_enabled':False,
     'receive_only':False,
     'member_labels_global_enabled':False,
     'owner_commands_enabled':False,'owner_command_prefix':'/','owner_command_aliases':{},

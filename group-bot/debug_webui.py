@@ -78,6 +78,9 @@ class DebugWebUI:
                     if parsed.path=='/api/snapshot':return self.reply(200,owner.snapshot(parse_qs(parsed.query)))
                     if parsed.path=='/api/config':return self.reply(200,owner.public_config(parse_qs(parsed.query)))
                     query=parse_qs(parsed.query)
+                    if parsed.path=='/api/forward-message':
+                        from forward_messages import view
+                        return self.reply(200,view(owner.root,int(query.get('group',['0'])[0]),query.get('message_id',[''])[0]))
                     if parsed.path=='/api/settings-bundle':
                         from settings_bundle import export_bundle
                         return self.reply(200,export_bundle(owner.root))

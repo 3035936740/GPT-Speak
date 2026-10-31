@@ -1,6 +1,8 @@
 """Chinese UI labels and contextual help for every public configuration key."""
 
 FIELDS = {
+    'forward_messages_enabled':('读取聊天记录卡片','默认开启。读取转发聊天记录，按原消息日期、时间和发送者合并为一条历史引用；明确标记非实时话题，不拆成多条群消息'),
+    'forward_images_enabled':('读取聊天记录中的图片','默认关闭：图片只标为[图片]。开启后允许识别转发记录中的图片，仍受单次图片数量和识图预算限制；需先开启读取聊天记录'),
     'stickers_enabled':('表情总开关','全局生效，默认开启。关闭后停止发送表情及自动、手动收录；保留已有表情库。重新开启后仍遵守永久排除名单'),
     'member_labels_global_enabled':('默认共享群友标记','控制未单独选择范围的旧标记、规则及模型标记，默认关闭。手动资料弹窗可逐账号切换全局/本群，新屏蔽默认全局；已选范围不随此默认开关改变，指令证据仍按群累计'),
     'owner_commands_enabled':('允许主人在聊天中执行CLI指令','默认关闭。只有后台人工标记的bot主可使用；群内会话命令仅操作来源群。/stop与CLI一致，会退出整个控制台；不会把执行结果中的密钥发回QQ'),

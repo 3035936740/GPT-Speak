@@ -378,6 +378,11 @@ h1{font-size:20px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow
 .sticker-entry .key{margin:6px 0 10px}
 .sticker-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}
 .sticker-master{display:flex;align-items:center;gap:8px;color:var(--ink-2);white-space:nowrap;font-size:13px}
+.bubble.forward-bubble{padding:0;overflow:hidden}
+.forward-card{width:min(290px,65vw);white-space:normal;padding:12px 14px 0;box-sizing:border-box}
+.forward-title{display:block;font-size:14px;margin-bottom:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.forward-preview{color:var(--ink-3);font-size:12.5px;line-height:1.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.forward-footer{font-size:12px;color:var(--ink-3);border-top:1px solid var(--line);margin:10px -14px 0;padding:8px 14px;background:var(--hover)}
 .sticker-state.excluded{color:var(--bad);background:var(--bad-soft)}
 .sticker-tools button{font-size:12.5px;padding:3px 10px}
 

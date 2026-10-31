@@ -11,6 +11,7 @@ const labels={system:'系统干预',received:'收到消息',sent:'Bot 发送',st
 const titles={bot_name:'人格名字',bot_aliases:'点名识别别名',model:'回复模型',reasoning_effort:'思考等级',fast_mode:'Fast 模式',passive_probability:'普通水群概率',sticker_reply_probability:'表情反应偏好',no_words_sticker_probability:'纯表情偏好',followup_sticker_probability:'文字后跟表情偏好',burst_reply_probability:'连续分段发送偏好',friendly_tease_probability:'朋友间玩笑偏好',console_max_text_chars:'调试记录文本上限',console_max_records:'调试记录条数上限',max_prompt_chars:'普通模型输入字符上限',context_messages:'传入模型的近期消息条数',max_replies_per_hour:'每小时消息上限',max_images_per_hour:'每小时绘图上限',image_summary_window_messages:'图片摘要滑动有效期',image_repeat_window_messages:'复读观察窗口',image_repeat_min_count:'复读候选次数',image_repeat_pair_confidence:'连续两次的复读置信度',image_repeat_full_streak:'明确复读所需连续次数',chat_group_whitelist:'群白名单',enabled:'机器人启用',multi_role_enabled:'模型分工',role_models:'分工角色模型',shared_sticker_library:'跨群共用表情库',style_learning_enabled:'表达学习',memory_enabled:'群聊记忆',proactive_topics_enabled:'主动开话题',image_generation_enabled:'绘图启用',recent_chat_journal_max_messages:'近期聊天存档条数',recent_chat_journal_hours:'近期聊天存档时长'};
 // First matching category wins; anything unmatched lands in "其他".
 const categories=[
+  ['forwards','聊天记录卡片','转发历史文本和图片读取',key=>/^forward_/.test(key)],
   ['member-scope','群友标记范围','按QQ号跨群与私聊共享',key=>key==='member_labels_global_enabled'],
   ['connection','NapCat连接','HTTP / WebSocket 与 MCP',key=>/^napcat_/.test(key)],
   ['owner-control','主人指令','在聊天中执行CLI命令',key=>/^owner_/.test(key)],
@@ -347,7 +348,7 @@ function eventSummary(row){let text=row.text||'';if(row.kind==='decision'){try{c
 function levelClass(row){return ['ERROR','CRITICAL'].includes(row.level)?'bad':row.level==='WARNING'?'warn':row.kind;}
 const recordViews=new Map();let recordViewScope='';
 function recordSignature(row){return JSON.stringify(['received','sent'].includes(row.kind)?
-  [row.text,row.sender,row.user_id,row.quote,row.blocked,row.bot_command,row.manual,row.historical,row.level,(row.image_info||[]).map(image=>image.key),row.kind==='sent'?snapshot.status.name:'']:[row,snapshot.features]);}
+  [row.text,row.sender,row.user_id,row.quote,row.blocked,row.bot_command,row.manual,row.historical,row.level,row.forward,(row.image_info||[]).map(image=>image.key),row.kind==='sent'?snapshot.status.name:'']:[row,snapshot.features]);}
 function renderRecords(){
   const level=$('level-filter').value,rows=snapshot.events.filter(row=>level==='all'||(level==='WARNING'?['WARNING','ERROR','CRITICAL'].includes(row.level):['ERROR','CRITICAL'].includes(row.level)));
   const scope=selected+':'+(snapshot.status.chat_image_display||'image'),fingerprint=scope+level+snapshot.status.name+JSON.stringify(rows);
@@ -391,6 +392,26 @@ function renderChatImage(row,image,index,group){
   if(chatImageObserver){chatImageLoaders.set(slot,load);chatImageObserver.observe(slot);}else queueMicrotask(()=>load());
   return slot;
 }
+function forwardCard(row){
+  const data=row.forward,card=node('div',undefined,'forward-card');
+  card.append(node('strong',data.title||'聊天记录','forward-title'));
+  for(const entry of (data.preview||[]).slice(0,4)){
+    const text=(String(entry.sender||'')+'：'+String(entry.text||'')).replace(/\s+/g,' ').trim(),chars=Array.from(text);
+    const line=node('div',chars.slice(0,20).join('')+(chars.length>20||entry.truncated?'...':''),'forward-preview');
+    line.title=(entry.time||'时间未知')+' '+text;card.append(line);
+  }
+  card.append(node('div',data.status==='disabled'?'读取聊天记录已关闭':data.status==='unavailable'?'聊天记录暂时无法读取':Number.isInteger(data.count)?'查看 '+data.count+' 条聊天记录':'查看聊天记录','forward-footer'));
+  return card;
+}
+const forwardDetails=new Map();
+async function renderForwardDetail(row){
+  const group=selected,identity=eventKey(row),cacheKey=group+':'+row.message_id;
+  try{
+    let text=forwardDetails.get(cacheKey);
+    if(!text){const data=await api('/api/forward-message?'+new URLSearchParams({group,message_id:row.message_id}));text=data.text;forwardDetails.set(cacheKey,text);while(forwardDetails.size>32)forwardDetails.delete(forwardDetails.keys().next().value);}
+    if(group===selected&&identity===selectedEvent)$('detail-content').textContent=text;
+  }catch(error){if(group===selected&&identity===selectedEvent)$('detail-content').textContent=(row.text||'[聊天记录]')+'\n（'+error.message+'）';}
+}
 function messageRow(row){
   const group=selected,sent=row.kind==='sent',name=sent?(snapshot.status.name||'Bot'):(row.sender||'群友');let pictures=row.image_info||[];
   const item=node('div',undefined,'msg '+row.kind);item.title=eventSummary(row);
@@ -399,7 +420,8 @@ function messageRow(row){
   const render=()=>{
     releaseChatImageLoads(bubble);bubble.replaceChildren();if(row.quote)bubble.append(node('span',quoteSummary(row),'bubble-quote'));
     const imageMode=pictures.length&&chatMode(group,row)==='image';bubble.classList.toggle('image-bubble',Boolean(imageMode));
-    if(imageMode){const words=chatImageText(row.text);if(words)bubble.append(node('span',words));const gallery=node('div',undefined,'chat-image-gallery');pictures.forEach((image,index)=>gallery.append(renderChatImage(row,image,index,group)));bubble.append(gallery);}
+    if(row.forward){bubble.classList.add('forward-bubble');bubble.append(forwardCard(row));}
+    else if(imageMode){const words=chatImageText(row.text);if(words)bubble.append(node('span',words));const gallery=node('div',undefined,'chat-image-gallery');pictures.forEach((image,index)=>gallery.append(renderChatImage(row,image,index,group)));bubble.append(gallery);}
     else bubble.append(document.createTextNode(row.text||'[空消息]'));
     if(toggle){toggle.textContent=imageMode?'显示文字':'显示图片';toggle.setAttribute('aria-label',(imageMode?'显示文字摘要':'显示图片')+'，消息 '+row.message_id);}
   };
@@ -418,7 +440,7 @@ function messageRow(row){
 }
 function flowRow(row){const item=node('div',undefined,'flow '+row.kind);item.title=eventSummary(row);item.append(node('span',eventTime(row),'flow-time'),node('span',(labels[row.kind]||row.kind)+(row.role?' · '+row.role:''),'kind-chip '+levelClass(row)),node('span',eventSummary(row)||'—','flow-text'));return item;}
 function jsonView(target,value){target.replaceChildren();const json=JSON.stringify(value,null,2),regex=/("(?:\\.|[^"\\])*"\s*:?)|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/gi;let offset=0;for(const match of json.matchAll(regex)){target.append(document.createTextNode(json.slice(offset,match.index)));target.append(node('span',match[0],match[1]?(match[0].endsWith(':')?'json-key':'json-string'):match[2]?'json-literal':'json-number'));offset=match.index+match[0].length;}target.append(document.createTextNode(json.slice(offset)));}
-function renderDetail(row){$('detail').hidden=!row;$('detail-empty').hidden=Boolean(row);document.querySelector('.chat-layout').classList.toggle('has-detail',Boolean(row));if(!row)return;$('detail-type').textContent=(labels[row.kind]||row.kind)+(row.role?' · '+row.role:'');$('detail-type').className='kind-chip '+levelClass(row);const props=[['时间',(eventDate(row)+' '+eventTime(row)).trim(),false],['发送者',row.kind==='sent'?(snapshot.status.name||'Bot'):(row.sender||'—'),false],['消息 ID',row.message_id||'—',true],['上下文 ID',contextID(row),true],['引用原 ID',row.reply_id||'—',true],['日志级别',row.level||'INFO',true],['来源',row.historical?'历史恢复':'实时记录',false]];$('detail-properties').replaceChildren();for(const [label,value,code] of props)$('detail-properties').append(node('dt',label),node('dd',String(value),code?'code':''));$('detail-content').textContent=row.text||'（没有文字内容）';renderQuote(row);renderImages(row);jsonView($('detail-json'),row);const valid=['received','sent'].includes(row.kind)&&/^-?\d+$/.test(row.message_id||'');$('delete-event').hidden=!valid;$('detail-reply').hidden=!valid;$('detail-mention').hidden=!valid||!/^[1-9]\d{4,14}$/.test(String(row.user_id||''));
+function renderDetail(row){$('detail').hidden=!row;$('detail-empty').hidden=Boolean(row);document.querySelector('.chat-layout').classList.toggle('has-detail',Boolean(row));if(!row)return;$('detail-type').textContent=(labels[row.kind]||row.kind)+(row.role?' · '+row.role:'');$('detail-type').className='kind-chip '+levelClass(row);const props=[['时间',(eventDate(row)+' '+eventTime(row)).trim(),false],['发送者',row.kind==='sent'?(snapshot.status.name||'Bot'):(row.sender||'—'),false],['消息 ID',row.message_id||'—',true],['上下文 ID',contextID(row),true],['引用原 ID',row.reply_id||'—',true],['日志级别',row.level||'INFO',true],['来源',row.historical?'历史恢复':'实时记录',false]];$('detail-properties').replaceChildren();for(const [label,value,code] of props)$('detail-properties').append(node('dt',label),node('dd',String(value),code?'code':''));$('detail-content').textContent=row.text||'（没有文字内容）';if(row.forward)renderForwardDetail(row);renderQuote(row);renderImages(row);jsonView($('detail-json'),row);const valid=['received','sent'].includes(row.kind)&&/^-?\d+$/.test(row.message_id||'');$('delete-event').hidden=!valid;$('detail-reply').hidden=!valid;$('detail-mention').hidden=!valid||!/^[1-9]\d{4,14}$/.test(String(row.user_id||''));
 $('detail-reply').onclick=()=>selectManualReply(row);$('detail-mention').onclick=()=>{try{const key=prepareManualTarget();insertManualMention({id:row.user_id,name:row.sender||row.user_id},{key});}catch(error){toast(error.message,true);}};$('copy-id').disabled=contextID(row)==='—';$('copy-id').onclick=async()=>{try{await navigator.clipboard.writeText(contextID(row));toast('已复制 ID：'+contextID(row));}catch{toast('浏览器不允许复制，请在“原始数据”里手动选中 ID',true);}};$('delete-event').onclick=()=>{if(confirm('删除这条本地记录和 Bot 上下文？\nQQ 里的原消息不会撤回；当前群会短暂停止后自动恢复。'))act({action:'delete',message_id:row.message_id},$('delete-event')).catch(()=>{});};}
 function closeDetail(){selectedEvent=null;document.querySelectorAll('#records [role=option]').forEach(item=>{item.classList.remove('selected');item.setAttribute('aria-selected','false');});renderDetail(null);}
 $('detail-close').onclick=closeDetail;

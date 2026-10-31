@@ -18,6 +18,8 @@ def fit_role_prompt(prefix,payload,limit,compact_prefix):
     for key in ('recent_members','mentioned_members'):
         if key in data.get('group_identities',{}):data['group_identities'][key]=[]
         if fits():return render()
+    while len(data.get('knowledge_references',[]))>1 and not fits():data['knowledge_references'].pop()
+    if fits():return render()
     for key in ('group_turn','reaction_options'):
         if key in data:
             for name in ('batch','candidates'):
@@ -37,6 +39,10 @@ def fit_role_prompt(prefix,payload,limit,compact_prefix):
         if isinstance(person,dict):person.pop('account_note',None);person.pop('extra_names',None)
     for page in data.get('reference_pages',[]):
         if isinstance(page.get('body'),str) and len(page['body'])>180:page['body']=page['body'][:180];page['truncated']=True
+    if fits():return render()
+    for entry in data.get('knowledge_references',[]):
+        if isinstance(entry.get('content'),str) and len(entry['content'])>180:
+            entry['content']=entry['content'][:180];entry['truncated']=True
     if fits():return render()
     # Remove empty optional fields, then shorten only older turns. Never slice JSON.
     data={key:value for key,value in data.items() if value not in ('',[],{},None) or key=='target'}

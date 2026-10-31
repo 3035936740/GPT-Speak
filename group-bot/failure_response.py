@@ -17,9 +17,9 @@ log = logging.getLogger('qq-group-bot')
 
 
 class ReplyFailure(RuntimeError):
-    def __init__(self, reason):
+    def __init__(self, reason, detail=None):
         self.reason = reason
-        super().__init__(reason)
+        super().__init__(detail or reason)
 
 
 REASONS = {
