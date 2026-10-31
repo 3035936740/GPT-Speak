@@ -13,6 +13,9 @@ def status(ui):
         '群聊       '+ui.names.get(ui.group,str(ui.group))+' ('+str(ui.group)+')',
         'QQ连接     '+('在线' if state.get('online') else '等待连接 / 已停止')+'   PID '+str(state.get('pid','—')),
         '最近轮询   '+str(state.get('last_poll','—')),
+        '接话状态   '+('仅接收消息' if cfg.get('receive_only') else '会话已暂停（/session resume恢复）' if read_json(folder/'session-control.json').get('paused') else '正常接话'),
+        '主人指令   '+('开启，前缀 '+cfg['owner_command_prefix'] if cfg.get('owner_commands_enabled') else '关闭')+'；全局标记 '+('开启' if cfg.get('member_labels_global_enabled') else '关闭'),
+        '好友私聊   '+('开启' if cfg.get('private_reply_enabled') else '关闭')+'；本人群聊印象 '+('开启' if cfg.get('private_use_group_impressions') else '关闭'),
         '模型       '+cfg['model']+' · '+cfg['reasoning_effort']+' · fast='+str(cfg['fast_mode']),
         '超时       聊天 '+str(cfg['model_timeout_seconds'])+'s / 识图 '+str(cfg['vision_timeout_seconds'])+'s / 绘图 '+str(cfg['image_timeout_seconds'])+'s',
         '今日调用   '+str(state.get('model_calls_today',0))+' / '+str(cfg['max_model_calls_per_day']),
@@ -110,15 +113,18 @@ def key(ui,char,code):
 
 
 def member_command(ui,text):
-    words=text.split(maxsplit=2);action=words[0] if words else 'list'
+    words=text.split();action=words[0] if words else 'list'
     labels=store(ui.root,ui.group)
     if action=='list':
-        ui.notice='群友标记（本群）\n'+'\n'.join(uid+'  '+('屏蔽 · ' if row['blocked'] else '')+{'owner':'bot主','human':'真人'}.get(row['label'],row['label'] or '未标记')+'  '+', '.join(row['aliases']) for uid,row in labels.facts().items())+'\n/member block|unblock QQ号  /member type QQ号 AI|bot|human|owner|auto  /member show QQ号'
+        ui.notice='群友标记（当前群可见）\n'+'\n'.join(uid+'  '+('全局 · ' if row.get('mark_scope')=='global' else '本群 · ')+('屏蔽 · ' if row['blocked'] else '')+{'owner':'bot主','human':'真人'}.get(row['label'],row['label'] or '未标记')+'  '+', '.join(row['aliases']) for uid,row in labels.facts().items())+'\n/member block|unblock QQ号 [global|group]  /member type QQ号 AI|bot|human|owner|auto [global|group]  /member scope QQ号 global|group'
         return
     if len(words)<2:raise ValueError('/member block|unblock|show QQ号 或 /member type QQ号 类型')
     uid=words[1];row=labels.facts().get(uid,labels.effective({}))
     if action=='show':ui.notice=json.dumps({'qq_id':uid,**row},ensure_ascii=False,indent=2);return
-    if action not in {'block','unblock','type'}:raise ValueError('群友操作：list / show / block / unblock / type')
-    label=words[2] if action=='type' and len(words)==3 else row['manual_label'] or 'auto'
-    result=labels.mark(uid,label,row['note'],None,blocked=action=='block' if action in {'block','unblock'} else None)
-    ui.notice='群友资料已保存：'+uid+' · '+('屏蔽' if result['blocked'] else '允许读取')+' · '+result['label']
+    if action not in {'block','unblock','type','scope'}:raise ValueError('群友操作：list / show / block / unblock / type / scope')
+    if action=='type' and len(words) not in {3,4} or action=='scope' and len(words)!=3 or action in {'block','unblock'} and len(words) not in {2,3}:raise ValueError('/member type QQ号 类型 [global|group]；/member block|unblock QQ号 [global|group]；/member scope QQ号 global|group')
+    label=words[2] if action=='type' else row['manual_label'] or 'auto'
+    scope=words[3] if action=='type' and len(words)==4 else words[2] if action!='type' and len(words)==3 else row.get('mark_scope','global') if action=='unblock' else 'global'
+    if scope not in {'global','group'}:raise ValueError('标记范围：global全局 / group本群')
+    result=labels.mark(uid,label,row['note'],None,blocked=action=='block' if action in {'block','unblock'} else None,scope=scope)
+    ui.notice='群友资料已保存：'+uid+' · '+('全局' if result['mark_scope']=='global' else '本群')+' · '+('屏蔽' if result['blocked'] else '允许读取')+' · '+result['label']

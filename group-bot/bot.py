@@ -754,13 +754,10 @@ def repeats_self(text, previous):
 
 
 async def api(client, env, action, params=None):
-    response = await client.post(env['NAPCAT_HOST'].rstrip('/') + '/' + action,
-        headers={'Authorization': 'Bearer ' + env.get('NAPCAT_TOKEN', '')}, json=params or {})
-    response.raise_for_status()
-    result = response.json()
-    if result.get('retcode') != 0 or result.get('status') == 'failed':
-        raise NapCatAPIError(action, result)
-    return result.get('data') or {}
+    if action.startswith(('send_','forward_')) and settings().get('receive_only'):
+        raise ValueError('receive_only: sending disabled')
+    from napcat_connection import request
+    return await request(client,env,action,params,settings()) or {}
 
 
 async def classify_audience(client, env, item, history, self_id, focus):
@@ -1463,7 +1460,18 @@ def checked_tool_activity(stdout, cfg):
     return searches
 
 
+def session_paused():
+    from session_control import state
+    return bool(state(RUNTIME).get('paused'))
+
+
+def suspended(cfg):
+    return cfg.get('receive_only',False) or session_paused()
+
+
 async def generate_json(cfg, prompt, schema, images=None):
+    if (not cfg.get('_private_context') and (cfg.get('receive_only') or settings().get('receive_only') or session_paused())):
+        raise ValueError('receive_only: AI disabled')
     from prompt_cache import transport_schema,check_constraints
     cached_schema,original_schema=transport_schema(schema,RUNTIME)
     log.info('Prompt cache schema; fingerprint=%s; local_dynamic_validation=true',cached_schema.stem[:16])
@@ -1587,7 +1595,8 @@ async def _run(smoke=False):
     clear_before=session_state(RUNTIME).get("clear_before",0)
     cfg = settings()
     env = dotenv_values(cfg['mcp_env_file'])
-    async with httpx.AsyncClient(trust_env=False, timeout=15) as client:
+    from napcat_connection import NapCatHTTPClient
+    async with NapCatHTTPClient(trust_env=False, timeout=15) as client:
         connected = await wait_for_qq(client, env, cfg)
         if connected is None:
             return
@@ -1696,7 +1705,7 @@ async def _run(smoke=False):
         def reserve_extra_call():
             nonlocal daily_calls
             active_cfg = settings()
-            if (RUNTIME / 'STOP').exists() or not active_cfg['enabled'] or daily_calls >= active_cfg['max_model_calls_per_day']:
+            if (RUNTIME / 'STOP').exists() or not active_cfg['enabled'] or suspended(active_cfg) or daily_calls >= active_cfg['max_model_calls_per_day']:
                 return False
             daily_calls += 1
             save_state({'pid': os.getpid(), 'online': True, 'group_id': cfg['group_id'], 'day': day,
@@ -1742,7 +1751,7 @@ async def _run(smoke=False):
                 return image_memory.lookup(key=key) or summary
         image_reader = ImageRecognition(image_memory, recognize_image, publish_vision,
             lambda: 'text' not in active_jobs and not pending_mentions,
-            allow_item=lambda item:not is_blocked(item,blocked_accounts(RUNTIME)))
+            allow_item=lambda item:not suspended(settings()) and not is_blocked(item,blocked_accounts(RUNTIME)))
         image_worker = asyncio.create_task(image_reader.collector())
         async def classify_sticker(path, key):
             nonlocal daily_calls
@@ -1752,7 +1761,7 @@ async def _run(smoke=False):
                     return {}
                 await asyncio.sleep(2)
             active_cfg = settings()
-            if ((RUNTIME / 'STOP').exists() or not active_cfg['enabled']
+            if ((RUNTIME / 'STOP').exists() or not active_cfg['enabled'] or suspended(active_cfg)
                     or daily_calls >= active_cfg['max_model_calls_per_day']):
                 return {}
             daily_calls += 1
@@ -1788,7 +1797,7 @@ async def _run(smoke=False):
             return entry
         emojis.classifier = classify_sticker
         emojis.allow_candidate=lambda data: (not blocked_accounts(RUNTIME) or str(data.get('_source_user_id','')) not in blocked_accounts(RUNTIME) and bool(data.get('_source_user_id')))
-        emoji_worker = asyncio.create_task(emojis.collector(client))
+        emoji_worker = asyncio.create_task(emojis.collector(client) if not suspended(cfg) else asyncio.sleep(0))
         log.info('Started; group=%s; self=%s; recent unseen mentions preserved', cfg['group_id'], self_id)
         manual_outbox=ManualOutbox(ROOT,cfg['group_id'])
         manual_outbox.mark_ready(os.getpid())
@@ -1818,9 +1827,15 @@ async def _run(smoke=False):
                     **debug_message_metadata(item,history),
                     **({'image_hashes':item['_image_hashes']} if item.get('_image_count') else {}))
         async def watch_session():
-            nonlocal started_at,received_live,clear_before,learning_job,learning_batch,image_worker
+            nonlocal started_at,received_live,clear_before,learning_job,learning_batch,image_worker,emoji_worker,sticker_prefill_task
             handled=session_state(RUNTIME).get('id')
+            previous_mode=settings().get('receive_only',False)
             while True:
+                receive_mode=settings().get('receive_only',False)
+                mode=receive_mode or session_paused()
+                if receive_mode!=previous_mode:
+                    from session_control import interrupt
+                    interrupt(RUNTIME,'interrupt');previous_mode=receive_mode
                 control=session_state(RUNTIME)
                 if control.get('id') and control['id']!=handled:
                     handled=control['id'];started_at=max(started_at,control['created']);received_live=False
@@ -1830,6 +1845,16 @@ async def _run(smoke=False):
                     tasks=[job['task'] for job in expired]
                     for job in expired:job['_operator_cancelled']=True
                     for task in tasks:task.cancel()
+                    if mode:
+                        emoji_worker.cancel();tasks.append(emoji_worker)
+                        if sticker_prefill_task:sticker_prefill_task.cancel();tasks.append(sticker_prefill_task);sticker_prefill_task=None
+                        from console_config import read_json
+                        for path in manual_outbox.folder.glob('*.json'):
+                            row=read_json(path)
+                            if row.get('status') in {'queued','sending'}:
+                                row.update(status='failed',error='receive_only: cancelled by operator')
+                                manual_outbox.write(row)
+                    elif emoji_worker.done():emoji_worker=asyncio.create_task(emojis.collector(client))
                     if learning_job:learning_job.cancel();tasks.append(learning_job)
                     learning_job,learning_batch=None,[]
                     image_worker.cancel();tasks.append(image_worker)
@@ -1904,12 +1929,12 @@ async def _run(smoke=False):
                 day, daily_calls = current_day, 0
             poll_succeeded = False
             try:
-                if sticker_prefill_task is None or sticker_prefill_task.done():
+                if not suspended(cfg) and (sticker_prefill_task is None or sticker_prefill_task.done()):
                     if sticker_prefill_task is not None:sticker_prefill_task.result()
                     sticker_prefill_task=None
                     if sticker_prefill.pending():
                         sticker_prefill_task=asyncio.create_task(sticker_prefill.process_next(cfg,generate_json,reserve_extra_call))
-                await manual_outbox.drain(api,client,env,record_manual,cfg)
+                if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
                 result = await message_feed.poll(api,client,env,cfg['group_id'])
                 poll_succeeded = True
                 now=time.time()
@@ -1922,8 +1947,8 @@ async def _run(smoke=False):
                 from bot_commands import annotate as annotate_commands
                 command_items=[chat_item(msg,self_id) for msg in ordered_messages]
                 for item in command_items:
-                    if item.get('_time',0)<=started_at:item['_historical']=True
-                annotate_commands(RUNTIME,[row for row in history if not row.get('_historical')],[row for row in command_items if not row.get('_historical')],cfg,self_id)
+                    if suspended(cfg) or item.get('_time',0)<=started_at:item['_historical']=True
+                if not suspended(cfg):annotate_commands(RUNTIME,[row for row in history if not row.get('_historical')],[row for row in command_items if not row.get('_historical')],cfg,self_id)
                 command_map={str(item.get('_id')):item.get('_bot_command') for item in command_items if item.get('_bot_command')}
                 # Persist the whole arrival batch before any per-message API or AI work.
                 hidden=deleted_ids(RUNTIME)
@@ -1938,7 +1963,15 @@ async def _run(smoke=False):
                         continue
                     remember(key)
                     item = chat_item(msg, self_id)
-                    if item.get('_time',0)<=started_at:
+                    if item.get('_time',0)>started_at and not item.get('is_bot') and not is_blocked(item,excluded) and not (set(map(str,item.get('_at_ids',[])))-{str(self_id)}):
+                        from owner_commands import handle as owner_command
+                        owner_reply=owner_command(ROOT,item['_uid'],item.get('text',''),key,str(cfg['group_id']))
+                        if owner_reply:
+                            history.append(item);journal.append(item)
+                            if not cfg.get('receive_only'):
+                                await api(client,env,'send_group_msg',{'group_id':cfg['group_id'],'message':[{'type':'text','data':{'text':owner_reply}}]})
+                            continue
+                    if suspended(cfg) or item.get('_time',0)<=started_at:
                         item['_historical']=True
                         if item.get('_time',0)>clear_before:history.append(item);journal.append(item)
                         continue
@@ -1998,6 +2031,12 @@ async def _run(smoke=False):
                 allowed = (daily_calls < cfg['max_model_calls_per_day']
                     and len(reply_times) < cfg['max_replies_per_day'] and hourly < cfg['max_replies_per_hour'])
                 target, trigger = None, ''
+                if suspended(cfg):
+                    received_live=False;pending_mentions.clear();passive.pending.clear();checkpoint_pending();checkpoint_seen()
+                    save_state({'pid':os.getpid(),'online':True,'group_id':cfg['group_id'],'last_poll':datetime.now().isoformat(),
+                        'day':day,'model_calls_today':daily_calls,'reply_times':list(reply_times),'recent_bot_replies':list(own_replies),
+                        'image_attempt_times':list(image_attempt_times),'receive_only':True})
+                    await asyncio.sleep(cfg['poll_seconds']);continue
                 visible_history=clean_data([row for row in history if not row.get('_bot_command')],excluded)
                 incoming=clean_data([row for row in incoming if not row.get('_bot_command')],excluded)
                 from member_policy import owner_priority
@@ -2252,7 +2291,7 @@ async def _run(smoke=False):
                             checkpoint_pending()
                         def can_send():
                             active_cfg = settings()
-                            return (session_allows(RUNTIME,target) and not (RUNTIME / 'STOP').exists() and active_cfg['enabled']
+                            return (not suspended(active_cfg) and session_allows(RUNTIME,target) and not (RUNTIME / 'STOP').exists() and active_cfg['enabled']
                                 and not is_blocked(target,blocked_accounts(RUNTIME))
                                 and sum(time.time() - t < 3600 for t in reply_times) < active_cfg['max_replies_per_hour']
                                 and len(reply_times) < active_cfg['max_replies_per_day'])

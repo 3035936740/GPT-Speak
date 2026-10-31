@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import time
 import unicodedata
+from copy import deepcopy
 
 from console_config import Config,read_json,runtime
 from group_identity import qq_id
@@ -69,10 +70,32 @@ def response_evidence(messages):
 class MemberLabels:
     def __init__(self,folder):
         self.folder=Path(folder);self.path=self.folder/'member-labels.json'
-    def read(self):return read_json(self.path,{'members':{}})
-    def save(self,data):atomic_write_text(self.path,json.dumps(data,ensure_ascii=False,indent=2))
-    def mark(self,account,label,note='',aliases=None,blocked=None):
+    @property
+    def shared(self):
+        from member_global import location
+        return location(self.folder)
+    @property
+    def lock_path(self):
+        from member_scope import paths
+        scoped=paths(self.folder)
+        return (scoped[2].parent if scoped else self.folder)/'member-labels.lock'
+    def read(self):
+        from member_scope import root_for,read
+        data=read(self.folder) if root_for(self.folder) else read_json(self.path,{'members':{}})
+        self._before=deepcopy(data)
+        return data
+    def save(self,data):
+        from member_scope import root_for,save
+        if root_for(self.folder):
+            save(self.folder,data,getattr(self,'_before',{'members':{}}),getattr(self,'_requested_scope',None))
+        else:atomic_write_text(self.path,json.dumps(data,ensure_ascii=False,indent=2))
+        self._requested_scope=None
+    def mark(self,account,label,note='',aliases=None,blocked=None,scope=None):
         account=qq_id(account)
+        if scope is not None and (not isinstance(scope,str) or scope not in {'global','group','private'}):raise ValueError('标记范围为global或group（私聊为private）')
+        from member_scope import root_for
+        if scope is not None and not root_for(self.folder):raise ValueError('标记范围缺少有效运行目录')
+        self._requested_scope=(account,scope) if scope is not None else None
         if not account or label not in LABELS|{'auto','clear'}:raise ValueError('请选择有效QQ号及AI / bot / 真人 / bot主 / 自动判断')
         if blocked is not None and not isinstance(blocked,bool):raise ValueError('屏蔽必须为开/关')
         if not isinstance(note,str) or len(note)>200:raise ValueError('账号说明最多200字')
@@ -80,7 +103,7 @@ class MemberLabels:
             if not isinstance(aliases,list) or len(aliases)>10 or any(not isinstance(name,str) or not name.strip() or len(name)>40 for name in aliases):
                 raise ValueError('额外昵称最多10个，每个1～40字')
             aliases=list(dict.fromkeys(name.strip() for name in aliases))
-        with locked(self.folder/'member-labels.lock'):
+        with locked(self.lock_path):
             data=self.read()
             if label=='clear':
                 previous=data['members'].pop(account,{})
@@ -90,7 +113,7 @@ class MemberLabels:
                 if previous.get('model_blocked'):row['model_blocked']=True
                 if blocked is not None:row['manual_blocked']=blocked
                 if row:data['members'][account]=row
-                self.save(data);return self.effective(row)
+                self.save(data);return self.facts().get(account,self.effective(row))
             row=data['members'].setdefault(account,{})
             old=self.effective(row)
             row.update(manual_label='' if label=='auto' else label,updated_at=time.time())
@@ -102,7 +125,7 @@ class MemberLabels:
             if aliases is not None and aliases!=old['aliases']:
                 row.update(aliases=aliases,manual_aliases_set=True);row.pop('model_aliases',None)
             self.save(data)
-        return self.effective(row)
+        return self.facts().get(account,self.effective(row))
     @staticmethod
     def effective(row):
         manual=row.get('manual_label','');automatic=row.get('auto_label','');model=row.get('model_label','')
@@ -119,14 +142,16 @@ class MemberLabels:
             'prefix_counts':row.get('prefix_counts',{}),
             'observations':len(row.get('evidence',[])),'evidence':row.get('evidence',[])[-6:]}
     def facts(self):
-        return {account:self.effective(row) for account,row in self.read().get('members',{}).items()}
+        data=self.read()
+        return {account:{**self.effective(row),'mark_scope':data.get('member_scopes',{}).get(account,'group')}
+            for account,row in data.get('members',{}).items()}
     def observe(self,item,history,cfg):
         if not cfg.get('member_auto_bot_marking_enabled',True):return False
         account=qq_id(item.get('_uid'));message_id=str(item.get('_id',''))
         if not account or not message_id:return False
         window=cfg.get('member_auto_bot_window_messages',200)
         prefixes=cfg.get('member_auto_bot_command_prefixes',COMMAND_PREFIXES)
-        with locked(self.folder/'member-labels.lock'):
+        with locked(self.lock_path):
             data=self.read()
             messages=data.get('rule_messages')
             if messages is None:messages=[rule_message(row,prefixes) for row in list(history)[-window:] if row.get('_id')]
@@ -173,4 +198,5 @@ def view(root,group,query=''):
         row={**member,**facts.get(account,labels.effective({}))}
         if query.casefold() in json.dumps(row,ensure_ascii=False).casefold():rows.append(row)
     rows.sort(key=lambda row:(not bool(row['label']),row.get('card') or row.get('nickname') or row['qq_id']))
-    return {'members':rows[:200],'matched':len(rows),'total':len(members),'limit':200}
+    return {'members':rows[:200],'matched':len(rows),'total':len(members),'limit':200,
+        'scope':'global' if labels.shared else 'group','default_mark_scope':'global','scoped_marks':True}

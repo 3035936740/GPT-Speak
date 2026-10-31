@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import os
 import unittest
 from unittest.mock import patch
 import httpx
@@ -34,6 +35,28 @@ class AvatarTests(unittest.TestCase):
             for group,kind,identity in [(12345,'user','http://127.0.0.1'),(12345,'user','11111'),(12345,'group','67890'),(67890,'group','67890')]:
                 with self.assertRaises(ValueError):avatar(self.root,group,kind,identity)
             client.assert_not_called()
+
+    def test_force_refresh_bypasses_both_caches_and_updates_saved_image(self):
+        calls=[];real=httpx.Client
+        def handle(request):
+            calls.append(str(request.url));raw=io.BytesIO()
+            Image.new('RGB',(32,32),'red' if len(calls)>1 else 'blue').save(raw,format='PNG')
+            return httpx.Response(200,content=raw.getvalue(),headers={'content-type':'image/png'})
+        with patch('debug_avatars.httpx.Client',side_effect=lambda **kwargs:real(transport=httpx.MockTransport(handle),**kwargs)):
+            old=avatar(self.root,12345,'user','67890')[0]
+            new=avatar(self.root,12345,'user','67890',refresh=True)[0]
+            self.assertNotEqual(old,new);self.assertIn('&_t=',calls[-1])
+            self.assertEqual(avatar(self.root,12345,'user','67890')[0],new)
+            self.assertEqual(len(calls),2)
+
+    def test_expired_cache_refreshes_and_network_failure_retains_old_image(self):
+        real=httpx.Client;raw=io.BytesIO();Image.new('RGB',(32,32),'blue').save(raw,format='PNG')
+        path=self.root/'runtime/avatar-cache/group-12345.bin';path.parent.mkdir();path.write_bytes(raw.getvalue())
+        os.utime(path,(1,1))
+        with patch('debug_avatars.httpx.Client',side_effect=lambda **kwargs:real(transport=httpx.MockTransport(lambda request:httpx.Response(503)),**kwargs)):
+            self.assertEqual(avatar(self.root,12345,'group','12345')[0],raw.getvalue())
+            with self.assertRaises(ValueError):avatar(self.root,12345,'group','12345',refresh=True)
+        self.assertEqual(path.read_bytes(),raw.getvalue())
 
     def test_network_disabled_never_calls_remote_host(self):
         atomic(self.root/'settings.json',{'group_id':12345,'chat_group_whitelist':[12345],'avatar_remote_enabled':False})

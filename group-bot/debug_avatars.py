@@ -15,6 +15,21 @@ _lock=threading.Lock()
 _failures={}
 
 
+def refresh_group(root,group):
+    from concurrent.futures import ThreadPoolExecutor
+    from console_config import atomic
+    cfg=Config(root,group).load()
+    if not cfg.get('avatar_remote_enabled'):raise ValueError('请先开启头像联网')
+    targets=[('group',str(group)),('user',str(cfg.get('expected_self_id','169901502')))]
+    def fetch(target):
+        try:avatar(root,group,*target,refresh=True);return True
+        except (ValueError,OSError):return False
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(fetch,targets))
+    folder=runtime(root,group);folder.mkdir(parents=True,exist_ok=True)
+    atomic(folder/'avatar-refresh.json',{'created':time.time()})
+    return {'ok':True,'message':'已刷新当前群头像并通知WebUI更新可见头像'+('；部分头像获取失败，保留旧缓存' if not all(results) else '')}
+
+
 def enrich_users(records,folder,cfg):
     journal={}
     path=Path(folder)/'recent-chat.jsonl'
@@ -31,7 +46,7 @@ def enrich_users(records,folder,cfg):
     return result
 
 
-def avatar(root,group,kind,account):
+def avatar(root,group,kind,account,refresh=False):
     root=Path(root);cfg=Config(root).load();group=int(group);account=qq_id(account)
     if group not in cfg['chat_group_whitelist'] or not account or kind not in {'group','user'}:raise ValueError('头像参数无效')
     if kind=='group' and account!=str(group):raise ValueError('群头像不在当前授权群内')
@@ -48,11 +63,14 @@ def avatar(root,group,kind,account):
     key=kind+'-'+account;failure_key=(str(root.resolve()),key)
     folder=root/'runtime/avatar-cache';path=folder/(key+'.bin')
     with _lock:
-        if path.exists() and time.time()-path.stat().st_mtime<21600:return path.read_bytes(),'image/png'
-        if time.time()-_failures.get(failure_key,0)<60:raise ValueError('头像暂不可用')
+        if not refresh and path.exists() and time.time()-path.stat().st_mtime<300:return path.read_bytes(),'image/png'
+        if not refresh and time.time()-_failures.get(failure_key,0)<60:
+            if path.exists():return path.read_bytes(),'image/png'
+            raise ValueError('头像暂不可用')
     if not Config(root,group).load().get('avatar_remote_enabled',False):raise ValueError('头像联网未启用，使用默认头像')
     url=(f'https://p.qlogo.cn/gh/{account}/{account}/100' if kind=='group' else
          f'https://q1.qlogo.cn/g?b=qq&nk={account}&s=100')
+    if refresh:url+=('&' if '?' in url else '?')+'_t='+str(time.time_ns())
     try:
         with httpx.Client(timeout=4,trust_env=False,follow_redirects=False) as client:
             with client.stream('GET',url) as response:
@@ -69,8 +87,10 @@ def avatar(root,group,kind,account):
         folder.mkdir(parents=True,exist_ok=True)
         # Cache writes are private and atomic; extensions never come from a URL.
         temp=folder/(key+'-'+hashlib.sha256(raw).hexdigest()[:12]+'.tmp')
-        with _lock:temp.write_bytes(raw);temp.replace(path)
+        with _lock:
+            temp.write_bytes(raw);temp.replace(path);_failures.pop(failure_key,None)
         return raw,'image/png'
     except (httpx.HTTPError,OSError,ValueError,Image.DecompressionBombError) as exc:
         with _lock:_failures[failure_key]=time.time()
+        if not refresh and path.exists():return path.read_bytes(),'image/png'
         raise ValueError('头像暂不可用，使用默认头像') from exc

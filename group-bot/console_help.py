@@ -1,6 +1,8 @@
 """Shared command inventory and complete help for CLI and WebUI command output."""
 HELP = {
-    'session':('/session stop|clear','stop终止当前群生成和待发送会话，等待新消息再接话；clear同时清空短期对话上下文，保留聊天存档、群记忆和知识库。不撤回已发送消息。'),
+    'avatar':('/avatar refresh','刷新当前群的群头像和机器人头像，并通知已打开的WebUI刷新可见头像。其他群不受影响；须已允许头像联网。'),
+    'receive':('/receive on|off','当前群仅接收模式：on继续保存聊天但停止全部AI处理和发送，off恢复并只处理新消息。不移出白名单，设置重启保留。'),
+    'session':('/session stop|resume|clear','stop终止当前群当前任务并持续暂停接话；resume恢复并只处理新消息；clear取消当前任务并清空当前群短期上下文，保持当前暂停状态。保留聊天存档、群记忆和知识库，其他群不受影响。'),
     'knowledge':('/knowledge [查询内容]','查看当前群及共享知识；带查询内容时预览本地检索片段，不调用模型、不发群消息。新增、导入TXT/Markdown、编辑、停用和删除请打开WebUI的“知识库”。/config knowledge_enabled off可关闭回复检索。'),
     'reconnect':('/reconnect napcat|mcp','napcat：保存并重启当前群连接，恢复暂停群，其他群不受影响；mcp：建立新stdio MCP会话并读取当前群信息，不重启QQ或其他应用。其他应用已有MCP会话需在其宿主重连。'),
     'usage':('/usage [refresh] [all]','查看5小时/1周账号额度与本项目token统计；refresh只读查询当前Codex登录的额度（60秒缓存），all统计全部群，默认当前群。账号额度不是固定token总量；旧调用无usage记录不能补算。'),
@@ -39,11 +41,12 @@ HELP = {
         '示例：/system add --scope group --mode timed --minutes 30 这半小时回复简短一些。\n'
         '这是System→AI干预，不是User→AI消息，不会直接发送到QQ群。'),
     'say':('/say 消息内容','以bot身份发送文字到当前QQ群；成功后加入上下文与手动消息记忆。WebUI的“消息（发到群）”还支持上传、粘贴图片并与文字同条发送。不会将内容当作系统提示词。'),
-    'member':('/member list|show|type|block|unblock [QQ号] [类型]',
-        '群友类型 AI/bot/真人/bot主、昵称说明、屏蔽与证据；仅当前群生效。\n'
+    'member':('/member list|show|type|block|unblock|scope [QQ号] [类型] [global|group]',
+        '群友类型 AI/bot/真人/bot主、昵称说明、屏蔽与证据；按账号选择全局或本群，新屏蔽默认全局。\n'
         '/member list：列出当前群已有资料的账号；/member show QQ号：查看类型、昵称、说明、屏蔽和证据。\n'
-        '/member type QQ号 owner|human|AI|bot|auto|clear：指定bot主、真人、AI、bot，恢复自动判断或清除类型与判断记录。\n'
-        '/member block QQ号：加入当前群屏蔽名单；/member unblock QQ号：人工解除，模型不覆盖这次解除决定。\n'
+        '/member type QQ号 owner|human|AI|bot|auto|clear [global|group]：指定类型，默认全局，可显式选group本群。\n'
+        '/member block QQ号 [global|group]：默认全局屏蔽，group只屏蔽本群；/member unblock QQ号 [global|group]：默认在该账号现有范围解除。\n'
+        '/member scope QQ号 global|group：切换该账号的标记范围，不改变其他账号或默认设置。\n'
         '屏蔽后WebUI/CLI仍保留消息并标注“屏蔽”，但不交给模型处理或触发回复；不踢人、不禁言。清除类型不解除屏蔽。\n'
         'bot主仅能人工指定：明确任务优先，普通聊天仍正常接话；不绕过工具授权和上层规则。\n'
         '额外昵称、账号说明及屏蔽也可在WebUI点击群友头像编辑；各类型提示词在/config配置。\n'
@@ -59,8 +62,8 @@ def help_text(topic=''):
         name=unique(topic,COMMANDS);usage,detail=HELP[name]
         return '命令帮助 · /'+name+'\n\n'+usage+'\n'+detail+'\n\n/help 返回完整帮助；Esc返回聊天。'
     groups=[('面板与帮助',['help','status','usage','knowledge','config','webui']),
-        ('群友资料与消息',['member','say','system','session']),('群与记录',['groups','group','whitelist','search','view','delete']),
-        ('后台与退出',['reconnect','restart','stop','exit','quit'])]
+        ('群友资料与消息',['member','say','system','session','receive']),('群与记录',['groups','group','whitelist','search','view','delete']),
+        ('后台与退出',['avatar','reconnect','restart','stop','exit','quit'])]
     lines=['命令帮助  /help','CLI与WebUI共用此命令清单；只操作当前群的命令以当前选中群为准。',
         '详细用法：/help config  /help member  /help system','']
     for title,names in groups:

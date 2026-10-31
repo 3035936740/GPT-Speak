@@ -77,7 +77,7 @@ def apply_updates(cfg,target,context,updates,runtime):
         accepted.append((account,field,value,list(dict.fromkeys(ids)),confidence))
     if not accepted:return []
     store=MemberLabels(runtime);changed=[]
-    with locked(store.folder/'member-labels.lock'):
+    with locked(store.lock_path):
         data=store.read()
         for account,field,value,ids,confidence in accepted:
             row=data['members'].setdefault(account,{})

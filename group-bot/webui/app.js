@@ -1,3 +1,5 @@
+import {initPrivateUI,isPrivateOpen,closePrivateUI} from '/private-ui.js';
+import {openCollectionEditor,collectionSummary} from '/private-settings.js';
 let activePrompt='persona',activeScope='global',configSequence=0;const promptDrafts={},configDrafts={};
 
 const $=id=>document.getElementById(id);
@@ -9,8 +11,12 @@ const labels={system:'系统干预',received:'收到消息',sent:'Bot 发送',st
 const titles={bot_name:'人格名字',bot_aliases:'点名识别别名',model:'回复模型',reasoning_effort:'思考等级',fast_mode:'Fast 模式',passive_probability:'普通水群概率',sticker_reply_probability:'表情反应偏好',no_words_sticker_probability:'纯表情偏好',followup_sticker_probability:'文字后跟表情偏好',burst_reply_probability:'连续分段发送偏好',friendly_tease_probability:'朋友间玩笑偏好',console_max_text_chars:'调试记录文本上限',console_max_records:'调试记录条数上限',max_prompt_chars:'普通模型输入字符上限',context_messages:'传入模型的近期消息条数',max_replies_per_hour:'每小时消息上限',max_images_per_hour:'每小时绘图上限',image_summary_window_messages:'图片摘要滑动有效期',image_repeat_window_messages:'复读观察窗口',image_repeat_min_count:'复读候选次数',image_repeat_pair_confidence:'连续两次的复读置信度',image_repeat_full_streak:'明确复读所需连续次数',chat_group_whitelist:'群白名单',enabled:'机器人启用',multi_role_enabled:'模型分工',role_models:'分工角色模型',shared_sticker_library:'跨群共用表情库',style_learning_enabled:'表达学习',memory_enabled:'群聊记忆',proactive_topics_enabled:'主动开话题',image_generation_enabled:'绘图启用',recent_chat_journal_max_messages:'近期聊天存档条数',recent_chat_journal_hours:'近期聊天存档时长'};
 // First matching category wins; anything unmatched lands in "其他".
 const categories=[
+  ['member-scope','群友标记范围','按QQ号跨群与私聊共享',key=>key==='member_labels_global_enabled'],
+  ['connection','NapCat连接','HTTP / WebSocket 与 MCP',key=>/^napcat_/.test(key)],
+  ['owner-control','主人指令','在聊天中执行CLI命令',key=>/^owner_/.test(key)],
+  ['private','私信','私聊自动回复与群友印象，全局设置',key=>/^private_/.test(key)],
   ['knowledge','知识库','检索当前群和共享资料，按需提供给模型',key=>/^knowledge_/.test(key)],
-  ['identity','身份与开关','Bot 叫什么、是否启用、在哪些群工作',key=>['enabled','bot_name','bot_aliases','chat_group_whitelist'].includes(key)],
+  ['identity','身份与开关','Bot 叫什么、是否启用、在哪些群工作',key=>['enabled','receive_only','bot_name','bot_aliases','chat_group_whitelist'].includes(key)],
   ['model','模型','生成回复用的模型、思考强度和分工角色',key=>/^(model|reasoning_effort|fast_mode|multi_role_enabled|role_models|role_timeout_seconds|model_timeout_seconds|text_transport)$/.test(key)],
   ['member-reference','群友资料：模型参考','选择允许传给模型参考的账号资料，默认全部开启',key=>/^member_reference_/.test(key)],
   ['member-prompts','群友资料：类型提示词','按当前发言者的账号类型使用，支持全局及群覆盖',key=>/^member_prompt_/.test(key)],
@@ -31,21 +37,38 @@ function node(tag,text,className){const el=document.createElement(tag);if(text!=
 function toast(text,error=false){const el=$('toast');el.textContent=text;el.classList.toggle('error',error);el.hidden=!text;clearTimeout(toastTimer);if(text)toastTimer=setTimeout(()=>{el.hidden=true;},error?7000:3500);}
 function initial(text){return String(text||'?').trim().charAt(0).toUpperCase()||'?';}
 const avatarCache=new Map();
+function paintAvatar(el,url,entry){
+  if(!url)return;const img=node('img',undefined,'avatar-image');img.alt='';img.decoding='async';
+  img.onload=()=>{if(entry.url!==url)return;for(const previous of el.querySelectorAll('img.avatar-image'))previous.remove();el.append(img);};
+  img.onerror=()=>img.remove();img.src=url;
+}
+function fetchAvatar(entry,force=false){
+  if(entry.loading)return entry.promise;
+  entry.loading=true;entry.time=Date.now();
+  entry.promise=fetch('/api/avatar?'+new URLSearchParams({group:entry.group,kind:entry.kind,id:entry.id,...(force?{refresh:'1'}:{})}),{headers:{'X-QQ-Debug-Key':token},cache:'no-store'})
+    .then(response=>{if(!response.ok)throw Error('avatar unavailable');return response.blob();})
+    .then(blob=>{const previous=entry.url;entry.url=URL.createObjectURL(blob);entry.failed=false;
+      for(const el of entry.elements){if(el.isConnected)paintAvatar(el,entry.url,entry);else entry.elements.delete(el);}
+      if(previous)setTimeout(()=>URL.revokeObjectURL(previous),30000);return entry.url;
+    }).catch(()=>{entry.failed=true;return null;}).finally(()=>{entry.loading=false;});
+  return entry.promise;
+}
 function avatarNode(kind,id,name,className,group=selected){
   const el=node('span',initial(name),className);if(!/^\d+$/.test(String(id||'')))return el;
-  const cacheKey=group+':'+kind+':'+id;
-  let entry=avatarCache.get(cacheKey);
-  if(!entry||entry.failed&&Date.now()-entry.time>60000){
-    entry={time:Date.now(),failed:false,url:null};
-    entry.promise=fetch('/api/avatar?'+new URLSearchParams({group,kind,id}),{headers:{'X-QQ-Debug-Key':token}})
-      .then(response=>{if(!response.ok)throw Error('avatar unavailable');return response.blob();})
-      .then(blob=>{entry.url=URL.createObjectURL(blob);return entry.url;}).catch(()=>{entry.failed=true;return null;});
-    avatarCache.set(cacheKey,entry);
-    while(avatarCache.size>400){const [key,value]=avatarCache.entries().next().value;avatarCache.delete(key);value.promise.then(url=>{if(url)URL.revokeObjectURL(url);});}
-  }
-  entry.promise.then(url=>{if(!url)return;const img=node('img',undefined,'avatar-image');img.alt='';img.decoding='async';img.onload=()=>el.append(img);img.onerror=()=>img.remove();img.src=url;});
+  const cacheKey=group+':'+kind+':'+id;let entry=avatarCache.get(cacheKey);
+  if(!entry){entry={group,kind,id,time:0,failed:false,url:null,elements:new Set()};avatarCache.set(cacheKey,entry);}
+  entry.elements.add(el);if(entry.url)paintAvatar(el,entry.url,entry);
+  if(!entry.promise||Date.now()-entry.time>(entry.failed?60000:300000))fetchAvatar(entry);
+  if(!entry.url)entry.promise.then(url=>{if(url)paintAvatar(el,url,entry);});
+  while(avatarCache.size>400){const [key,value]=avatarCache.entries().next().value;avatarCache.delete(key);value.promise?.then(()=>{if(value.url)URL.revokeObjectURL(value.url);});}
   return el;
 }
+async function refreshVisibleAvatars(force=false){
+  const entries=[...avatarCache.values()].filter(entry=>(!force||String(entry.group)===String(selected))&&[...entry.elements].some(el=>el.isConnected)&&(force||Date.now()-entry.time>(entry.failed?60000:300000)));
+  let next=0;await Promise.all(Array.from({length:Math.min(4,entries.length)},async()=>{while(next<entries.length)await fetchAvatar(entries[next++],force);}));
+  return entries.filter(entry=>entry.failed).length;
+}
+setInterval(()=>{if(!document.hidden&&!closed)refreshVisibleAvatars().catch(()=>{});},30000);
 window.addEventListener('pagehide',()=>{for(const entry of avatarCache.values())if(entry.url)URL.revokeObjectURL(entry.url);avatarCache.clear();});
 const interventionModes={context:'当前对话窗口',once:'下一次自然回复',timed:'定时失效',persistent:'直到手动清除'};
 const interventionStates={active:'生效中',expired:'已失效',cleared:'已清除',consumed:'已使用'};
@@ -146,7 +169,7 @@ function renderComposer(){
   renderAttachments(key,system,Boolean(locked));renderComposerTargets(key,system,Boolean(locked));
   $('composer-mention').hidden=system;$('composer-mention').disabled=Boolean(locked||!snapshot.features?.includes('manual_targets'));
   $('composer-role').options[1].textContent=s.name+' 消息（发到群）';$('composer-send').textContent=system?'提交系统提示词':'发送 '+s.name+' 消息';
-  $('composer-send').disabled=!ready||(!input.value.trim()&&!images.length&&!targets.mentions.length)||Boolean(locked)||(!system&&images.length>0&&!s.manual_images_ready)||(!system&&hasTargets&&!s.manual_targets_ready);
+  $('composer-send').disabled=Boolean(!system&&s.receive_only)||!ready||(!input.value.trim()&&!images.length&&!targets.mentions.length)||Boolean(locked)||(!system&&images.length>0&&!s.manual_images_ready)||(!system&&hasTargets&&!s.manual_targets_ready);
   $('composer-hint').textContent=system?'不立即回复；当前对话窗口 '+s.text_limit+' 字符。Enter 提交，Shift+Enter 换行':!ready?'先启动并加载支持手动发送的群后台':hasTargets&&!s.manual_targets_ready?'回复和@需要新版群后台，请 /stop 后手动重启':images.length&&!s.manual_images_ready?'图片发送需要新版群后台，请 /stop 后手动重启':'发送到本群 '+selected+'，文字和图片同条发送并加入记忆。最多2张，单张≤5MB，合计≤8MB。Enter 发送，Shift+Enter 换行';
   const result=composerResults.get(key);$('composer-result').textContent=result?.text||'';$('composer-result').classList.toggle('error',Boolean(result?.error));
 }
@@ -225,6 +248,7 @@ function setDot(id,online,error=false){$(id).classList.toggle('live',online);$(i
 
 const groupViews=new Map(),emptyGroups=node('div','','empty');
 function renderGroups(){
+  if(isPrivateOpen())return;
   const term=$('group-search').value.toLowerCase(),container=$('groups'),present=new Set(snapshot.groups.map(group=>String(group.id))),visible=[];
   $('group-count').textContent=snapshot.groups.length;
   for(const [id,view] of groupViews)if(!present.has(id)){view.button.remove();groupViews.delete(id);}
@@ -254,17 +278,25 @@ function renderGroups(){
 }
 function selectGroup(group){stashPromptDraft();selected=group;selectedEvent=null;lastEvents='';configData=null;databaseData=null;dbSequence++;$('db-add').disabled=true;$('settings').replaceChildren(node('div','正在读取这个群的设置…','empty'));poll(true).then(()=>loadActivePane()).catch(error=>toast(error.message,true));}
 
-let memberSequence=0,memberEditor=null,memberEditorSequence=0;
+let memberSequence=0,memberEditor=null,memberEditorSequence=0,memberScopedReady=false;
 const memberLabelText=value=>({AI:'AI',bot:'bot',human:'真人',owner:'bot主'}[value]||'未标记');
 const memberSourceText=value=>({manual:'手动',model:'模型推断',auto:'规则推断'}[value]||'未标记');
 function memberEvidence(member){return (member.blocked?'已屏蔽（'+memberSourceText(member.block_source)+'），不进入模型。':'')+'当前：'+memberLabelText(member.label)+'（'+memberSourceText(member.source)+'）；独立指令响应 '+(member.observations||0)+' 次。'+(Object.keys(member.prefix_counts||{}).length?'各前缀：'+Object.entries(member.prefix_counts).map(([prefix,count])=>prefix+' '+count+'次').join('、')+'。':'')+(member.evidence||[]).map(item=>item.command+' → 消息 '+item.response_id).join('；')+(member.model_history?.length?' 模型资料修改：'+member.model_history.map(item=>({account_type:'账号类型',extra_names:'额外昵称',account_note:'账号说明'}[item.field]||item.field)+' · 证据 '+item.evidence_message_ids.join('、')).join('；'):'');}
+async function memberScope(data,group){
+  if(['global','group'].includes(data.scope))return data.scope;
+  const settings=await api('/api/config?group='+group);
+  return settings.config.member_labels_global_enabled?'global':'group';
+}
 async function loadMembers(){
   const ticket=++memberSequence,group=selected,data=await api('/api/members?'+new URLSearchParams({group,q:$('member-search').value}));
+  const scope=await memberScope(data,group);
   if(ticket!==memberSequence||group!==selected)return;
-  $('member-count').textContent='共 '+data.total+' 位群友，匹配 '+data.matched+' 位'+(data.matched>data.limit?'；最多显示 '+data.limit+' 位，请缩小搜索范围':'');
+  memberScopedReady=Boolean(data.scoped_marks);
+  $('member-count').textContent=(data.scoped_marks?'按账号选择全局 / 本群':scope==='global'?'全局标记 · 所有群聊与私聊共用':'仅当前群标记')+' · 共 '+data.total+' 位群友，匹配 '+data.matched+' 位'+(data.matched>data.limit?'；最多显示 '+data.limit+' 位，请缩小搜索范围':'');
   const table=node('table'),head=node('tr');for(const title of ['群友','额外昵称','标记','证据 / 说明','操作'])head.append(node('th',title));table.append(head);
   for(const member of data.members){
     const row=node('tr'),person=node('td'),names=node('td',member.aliases?.join('、')||'—'),type=node('td',(member.blocked?'屏蔽 · ':'')+memberLabelText(member.label)+' · '+memberSourceText(member.source)),evidence=node('td',(member.observations?'指令响应 '+member.observations+' 次。':'')+(member.note||'')),actions=node('td'),open=node('button','编辑资料');
+    if(member.mark_scope)type.append(node('span',member.mark_scope==='global'?'全局':'本群','scope-badge'+(member.mark_scope==='global'?' override':'')));
     const name=member.card||member.nickname||member.qq_id,avatar=avatarNode('user',member.qq_id,name,'group-avatar',group);avatar.classList.add('member-avatar-button');avatar.setAttribute('role','button');avatar.tabIndex=0;avatar.setAttribute('aria-label','查看并标记群友 '+name);avatar.onclick=()=>openMember(member.qq_id,name);avatar.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();avatar.click();}};
     const cell=node('div',undefined,'member-person');cell.append(avatar,node('span',name+' · '+member.qq_id));person.append(cell);open.type='button';open.onclick=()=>openMember(member.qq_id,name).catch(error=>toast(error.message,true));actions.append(open);row.append(person,names,type,evidence,actions);table.append(row);
   }
@@ -273,24 +305,36 @@ async function loadMembers(){
 async function openMember(account,name){
   const ticket=++memberEditorSequence,group=selected;
   const data=await api('/api/members?'+new URLSearchParams({group,q:account}));
+  const scope=await memberScope(data,group);
   if(ticket!==memberEditorSequence||group!==selected)return;
-  const member=data.members.find(item=>String(item.qq_id)===String(account))||{qq_id:String(account),nickname:name},person=$('member-dialog-person');memberEditor={group,account:String(account),blocked:Boolean(member.blocked),blockDirty:false};
+  const member=data.members.find(item=>String(item.qq_id)===String(account))||{qq_id:String(account),nickname:name},person=$('member-dialog-person');memberEditor={group,account:String(account),aliases:[...(member.aliases||[])],blocked:Boolean(member.blocked),blockDirty:false,scope:member.mark_scope||data.default_mark_scope||'global',scopeDirty:false,scopedReady:Boolean(data.scoped_marks)};
   person.replaceChildren(avatarNode('user',account,name,'group-avatar',group),node('strong',member.card||member.nickname||name),node('span',String(account),'code'));
-  $('member-dialog-label').value=member.manual_label||'auto';$('member-dialog-aliases').value=(member.aliases||[]).join(', ');$('member-dialog-note').value=member.note||'';
-  $('member-dialog-blocked').checked=Boolean(member.blocked);$('member-dialog-blocked').onchange=()=>{if(memberEditor)memberEditor.blockDirty=true;};
+  renderMemberScope();
+  $('member-dialog-label').value=member.manual_label||'auto';$('member-dialog-aliases-summary').textContent=collectionSummary(memberEditor.aliases);$('member-dialog-note').value=member.note||'';
+  $('member-dialog-blocked').checked=Boolean(member.blocked);$('member-dialog-blocked').onchange=()=>{if(memberEditor){memberEditor.blockDirty=true;if($('member-dialog-blocked').checked&&!memberEditor.scopeDirty){memberEditor.scope='global';renderMemberScope();}}};
   $('member-dialog-evidence').textContent=memberEvidence(member);
   $('member-dialog-result').textContent='';if(!$('member-dialog').open)$('member-dialog').showModal();
 }
+function renderMemberScope(){
+  if(!memberEditor)return;
+  for(const button of $('member-dialog-scope').querySelectorAll('[data-member-scope]')){const active=button.dataset.memberScope===memberEditor.scope;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));button.disabled=!memberEditor.scopedReady;}
+  $('member-dialog-scope-note').textContent=!memberEditor.scopedReady?'请手动 /stop 并重新启动控制台，加载按账号切换范围的后台后再保存。':(memberEditor.scope==='global'?'保存后，此账号的类型、昵称、说明和屏蔽状态在所有群聊及私聊生效。':'保存后，此账号恢复各会话独立标记，本次修改只写入当前群；其他账号的范围不会改变。')+'切换在保存资料后生效；新屏蔽默认选择全局。';
+  if(memberEditor.scopeDirty)$('member-dialog-result').textContent='范围已选择，保存资料后生效';
+}
+for(const button of $('member-dialog-scope').querySelectorAll('[data-member-scope]'))button.onclick=()=>{if(memberEditor){memberEditor.scope=button.dataset.memberScope;memberEditor.scopeDirty=true;renderMemberScope();}};
+$('member-dialog-aliases').onclick=()=>{if(!memberEditor)return;const editor=memberEditor;openCollectionEditor({title:'额外昵称',value:editor.aliases,itemType:'name_list',note:'用＋添加昵称、−删除，最多10个，每个最多40字。先保存昵称草稿，再保存群友资料后生效。',onSave:async aliases=>{if(memberEditor!==editor)throw Error('群友资料窗口已切换，请重新编辑');editor.aliases=[...aliases];$('member-dialog-aliases-summary').textContent=collectionSummary(editor.aliases);$('member-dialog-result').textContent='额外昵称已更新，保存群友资料后生效';}});};
 $('member-dialog-close').onclick=()=>{$('member-dialog').close();memberEditor=null;};
-$('member-dialog-form').onsubmit=async event=>{event.preventDefault();if(!memberEditor)return;const editor={...memberEditor},button=$('member-dialog-save');button.disabled=true;try{
-  const aliases=$('member-dialog-aliases').value.split(/[,，\n]/).map(name=>name.trim()).filter(Boolean);
-  const saved=await act({action:'member_label',group:editor.group,account:editor.account,label:$('member-dialog-label').value,aliases,note:$('member-dialog-note').value,...(editor.blockDirty?{blocked:$('member-dialog-blocked').checked}:{})},button);
+$('member-dialog-form').onsubmit=async event=>{event.preventDefault();if(!memberEditor)return;const editor={...memberEditor},button=$('member-dialog-save');button.disabled=true;$('member-dialog-aliases').disabled=true;try{
+  if(!editor.scopedReady)throw Error('请手动重启控制台后再保存标记范围');
+  const aliases=[...editor.aliases];
+  const saved=await act({action:'member_label',group:editor.group,account:editor.account,mark_scope:editor.scope,label:$('member-dialog-label').value,aliases,note:$('member-dialog-note').value,...(editor.blockDirty?{blocked:$('member-dialog-blocked').checked}:{})},button);
   $('member-dialog-blocked').checked=Boolean(saved.member.blocked);if(memberEditor)memberEditor.blockDirty=false;
+  if(memberEditor){memberEditor.scope=saved.member.mark_scope||editor.scope;memberEditor.scopeDirty=false;renderMemberScope();}
   $('member-dialog-evidence').textContent=memberEvidence(saved.member);
-  $('member-dialog-label').value=saved.member.manual_label||'auto';$('member-dialog-aliases').value=(saved.member.aliases||[]).join(', ');$('member-dialog-note').value=saved.member.note||'';
+  $('member-dialog-label').value=saved.member.manual_label||'auto';if(memberEditor){memberEditor.aliases=[...(saved.member.aliases||[])];$('member-dialog-aliases-summary').textContent=collectionSummary(memberEditor.aliases);}$('member-dialog-note').value=saved.member.note||'';
   $('member-dialog-result').textContent='已保存，后续处理按新资料与屏蔽设置生效';if(currentTab==='members'&&selected===editor.group)await loadMembers();
-}catch(error){$('member-dialog-result').textContent=error.message;}finally{button.disabled=false;}};
-$('member-form').onsubmit=async event=>{event.preventDefault();const group=selected;try{await act({action:'member_label',group,account:$('member-account').value.trim(),label:$('member-label').value,note:$('member-note').value},$('member-save'));if(group===selected)await loadMembers();}catch{}};
+}catch(error){$('member-dialog-result').textContent=error.message;}finally{button.disabled=false;$('member-dialog-aliases').disabled=false;}};
+$('member-form').onsubmit=async event=>{event.preventDefault();const group=selected;try{if(!memberScopedReady)throw Error('请手动重启控制台后再保存标记范围');await act({action:'member_label',group,account:$('member-account').value.trim(),mark_scope:$('member-scope').value,label:$('member-label').value,note:$('member-note').value},$('member-save'));if(group===selected)await loadMembers();}catch(error){toast(error.message,true);}};
 $('member-refresh').onclick=()=>loadMembers().catch(error=>toast(error.message,true));
 $('member-search').oninput=()=>loadMembers().catch(error=>toast(error.message,true));
 
@@ -381,14 +425,17 @@ $('detail-close').onclick=closeDetail;
 
 function chips(value){const box=node('div',undefined,'stat-chips'),entries=Object.entries(value||{});if(!entries.length)return node('span','—');for(const [key,count] of entries)box.append(node('span',key+' '+(typeof count==='object'?JSON.stringify(count):count)));return box;}
 function clock(value){if(!value)return '—';const date=typeof value==='number'?new Date(value*1000):new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString('zh-CN',shanghai);}
-function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(s.worker_running===false&&s.pid)return ['后台未运行','warn'];if(s.last_poll&&Date.now()-Date.parse(s.last_poll)>120000)return ['刷新停滞','warn'];if(!s.online)return ['等待 QQ 连接','warn'];return ['运行中','ok'];}
-function renderStatus(){const s=snapshot.status,group=snapshot.groups.find(group=>group.id===selected),[stateText,stateTone]=groupState(s,group),global=['system','stickers'].includes(currentTab);
+function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(s.worker_running===false&&s.pid)return ['后台未运行','warn'];if(s.last_poll&&Date.now()-Date.parse(s.last_poll)>120000)return ['刷新停滞','warn'];if(!s.online)return ['等待 QQ 连接','warn'];if(s.session_paused||group?.session_paused)return ['会话暂停','warn'];if(s.receive_only||group?.receive_only)return ['仅接收','warn'];return ['运行中','ok'];}
+const avatarRefreshVersions=new Map();
+function renderStatus(){if(isPrivateOpen())return;const s=snapshot.status,group=snapshot.groups.find(group=>group.id===selected),[stateText,stateTone]=groupState(s,group),global=['system','stickers'].includes(currentTab);
   $('group-title').textContent=global?(currentTab==='system'?'所有群总览':'共享表情库'):group?.name||String(selected);
   $('group-actions').hidden=global;$('group-tabs').hidden=global;document.querySelector('.group-meta').hidden=global;
   $('group-status').textContent=stateText;$('group-status').className='status-pill '+stateTone;$('group-status').title=s.enabled===false||group?.enabled===false?'前往行为设置 → 身份与开关，启用机器人':s.error||'';
   $('group-subtitle').textContent='群号 '+selected;$('session-detail').textContent=s.model+' · '+s.effort+(s.fast?' · Fast':'')+(s.no_cooldown?' · 无冷却':'');
   $('pause').hidden=Boolean(group?.stopped)||s.enabled===false||group?.enabled===false||!s.pid;$('restart').textContent=group?.stopped?'恢复运行':s.pid?'重启':'启动';$('restart').disabled=s.enabled===false||group?.enabled===false;$('restart').title=$('restart').disabled?'请先在行为设置中启用机器人':'';
-  $('footer-model').textContent=s.model;if($('cooldown')){$('cooldown').checked=!s.no_cooldown;$('cooldown').closest('.edit').querySelector('.switch-label').textContent=s.no_cooldown?'关闭':'开启';}
+  $('session-stop').textContent=s.session_paused?'恢复当前会话':'终止当前会话';$('session-stop').setAttribute('aria-pressed',String(Boolean(s.session_paused)));
+  if(s.avatar_refresh&&avatarRefreshVersions.get(selected)!==s.avatar_refresh){avatarRefreshVersions.set(selected,s.avatar_refresh);refreshVisibleAvatars(true).catch(()=>{});}
+  $('receive-only').textContent=s.receive_only?'\u6062\u590dAI\u5904\u7406':'\u4ec5\u63a5\u6536\u6d88\u606f';$('footer-model').textContent=s.model;if($('cooldown')){$('cooldown').checked=!s.no_cooldown;$('cooldown').closest('.edit').querySelector('.switch-label').textContent=s.no_cooldown?'关闭':'开启';}
   if(currentTab!=='status')return;
   const gate=s.participation||{},gateReasons={no_new_messages:'没有待处理的新消息',waiting_messages:'等待更多新消息',frequency_disabled:'参与强度为 0',cooldown:'水群冷却中',planner_backoff:'规划间隔等待',model_budget:'模型额度用尽',reply_budget:'发送额度用尽',direct_call_priority:'先处理点名消息',text_job_running:'上一轮还在处理',no_usable_hook:'没有适合的接话点',message_threshold:'已达到消息门槛',idle_compensation:'群聊空窗补偿',dynamic_score:'动态评分通过'};
   const qqUnchecked=s.enabled===false||group?.enabled===false||group?.stopped||(!s.pid&&!s.online);
@@ -465,9 +512,18 @@ async function poll(force=false){if(closed||(polling&&!force))return;polling=tru
 
 async function loadConfig(){const ticket=++configSequence,scope=activeScope,group=selected;const result=await api('/api/config?'+new URLSearchParams({scope,group}));if(ticket!==configSequence||scope!==activeScope||group!==selected)return;configData=result;renderConfig();applyPromptEditor();document.querySelectorAll('.scope-switch [data-scope]').forEach(button=>button.classList.toggle('active',button.dataset.scope===scope));$('scope-description').textContent=scope==='group'?'只影响群 '+group+'。留空或选“使用全局”的项目继续跟随全局默认':'所有没有单独设置的群都使用这里的值';}
 function modelOptions(input,current,field){const options=field==='model'?configData.models.map(model=>model.name):(configData.models.find(model=>model.name===configData.config.model)?.efforts||['low','medium','high']);for(const value of new Set([current,...options])){const names={none:'不思考',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'极高'};const option=node('option',field==='reasoning_effort'?(names[value]||value)+'（'+value+'）':value);option.value=value;input.append(option);}input.value=current;}
-async function saveSetting(key,raw,{scope,group,type,isObject,draftKey},button){try{let next=raw;if(scope==='group'&&(!String(next).trim()||next==='inherit')){await act({action:'config_inherit',scope,group,key},button);}else{if(isObject)next=JSON.parse(next);else if(type==='boolean')next=next==='on';else if(type==='number'){next=Number(next);if(!String(raw).trim()||!Number.isFinite(next))throw Error('请输入有效的数字');}await act({action:'config',scope,group,key,value:next},button);}if(configDrafts[draftKey]===raw)delete configDrafts[draftKey];await loadConfig();}catch(error){toast(error.message,true);if(configData)renderConfig();}}
+async function saveSetting(key,raw,{scope,group,type,isObject,draftKey,rethrow=false},button){try{let next=raw;if(scope==='group'&&(!String(next).trim()||next==='inherit')){await act({action:'config_inherit',scope,group,key},button);}else{if(isObject)next=JSON.parse(next);else if(type==='boolean')next=next==='on';else if(type==='number'){next=Number(next);if(!String(raw).trim()||!Number.isFinite(next))throw Error('请输入有效的数字');}await act({action:'config',scope,group,key,value:next},button);}if(configDrafts[draftKey]===raw)delete configDrafts[draftKey];await loadConfig();return true;}catch(error){if(rethrow)throw error;toast(error.message,true);if(configData)renderConfig();}}
 function settingRow(key){const cfg=configData.config,meta=configData.fields[key],scope=activeScope,group=selected,draftKey=scope+':'+(scope==='group'?group:'*')+':'+key;const value=cfg[key],local=scope==='group',overridden=Object.hasOwn(configData.overrides,key),inherited=local&&!overridden,locked=local&&configData.global_only.includes(key),type=typeof value,isObject=type==='object',ctx={scope,group,type,isObject,draftKey};
   const box=node('div',undefined,'setting'+(inherited?' inherited':''));box.id='setting-'+key;const label=node('div'),title=node('div',meta.label,'setting-title');if(local)title.append(node('span',locked?'只能全局设置':overridden?'本群单独设置':'使用全局','scope-badge'+(overridden?' override':'')));label.append(title);if(meta.help){const help=node('div',meta.help,'setting-help');help.title='点击展开 / 收起';help.onclick=()=>help.classList.toggle('open');label.append(help);}label.append(node('div',key,'key'));box.append(label);
+  if(isObject&&value!==null){
+    const edit=node('div',undefined,'edit collection-setting'),summary=node('span',collectionSummary(value),'collection-summary'),button=node('button','编辑');button.type='button';button.disabled=locked;button.dataset.field=key;button.setAttribute('aria-label','编辑'+meta.label);
+    button.onclick=()=>{let initial=value;try{if(Object.hasOwn(configDrafts,draftKey))initial=JSON.parse(configDrafts[draftKey]);}catch(error){toast('草稿格式无效，请重新加载设置',true);return;}
+      const draft=configDrafts[draftKey];openCollectionEditor({title:meta.label,value:initial,key,context:{model:cfg.model},note:(inherited?'当前继承全局；保存后仅为本群单独设置。':'')+(meta.help||''),onSave:async(next,save)=>{await saveSetting(key,JSON.stringify(next),{...ctx,rethrow:true},save);if(configDrafts[draftKey]===draft)delete configDrafts[draftKey];}});
+    };
+    edit.append(summary,button);
+    if(local&&overridden){const reset=node('button','改回全局','inherit-setting');reset.type='button';reset.onclick=async()=>{try{await act({action:'config_inherit',scope:'group',group,key},reset);delete configDrafts[draftKey];await loadConfig();}catch{}};edit.append(reset);}
+    box.append(edit);return box;
+  }
   const edit=node('div',undefined,'edit'),save=node('button','保存','save primary');save.type='button';save.disabled=locked;let input,read=()=>input.value;
   const markDirty=()=>{configDrafts[draftKey]=read();edit.classList.add('dirty');};
   const immediate=element=>{element.onchange=()=>saveSetting(key,read(),ctx,element);};
@@ -485,7 +541,7 @@ function settingRow(key){const cfg=configData.config,meta=configData.fields[key]
 function cooldownRow(){const box=node('div',undefined,'setting'),label=node('div');label.append(node('div','回复冷却','setting-title'),node('div','关闭后不等待点名冷却和水群冷却，但仍受每小时/每天额度限制。只作用于当前群的运行状态。','setting-help'));const edit=node('div',undefined,'edit'),sw=node('label',undefined,'switch'),input=node('input'),on=!snapshot?.status.no_cooldown;input.type='checkbox';input.id='cooldown';input.checked=on;input.setAttribute('role','switch');input.setAttribute('aria-label','回复冷却');sw.append(input,node('span'));input.onchange=()=>act({action:'config',key:'cooldown',scope:activeScope,value:input.checked?'on':'off'},input).catch(()=>{input.checked=!input.checked;});edit.append(node('span',on?'开启':'关闭','switch-label'),sw);box.append(label,edit);return box;}
 function renderConfig(){const term=$('config-search').value.trim().toLowerCase(),area=$('settings'),scroll=area.scrollTop,cfg=configData.config;const priority=['enabled','bot_name','bot_aliases','model','reasoning_effort','fast_mode','passive_probability','sticker_reply_probability','chat_image_display','at_reply_probability','quote_reply_probability','proactive_topic_probability'];const keys=[...priority.filter(key=>key in cfg),...Object.keys(cfg).filter(key=>!priority.includes(key))].filter(key=>{const meta=configData.fields[key];return (meta.label+' '+key+' '+meta.help).toLowerCase().includes(term);});const buckets=new Map(categories.map(item=>[item[0],[]]));for(const key of keys)buckets.get(categories.find(item=>item[3](key))[0]).push(key);area.replaceChildren();$('settings-index').replaceChildren();for(const [id,title,description] of categories){const list=buckets.get(id),showCooldown=id==='participation'&&(!term||'回复冷却 cooldown'.includes(term));if(!list.length&&!showCooldown)continue;const section=node('section',undefined,'setting-group');section.id='settings-'+id;section.append(node('h3',title));if(description)section.append(node('p',description));if(showCooldown)section.append(cooldownRow());for(const key of list)section.append(settingRow(key));area.append(section);const jump=node('button');jump.type='button';jump.title=title;jump.append(node('span',title,'settings-index-label'),node('span',String(list.length+(showCooldown?1:0)),'count'));jump.onclick=()=>section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});$('settings-index').append(jump);}if(!area.children.length)area.append(node('div','没有找到包含“'+term+'”的设置','empty'));area.scrollTop=scroll;}
 
-async function switchTab(tab){stashPromptDraft();currentTab=tab;document.querySelectorAll('[data-context-tabs] button').forEach(item=>{const active=item.dataset.tab===tab;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});document.querySelectorAll('.side-nav [data-view]').forEach(item=>item.classList.toggle('active',item.dataset.view===tab));document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.id==='tab-'+tab));try{if(snapshot)renderStatus();await loadActivePane();}catch(error){toast(error.message,true);}}
+async function switchTab(tab){closePrivateUI();stashPromptDraft();currentTab=tab;document.querySelectorAll('[data-context-tabs] button').forEach(item=>{const active=item.dataset.tab===tab;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});document.querySelectorAll('.side-nav [data-view]').forEach(item=>item.classList.toggle('active',item.dataset.view===tab));document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.id==='tab-'+tab));try{if(snapshot)renderStatus();await loadActivePane();}catch(error){toast(error.message,true);}}
 async function loadActivePane(){if(['settings','persona'].includes(currentTab))await loadConfig();else if(currentTab==='knowledge')await loadKnowledge();else if(currentTab==='database')await loadDatabase();else if(currentTab==='stickers')await loadStickers();else if(currentTab==='system')await loadSystem();else if(currentTab==='members')await loadMembers();}
 document.querySelectorAll('[data-context-tabs] [data-tab]').forEach(button=>button.onclick=()=>switchTab(button.dataset.tab));
 document.querySelectorAll('.side-nav [data-view]').forEach(button=>button.onclick=()=>switchTab(button.dataset.view));
@@ -520,6 +576,7 @@ $('intervention-lifetime').onchange=()=>{$('intervention-minutes-row').hidden=$(
 $('intervention-form').onsubmit=async event=>{event.preventDefault();const group=selected,text=$('intervention-text').value;try{await act({action:'system',mode:'add',group,text,target_scope:$('intervention-scope').value,lifetime:$('intervention-lifetime').value,minutes:Number($('intervention-minutes').value)},$('intervention-save'));$('intervention-text').value='';await loadInterventions();}catch{}};
 $('intervention-clear').onclick=async()=>{try{await act({action:'system',mode:'clear',target_scope:'group'},$('intervention-clear'));await loadInterventions();}catch{}};
 async function loadInterventions(){try{const group=selected,data=await api('/api/interventions?group='+group);if(group!==selected)return;const box=$('intervention-list');box.replaceChildren();for(const entry of data.entries.toReversed()){const row=node('div',undefined,'intervention-record');row.append(node('strong',interventionStates[entry.status]+' · '+interventionModes[entry.mode]),node('p',entry.text),node('small',entry.id+' · '+clock(entry.created)+(entry.mode==='context'?' · 已经过 '+entry.used_chars+' 字符':'')));if(entry.status==='active'){const clear=node('button','清除');clear.type='button';clear.onclick=async()=>{try{await act({action:'system',mode:'remove',id:entry.id,group},clear);await loadInterventions();}catch{}};row.append(clear);}row.append(interventionDelete(entry,group));box.append(row);}if(!data.entries.length)box.append(node('div','还没有系统干预','empty'));}catch(error){toast(error.message,true);}}
+initPrivateUI({api,act,node,restore:()=>{if(snapshot){renderGroups();renderStatus();}poll(true);}});
 if(!token){$('connection').textContent='未授权';toast('请在 CLI 输入 /webui，用 CLI 显示的链接打开这个页面',true);}else{poll();setInterval(()=>poll(),1500);}
 
 function quoteSummary(row){const q=row.quote;return q?.found?'回复 '+(q.sender||'群友')+'：'+(q.text||'[空消息]'):'回复的消息找不到了';}
@@ -673,5 +730,30 @@ $('knowledge-file').onchange=async()=>{
   }catch(error){toast(error.message,true);}
 };
 
-$('session-stop').onclick=async()=>{try{await act({action:'session',mode:'stop',group:selected},$('session-stop'));}catch{}};
+$('session-stop').onclick=async()=>{try{await act({action:'session',mode:snapshot?.status?.session_paused?'resume':'stop',group:selected},$('session-stop'));}catch{}};
+$('receive-only').onclick=()=>act({action:'receive_only',enabled:!snapshot?.status?.receive_only,group:selected},$('receive-only')).catch(()=>{});
+$('avatar-refresh').onclick=async()=>{const button=$('avatar-refresh');button.disabled=true;try{const failed=await refreshVisibleAvatars(true);toast(failed?'部分头像未能更新，已保留原头像；请稍后重试':'头像已刷新',Boolean(failed));}catch(error){toast(error.message,true);}finally{button.disabled=false;}};
+$('settings-export').onclick=async()=>{
+  const button=$('settings-export');button.disabled=true;
+  try{
+    const bundle=await api('/api/settings-bundle'),url=URL.createObjectURL(new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'}));
+    const link=node('a');link.href=url;link.download='qq-bot-settings-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('完整设置已导出，文件包含访问密钥和连接凭据，请妥善保管');
+  }catch(error){toast(error.message,true);}finally{button.disabled=false;}
+};
+$('settings-import').onclick=()=>$('settings-file').click();
+$('settings-file').onchange=async()=>{
+  const file=$('settings-file').files[0];$('settings-file').value='';if(!file)return;
+  try{
+    if(file.size>2800000)throw Error('设置文件最多2.8MB');
+    const bundle=JSON.parse(await file.text()),data=await api('/api/action',{action:'settings_bundle',mode:'preview',bundle}),p=data.preview;
+    const summary='全局变化：'+(p.global_changes.join('、')||'无')+'\n启用群聊：'+p.enabled_groups.join('、')+'\n\n'+p.groups.map(row=>'群 '+row.group+'：'+row.overrides+' 项单独设置，'+row.members+' 个群友标记').join('\n')+'\n\n将覆盖设置包范围内的配置和人设，恢复群设置的继承关系。本机主群编号与程序路径保留。';
+    openEditor('导入全部设置 · 预览',[{name:'summary',label:'导入范围',value:summary,long:true,disabled:true},
+      {name:'connection',label:'NapCat连接凭据',value:'off',options:[{value:'off',label:'保留本机连接地址和令牌'},{value:'on',label:'恢复设置包中的连接地址和令牌'}]}],async inputs=>{
+        if(!confirm('确认应用这些设置？应用前会自动备份。启用群聊和运行设置可能随导入改变；主群、连接和WebUI设置需重启控制台生效。'))throw Error('已取消导入');
+        await act({action:'settings_bundle',mode:'apply',bundle,expected:p.expected,connection:inputs.connection.value==='on'},$('store-save'));
+        configData=null;for(const key of Object.keys(configDrafts))delete configDrafts[key];for(const key of Object.keys(promptDrafts))delete promptDrafts[key];await loadConfig();
+      },'仅预览，点击保存并确认才导入。导入前自动备份；不导入聊天记录、记忆或表情资源。');
+  }catch(error){toast(error.message,true);}
+};
 $('session-clear').onclick=async()=>{if(!confirm('终止当前会话并清空当前群的短期对话上下文？聊天存档、群记忆和知识库保留。'))return;try{await act({action:'session',mode:'clear',group:selected},$('session-clear'));}catch{}};

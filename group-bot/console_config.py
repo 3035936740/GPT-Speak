@@ -13,6 +13,13 @@ from configure_launch import validate as validate_model
 from storage_io import atomic_write_text, read_text
 
 DEFAULTS = {'bot_name':'yonagi', 'bot_aliases':['Ethereal Paradise','EP'],'avatar_remote_enabled':False,
+    'receive_only':False,
+    'member_labels_global_enabled':False,
+    'owner_commands_enabled':False,'owner_command_prefix':'/','owner_command_aliases':{},
+    'private_access_mode':'all','private_user_whitelist':[],'private_user_blacklist':[],
+    'private_reply_enabled':False,'private_use_group_impressions':True,'private_vision_enabled':True,
+    'private_max_replies_per_hour':60,'private_max_model_calls_per_day':200,
+    'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
     'knowledge_enabled':True,'knowledge_max_chars':1800,
     'high_eq_enabled':True,
     'member_auto_bot_marking_enabled':True,'member_auto_bot_min_observations':10,
@@ -48,7 +55,9 @@ ALIASES = {'key':'webui_key','name':'bot_name','aliases':'bot_aliases','rate':'p
     'effort':'reasoning_effort','fast':'fast_mode','records':'console_max_records',
     'whitelist':'chat_group_whitelist','prompt':'persona','protocol':'reply_protocol','text_limit':'console_max_text_chars'}
 PROTECTED = {'group_id','mcp_env_file','codex_exe'}
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key'}
+from napcat_connection import DEFAULTS as CONNECTION_DEFAULTS
+DEFAULTS.update(CONNECTION_DEFAULTS)
+GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
 def pid_alive(pid):
@@ -148,6 +157,10 @@ class Config:
     def validate(self,cfg):
         cfg={**DEFAULTS,**cfg}
         current=self.load()
+        from napcat_connection import validate as validate_connection
+        from private_access import validate as validate_access
+        from owner_commands import validate as validate_commands
+        validate_connection(cfg);validate_access(cfg);validate_commands(cfg)
         if set(cfg)-set(current):raise ValueError('未知配置字段：'+str(set(cfg)-set(current)))
         for key,value in cfg.items():
             if key in PROTECTED and value!=current[key]:raise ValueError('运行路径/主群编号请停机后修改原配置文件')

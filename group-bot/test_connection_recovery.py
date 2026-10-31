@@ -14,6 +14,10 @@ from emoji_library import ReplyText
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_receive_only_keeps_records_without_ai_or_sending(self):
+        asyncio.run(self.scenario('receive'))
+    def test_receive_only_cancels_current_work_and_resumes_on_new_message(self):
+        asyncio.run(self.scenario('receive_resume'))
     def test_operator_stop_cancels_generation_and_waits_for_new_message(self):
         asyncio.run(self.scenario('session'))
     def test_operator_clear_removes_old_short_term_context(self):
@@ -39,15 +43,17 @@ class RecoveryTests(unittest.TestCase):
 
     async def scenario(self, failure):
         cfg = bot.settings()
+        if failure=='receive':cfg['receive_only']=True
         real_sleep, real_save, real_style_save = asyncio.sleep, bot.save_state, bot.StyleMemory.save
         polls, attempts, generations, style_saves = 0, 0, 0, 0
+        session_cutoff=0
         sent, states, delays, start_polls = [], [], [], []
         stamp = time.time()
         incoming = {'message_id': '1', 'time': stamp, 'user_id': 3035936740,
             'sender': {'nickname': 'human'}, 'message': [
                 {'type': 'at', 'data': {'qq': '169901502'}}, {'type': 'text', 'data': {'text': '画一张蓝色圆的图片' if failure=='image' else '你在吗'}}]}
         async def api(client, env, action, params=None):
-            nonlocal polls, attempts
+            nonlocal polls, attempts,session_cutoff
             if action == 'get_login_info':
                 return {'user_id': 169901502}
             if action == 'get_group_info':
@@ -63,18 +69,30 @@ class RecoveryTests(unittest.TestCase):
                     raise AssertionError('recovery stalled despite healthy API')
                 if failure == 'poll' and polls == 1:
                     raise httpx.ConnectError('NapCat temporarily unavailable')
+                if failure=='receive' and polls>=3:(bot.RUNTIME/'STOP').touch()
+                if failure=='receive_resume':
+                    if polls==2:cfg['receive_only']=True
+                    if polls==4:
+                        cfg['receive_only']=False
+                    if polls<6 and polls>1:return {'messages':[incoming]}
+                    if polls>=6:incoming['message_id']='after-receive-only'
                 if failure in {'session','session_clear'}:
                     if polls==2:
                         cutoff=time.time()
-                        bot.atomic_write_text(bot.RUNTIME/'session-control.json',json.dumps({'id':'stop','mode':'clear' if failure=='session_clear' else 'stop','created':cutoff,'clear_before':cutoff if failure=='session_clear' else 0}))
+                        session_cutoff=cutoff
+                        bot.atomic_write_text(bot.RUNTIME/'session-control.json',json.dumps({'id':'stop','mode':'clear' if failure=='session_clear' else 'stop','paused':failure=='session','created':cutoff,'clear_before':cutoff if failure=='session_clear' else 0}))
+                    if failure=='session' and polls==5:
+                        session_cutoff=time.time()
+                        bot.atomic_write_text(bot.RUNTIME/'session-control.json',json.dumps({'id':'resume','mode':'resume','paused':False,'created':session_cutoff,'clear_before':0}))
                     if polls<4 and polls>1:return {'messages':[incoming]}
-                    if polls>=4:incoming['message_id']='new-after-stop'
+                    if failure=='session' and polls==4:incoming['message_id']='while-paused'
+                    if polls>=4 and not (failure=='session' and polls==4):incoming['message_id']='new-after-stop'
                 if failure in {'archive','archive_failed'}:
                     if polls==1:
                         if failure=='archive_failed':incoming['time']=stamp-10
                         return {'messages':[incoming]}
                     incoming['message_id']='new-live'
-                incoming['time']=time.time()
+                incoming['time']=max(time.time(),session_cutoff+.01) if failure=='session' else time.time()
                 return {'messages': [incoming]}
             if action == 'send_group_msg':
                 attempts += 1
@@ -94,7 +112,8 @@ class RecoveryTests(unittest.TestCase):
             nonlocal generations
             generations += 1
             start_polls.append(polls)
-            if failure in {'session','session_clear'} and generations==1:await asyncio.Event().wait()
+            if failure in {'session','session_clear','receive_resume'} and generations==1:await asyncio.Event().wait()
+            if failure=='session' and generations==2:self.assertGreaterEqual(polls,5)
             if failure=='session_clear' and generations==2:self.assertFalse(any(row.get('_id')=='1' for row in args[2]))
             if failure in {'archive','archive_failed'}:
                 self.assertGreaterEqual(polls,2)
@@ -133,11 +152,15 @@ class RecoveryTests(unittest.TestCase):
                     patch.object(bot,'maintain_images',AsyncMock()), \
                     patch.object(asyncio, 'sleep', tick):
                 await bot.run()
-                self.assertEqual(generations, 2 if failure in {'session','session_clear'} else 1)
-                self.assertLessEqual(polls, 6 if failure in {'session','session_clear'} else 3)
+                self.assertEqual(generations,0 if failure=='receive' else 2 if failure in {'session','session_clear','receive_resume'} else 1,(polls,start_polls,sent,states[-1:] ))
+                self.assertLessEqual(polls,8 if failure in {'receive_resume','session'} else 6 if failure in {'session','session_clear'} else 3)
                 self.assertLessEqual(max(delays), 6)
                 final = json.loads((bot.RUNTIME / 'state.json').read_text(encoding='utf-8'))
-                if failure == 'delivery':
+                if failure=='receive':
+                    self.assertEqual(sent,[])
+                    self.assertTrue((bot.RUNTIME/'recent-chat.jsonl').exists())
+                    self.assertEqual(final['model_calls_today'],0)
+                elif failure == 'delivery':
                     self.assertEqual(sent, ['第一句', '第二句'])
                     self.assertEqual(len(final['reply_times']), 2)
                 elif failure=='image':

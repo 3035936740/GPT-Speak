@@ -22,7 +22,7 @@ from sticker_prefill import StickerPrefill
 from debug_history import recover_chat,lane
 from worker_instance import instance_locked
 
-ASSETS={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/theme.js':'theme.js'}
+ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/private-panels.js':'private-panels.js','/private-settings.js':'private-settings.js','/private.css':'private.css','/style.css':'style.css','/theme.js':'theme.js'}
 
 
 class DebugWebUI:
@@ -57,13 +57,20 @@ class DebugWebUI:
                 parsed=urlsplit(self.path)
                 if parsed.path in ASSETS:
                     path=Path(__file__).with_name('webui')/ASSETS[parsed.path]
-                    mime='text/html; charset=utf-8' if parsed.path=='/' else 'text/css; charset=utf-8' if parsed.path=='/style.css' else 'text/javascript; charset=utf-8'
+                    mime='text/html; charset=utf-8' if parsed.path=='/' else 'text/css; charset=utf-8' if parsed.path.endswith('.css') else 'text/javascript; charset=utf-8'
                     return self.reply(200,path.read_bytes(),mime)
                 if not self.authorized():return self.reply(401,{'error':'请在CLI输入 /webui 打开授权页面'})
                 try:
+                    if parsed.path=='/api/private':
+                        from private_view import view
+                        query=parse_qs(parsed.query)
+                        return self.reply(200,view(owner.root,query.get('peer',[''])[0],query.get('kind',['all'])[0]))
                     if parsed.path=='/api/snapshot':return self.reply(200,owner.snapshot(parse_qs(parsed.query)))
                     if parsed.path=='/api/config':return self.reply(200,owner.public_config(parse_qs(parsed.query)))
                     query=parse_qs(parsed.query)
+                    if parsed.path=='/api/settings-bundle':
+                        from settings_bundle import export_bundle
+                        return self.reply(200,export_bundle(owner.root))
                     if parsed.path=='/api/knowledge':
                         from knowledge_base import checked
                         store,group=checked(owner.root,query.get('group',['0'])[0])
@@ -90,7 +97,7 @@ class DebugWebUI:
                         return self.reply(200,raw,mime)
                     if parsed.path=='/api/system':return self.reply(200,owner.system_status())
                     if parsed.path=='/api/avatar':
-                        raw,mime=avatar(owner.root,int(query.get('group',['0'])[0]),query.get('kind',[''])[0],query.get('id',[''])[0])
+                        raw,mime=avatar(owner.root,int(query.get('group',['0'])[0]),query.get('kind',[''])[0],query.get('id',[''])[0],query.get('refresh',['0'])[0]=='1')
                         return self.reply(200,raw,mime)
                     if parsed.path=='/api/interventions':
                         group=int(query.get('group',[owner.config.load()['group_id']])[0])
@@ -158,6 +165,8 @@ class DebugWebUI:
             groups.append({'id':group,'name':meta.get('name',str(group)),'online':bool(state.get('online')),
                 'worker_running':instance_locked(folder),
                 'enabled':bool(Config(self.root,group).load()['enabled']),
+                'receive_only':bool(Config(self.root,group).load().get('receive_only')),
+                'session_paused':bool(read_json(runtime(self.root,group)/'session-control.json').get('paused')),
                 'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
                 'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
                 'last_poll':state.get('last_poll')})
@@ -203,7 +212,8 @@ class DebugWebUI:
             'manual_image_limits':{'max_images':MAX_IMAGES,'max_image_bytes':MAX_IMAGE_BYTES,'max_total_bytes':MAX_TOTAL_BYTES},
             'sticker_prefill_ready':bool(state.get('pid')) and read_json(folder/'sticker-prefill-worker.json').get('pid')==state.get('pid'),
             'intervention_count':sum(row['status']=='active' for row in Interventions(self.root,selected).list()),
-            'online':bool(state.get('online')),'worker_running':instance_locked(folder),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
+            'online':bool(state.get('online')),'receive_only':bool(cfg.get('receive_only')),'session_paused':bool(read_json(folder/'session-control.json').get('paused')),
+            'avatar_refresh':read_json(folder/'avatar-refresh.json').get('created',0),'worker_running':instance_locked(folder),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
             'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
             'records':len(records),'shown_records':len(filtered),'text_chars':stored_text_chars,
             'chat_text_chars':chat_text_chars,'flow_text_chars':flow_text_chars,
@@ -237,7 +247,7 @@ class DebugWebUI:
             'scope':scope,'group':group,'overrides':scoped.overrides(),
             'global_config':{key:value for key,value in self.config.load().items() if key not in PROTECTED|HIDDEN_FIELDS},
             'prompt_overrides':{name:(scoped.scope_root/(name+'.txt')).exists() if scope=='group' else True for name in ('persona','reply_protocol')},
-            'global_only':['chat_group_whitelist','webui_host','webui_port','webui_key'],
+            'global_only':['chat_group_whitelist','webui_host','webui_port','webui_key']+[key for key in cfg if key.startswith('private_')],
             'global_prompts':{name:(self.root/(name+'.txt')).read_text(encoding='utf-8') if (self.root/(name+'.txt')).exists() else '' for name in ('persona','reply_protocol')},
             'persona':scoped.prompt_path('persona').read_text(encoding='utf-8'),'models':models,
             'reply_protocol':scoped.prompt_path('reply_protocol').read_text(encoding='utf-8') if scoped.prompt_path('reply_protocol').exists() else '',
@@ -248,6 +258,7 @@ class DebugWebUI:
             folder=runtime(self.root,group,cfg);state=read_json(folder/'state.json');effective=Config(self.root,group).load()
             groups.append({'id':group,'name':read_json(folder/'debug-group.json').get('name',str(group)),
                 'enabled':bool(effective['enabled']),'waiting_for_qq':bool(state.get('waiting_for_qq')),
+                'receive_only':bool(effective.get('receive_only')),
                 'online':bool(state.get('online')),'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
                 'worker_running':instance_locked(folder),
                 'last_poll':state.get('last_poll'),'error':state.get('error',''),'model':effective['model'],

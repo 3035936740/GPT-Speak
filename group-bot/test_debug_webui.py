@@ -14,6 +14,19 @@ from config_metadata import FIELDS
 
 
 class WebUITests(unittest.TestCase):
+    def test_settings_export_preview_apply_and_selected_group_change(self):
+        self.assertEqual(self.client.get('/api/settings-bundle').status_code,401)
+        bundle=self.client.get('/api/settings-bundle',headers=self.headers).json()
+        bundle['settings']['bot_name']='导入的人设名'
+        bundle['settings']['chat_group_whitelist']=[200]
+        response=self.client.post('/api/action',headers=self.headers,json={'action':'settings_bundle','mode':'preview','bundle':bundle})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertNotEqual(Config(self.root).load()['bot_name'],'导入的人设名')
+        with patch('windows_image_cleanup.sync_tasks'):
+            result=self.client.post('/api/action',headers=self.headers,json={'action':'settings_bundle','mode':'apply','bundle':bundle,'expected':response.json()['preview']['expected']})
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['selected'],200);self.assertEqual(self.console.group,200)
+        self.assertEqual(Config(self.root).load()['chat_group_whitelist'],[200])
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         cfg=json.loads(Path(__file__).with_name('settings.json').read_text(encoding='utf-8'))

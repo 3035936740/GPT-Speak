@@ -4,9 +4,13 @@
 
 ## 群聊接话
 
+当前群顶部“仅接收消息 / 恢复AI处理”或CLI `/receive on|off` 控制 `receive_only`，默认关闭。仅接收时保留NapCat群连接和聊天记录，跳过AI回复、图片识别/生成、学习、主动话题和消息发送；切换时取消当前生成、待回复和待发送队列。恢复后只处理后续新消息，期间收到的内容仅作历史背景，不补答。该设置按群保存，重启保留，也随完整设置包导出；不改变白名单、其他群或群启用状态。
+
+“行为设置”顶部提供完整设置JSON的导入/导出：包含全局行为配置、人设与回复规则、群白名单与启用开关、每群独立配置/提示词、群友类型/昵称/说明/屏蔽标记和无冷却开关。导入先预览，点击保存并确认才应用；恢复继承的提示词会移除原群独立文件。应用前备份到 `config-backups/bundle-*/`，失败自动回滚；预览后设置变动须重新预览。文件包含WebUI密钥与NapCat连接凭据，请妥善保管。连接地址/令牌默认保留本机值，可在导入预览中选择恢复；仅恢复NAPCAT_HOST/NAPCAT_TOKEN，不覆盖.env其他内容。本机主群编号、Codex路径和.env路径保留，避免群运行数据关联错位；聊天存档、记忆数据库、知识库和表情文件不属于设置包。导入后退出并重启控制台加载完整设置。
+
 重启恢复的消息只作为已读历史存档，不重放旧@、待回复队列，也不重新识图、学习或触发主动话题。供新问题参考时，历史在输入预算内合并成 `history_archive` 一段只读文本；新聊天消息才进入正常处理流程。
 
-WebUI当前群提供“终止当前会话”和“清空对话上下文”。对应CLI为 `/session stop` 和 `/session clear`：前者取消当前生成/待发送回复并等待新消息，后者同时清除短期上下文和对话焦点；聊天存档、群记忆和知识库保留。清空边界持久化，重启也不重新装入更早背景；已经发送或已提交QQ接口的消息不能撤回。
+WebUI当前群提供“终止当前会话 / 恢复当前会话”和“清空对话上下文”。对应CLI为 `/session stop`、`/session resume` 和 `/session clear`：stop取消当前生成/待发送回复并持续暂停接话，resume恢复后只处理新消息；clear取消当前任务并清除短期上下文和对话焦点，保持当前暂停状态。只影响当前群，聊天存档、群记忆和知识库保留。暂停与清空边界持久化，重启不会处理暂停期间积压的消息；已经发送或已提交QQ接口的消息不能撤回。
 
 启动和停止群后台以 `instance.lock` 的实际锁占用为准，不把状态文件中的旧PID视为实例凭据。系统可能把退出bot的PID分配给其他程序；这种情况不会阻止重新启动，也不会操作该无关程序。WebUI会将没有实例锁的旧运行状态显示为“后台未运行”。
 
@@ -202,7 +206,7 @@ Pop-Location
 
 ## 头像与系统干预
 
-群列表、群总览和消息头像支持显示真实 QQ 头像。启用 `avatar_remote_enabled` 后，本地调试服务向腾讯 `qlogo.cn` 提交群号/QQ号获取头像，不提交聊天内容。成功结果本地缓存 6 小时；找不到账号、网络失败或图片不可用时保留默认字母头像。关闭联网后仍可使用有效本地缓存。
+群列表、群总览和消息头像支持显示真实 QQ 头像。启用 `avatar_remote_enabled` 后，本地调试服务向腾讯 `qlogo.cn` 提交群号/QQ号获取头像，不提交聊天内容。成功结果本地缓存5分钟，页面每30秒检查可见头像是否到期；当前群顶部“刷新头像”可绕过本地缓存重新获取。刷新先保留旧图，新图解码完成后原位替换，失败继续显示旧图；从未成功获取时使用默认字母头像。关闭联网后仍可使用有效本地缓存。腾讯头像源自身的更新延迟无法由本地刷新强制消除。
 
 聊天页工具栏提供“系统干预”，筛选栏提供“只看系统提示词”。系统干预是操作员控制数据，通过 Codex 的 [developer_instructions 指令通道](https://learn.chatgpt.com/docs/config-file/config-reference#developer_instructions) 注入，和群友发言分开；提交不创建待回复消息、不立即调用模型、不向 QQ 发送消息，也不加入群聊记忆和表达学习。
 
@@ -364,15 +368,62 @@ bot主仅能由后台人工指定。明确请求优先进入任务回复（如�
 
 ## CLI 面板与固定 WebUI 密钥
 
+WebUI中的数组和映射配置使用“编辑”按钮打开子窗口：数组逐项填写，用＋添加、−删除；映射表逐行填写“名称：值”。分工角色模型按“角色、模型、思考等级”同排对齐，角色用中文选择，新增时自动选择尚未配置的角色。列表保留输入框，去掉行外框和删除按钮的额外边框，窗口仅保留内容区滚动。保存后才应用，取消不改变配置；保存失败会保留窗口和输入。群友资料、私聊联系人的额外昵称同样使用此窗口，先确认昵称草稿，再保存整份资料后生效。全局、当前群与私聊设置共用该交互，仍支持恢复继承；配置文件和CLI的JSON格式保持原样。
+
 - `/status`：连接、模型、超时、调用额度、上下文、群友屏蔽和后台状态，密钥隐藏；Esc返回聊天。
 - `/config`：可搜索配置面板，↑↓选择，Enter编辑/保存，Tab切换全局与当前群，Esc取消/返回。当前群继承值会标注“继承”。
 - `/config local`：直接打开当前群设置；`/config local inherit 字段` 恢复全局继承。
 - `/config set 字段 值`、`/config 字段=值`：仍支持直接设置；数组/对象用JSON，布尔值用on/off。
-- `/member list`、`/member show QQ号`：查看群友资料；`/member type QQ号 owner|human|AI|bot|auto` 设置类型。
-- `/member block QQ号`、`/member unblock QQ号`：人工屏蔽/解除。解除后模型不再自动覆盖这次人工决定。
+- `/member list`、`/member show QQ号`：查看群友资料和范围；`/member type QQ号 owner|human|AI|bot|auto [global|group]` 设置类型，默认全局。
+- `/member block QQ号 [global|group]`：人工屏蔽，默认全局；`/member unblock QQ号 [global|group]` 默认在该账号当前范围解除。`/member scope QQ号 global|group` 切换范围。人工解除后模型不覆盖这次决定。
 - `/config key=xxxx` 或在config里设置 `"webui_key": "xxxx"`：自定义全局后台访问密钥。默认留空，每次启动随机生成；保存后手动 `/stop` 并重新启动生效，当前会话密钥不自动改变。已有访问密钥、Host和Origin检查继续保留。`/config set webui_key` 留空恢复随机模式。
 
 上下文、情绪和视觉角色在调用模型前也会检查有效字符预算，必要时逐级压缩候选、旧聊天和重复资料，保留当前问题及必要引用；不会把超限输入直接提交给模型。系统干预占用的空间计入同一预算。
+
+## 好友私聊、全局标记与主人指令
+
+好友私聊采用独立后台进程及 `runtime-private/private-chat.sqlite3`，在WebUI左侧切换“群聊 / 私信”。支持联系人列表、私聊记录及执行日志、手动文字发送、独立人设/规则/知识库、联系人标记和本轮图片识别。私聊不会触发群聊的主动话题计划。默认不开启私聊，设置 `private_reply_enabled=true` 后，只接入QQ好友且同在已启用授权群的联系人，陌生人/临时会话不接入。
+
+这些默认值均可在配置文件或行为设置中调整：
+
+| 字段 | 默认 | 用途 |
+| --- | --- | --- |
+| `private_use_group_impressions` | `true` | 参考该好友本人有证据的群聊印象，可按联系人关闭；不搬入其他群友的原话 |
+| `private_access_mode` | `all` | `whitelist` 切换为只允许私聊白名单 |
+| `private_user_whitelist` / `private_user_blacklist` | `[]` | QQ号数组，黑名单优先，名单不能绕过好友及共同授权群要求 |
+| `private_reply_cooldown_seconds` | `8` | 回复冷却，范围0～300秒，可按联系人覆盖 |
+| `private_max_replies_per_hour` | `60` | 所有私聊共享，含手动发送 |
+| `private_max_model_calls_per_day` | `200` | 所有私聊共享的每日模型调用上限 |
+| `private_max_reply_chars` | `600` | 每条回复字数上限 |
+| `private_vision_enabled` | `true` | 只读取本轮实际附带的好友图片 |
+
+发送前会重查当前名单、屏蔽和配置权限；发送超时、崩溃或缺少消息ID时记为结果不确定，不自动重发。私聊默认的接入、额度和冷却参数保存到 `settings.json`，联系人覆盖及专属资料保存在私聊数据库。
+
+群友资料弹窗直接提供“全局 / 本群”切换，保存时按当前账号生效，不改变其他账号的范围。新标记与新屏蔽默认选全局，已有标记打开时显示原范围；新勾选屏蔽时默认切到全局，若已手动选择本群则保留选择。全局在所有群和私聊共用该QQ号的类型、昵称、说明及屏蔽状态；切成本群后恢复各会话独立标记，本次资料只写入当前群，原来的独立资料保留。私聊页可选“全局 / 仅当前私聊”。切换后需点击保存，期间不会改动实际资料。`member_labels_global_enabled` 仅控制未单独指定范围的旧标记、规则和模型标记，默认关闭，不再覆盖手动选定范围。指令机器人的观察窗口仍按群分别累计。不另设主人称呼功能，沿用已有额外昵称。此次更新涉及后台存储，需手动退出并重新启动控制台；旧后台未重启前，新页面会提示并阻止保存范围，避免选择未生效。
+
+`owner_commands_enabled=false` 默认关闭主人聊天指令。开启后，仅后台人工指定且未屏蔽的bot主可以在聊天中使用CLI命令，默认前缀 `owner_command_prefix="/"`，可改成 `!`、`.`、`y` 等。`owner_command_aliases={}` 默认沿用CLI命令名；例如配置：
+
+```json
+{
+  "owner_commands_enabled": true,
+  "owner_command_prefix": "/",
+  "owner_command_aliases": {
+    "清空": "session clear",
+    "恢复": "session resume",
+    "概率": "config local set passive_probability"
+  }
+}
+```
+
+群里发送 `/概率 0.05` 等同CLI的 `/config local set passive_probability 0.05`。`/session stop`、`/session resume`、`/session clear` 按来源群执行，不影响其他群。私聊中的会话操作只作用于当前联系人。其他命令保留CLI本身的作用范围，例如 `/stop` 会退出整个控制台，`/config global ...` 修改全局；路径和主群编号仍按CLI校验要求停机修改。配置及命令结果只保留在鉴权后台，不将密钥或人设内容回显到QQ。修改权限后排队指令会重查权限，崩溃后不自动重放已经开始执行的指令。
+
+## NapCat正向HTTP / WebSocket与MCP
+
+`napcat_connection_mode="current"` 默认沿用本机 `napcat.env` 的连接地址和令牌，不改变已有连接。可设置 `http` 或 `ws`，通过 `napcat_host`（IP/IPv6/域名）、`napcat_port`、`napcat_path`、`napcat_secure` 和 `napcat_token` 自定义连接。主机/路径/令牌留空、端口为0时继承当前配置；API超时 `napcat_timeout_seconds` 默认30秒。需在NapCat开启匹配的HTTP或WebSocket服务端。本项目主动连接NapCat，WebSocket以echo匹配API响应并跳过推送事件；连接中断后下一次请求重新连接，不重放失败请求。[OneBot正向WebSocket协议](https://github.com/botuniverse/onebot-11/blob/master/communication/ws.md)
+
+NapCat MCP默认跟随Bot当前连接；`napcat_mcp_url`、`napcat_mcp_token` 默认留空，可显式覆盖。CLI `/reconnect mcp` 使用这组配置建立新会话；外部MCP宿主可将stdio启动入口配置为使用QQ MCP虚拟环境的Python运行项目根目录 `tools/napcat_mcp_stdio.py`，每次启动重新读取配置及授权群。外部应用已经运行的MCP连接需要在其宿主重连。
+
+WebUI按钮与CLI对应：仅接收 `/receive on|off`，刷新头像 `/avatar refresh`，重连 `/reconnect napcat|mcp`，终止/恢复 `/session stop|resume`，清空上下文 `/session clear`。`/help`、Tab补全及 `/status` 同步更新。更新代码后手动退出并重新启动控制台以加载Python和私聊后台；本次接入参考了提交包的私聊实现，未接入独立主人称呼或原有的全局清理记忆指令。
 
 ## 许可证与致谢
 

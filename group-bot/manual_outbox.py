@@ -55,6 +55,7 @@ class ManualOutbox:
         identity=str(identity or uuid.uuid4().hex).replace('-','')
         if not re.fullmatch(r'[a-f0-9]{32}',identity):raise ValueError('无效发送请求ID')
         cfg=Config(self.root,self.group).load();state=read_json(runtime(self.root,self.group)/'state.json')
+        if cfg.get('receive_only'):raise ValueError('当前群处于仅接收状态，不能发送消息')
         with self.lock():
             if (self.folder/(identity+'.json')).exists():
                 old=self.get(identity)

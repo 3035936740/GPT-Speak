@@ -80,9 +80,12 @@ class Supervisor:
         self.paused=set()
         self.retry_after={}
         self.closed=False
+        from private_supervisor import PrivateSupervisor
+        self.private=PrivateSupervisor(self.root,WindowsJob if os.name=='nt' else PosixJob)
     def sync(self):
         if not self.start or self.closed:return
         cfg=self.config.load();groups=[int(group) for group in cfg['chat_group_whitelist']]
+        self.private.sync(cfg)
         for group in list(self.children):
             if group not in groups:self.stop_group(group)
         for group in groups:
@@ -136,6 +139,7 @@ class Supervisor:
         self.exited.pop(group,None)
     def close(self):
         self.closed=True
+        self.private.stop()
         cfg=self.config.load()
         for group in cfg['chat_group_whitelist']:
             folder=runtime(self.root,group);folder.mkdir(exist_ok=True);(folder/'STOP').touch()
@@ -187,19 +191,31 @@ class Console:
             try:future.set_result(self.web_action(value))
             except Exception as exc:future.set_exception(exc)
     def web_action(self,value):
+        if value.get('action')=='settings_bundle':
+            from settings_bundle import preview,apply_bundle
+            mode=value.get('mode');bundle=value.get('bundle');connection=value.get('connection',False)
+            if type(connection) is not bool:raise ValueError('连接导入开关无效')
+            if mode=='preview':return {'ok':True,'preview':preview(self.root,bundle,connection)}
+            if mode!='apply':raise ValueError('未知设置包操作')
+            result=apply_bundle(self.root,bundle,value.get('expected'),connection)
+            self.config=Config(self.root);self.group=result['selected'];self.notice=result['message']
+            return result
         original=self.group;original_config=self.config;group=int(value.get('group',self.group))
         if group not in self.groups():raise ValueError('该群不在白名单内')
         self.group=group
         try:
             action=value.get('action')
             scope=value.get('scope','global')
-            if scope not in {'global','group'}:raise ValueError('未知配置作用域')
+            if action!='private_setting' and scope not in {'global','group'}:raise ValueError('未知配置作用域')
             if action in {'config','persona','reply_protocol','config_inherit'} and scope=='group':self.config=Config(self.root,group)
             if action=='config':
                 key=self.config.key(str(value.get('key','')));item=value.get('value')
                 if key in PROTECTED:raise ValueError('运行路径请停机后修改原文件')
                 text=item if isinstance(item,str) else json.dumps(item,ensure_ascii=False)
                 self.configure('set '+key+' '+text)
+            elif action=='receive_only':
+                from receive_mode import set_mode
+                return set_mode(self.root,group,value.get('enabled'))
             elif action=='session':
                 from session_control import request
                 return request(self.root,group,value.get('mode','stop'))
@@ -216,7 +232,7 @@ class Console:
                     value.get('values'),value.get('row_id'),value.get('expected')),'selected':group}
             elif action=='member_label':
                 from member_labels import store
-                result=store(self.root,group).mark(str(value.get('account','')),str(value.get('label','')),value.get('note',''),value.get('aliases'),value.get('blocked'))
+                result=store(self.root,group).mark(str(value.get('account','')),str(value.get('label','')),value.get('note',''),value.get('aliases'),value.get('blocked'),value.get('mark_scope'))
                 return {'ok':True,'member':result,'selected':group,'message':'群友标记已保存，下次回复生效'}
             elif action=='sticker':
                 return {**sticker_mutate(self.root,str(value.get('mode','')),str(value.get('id','')),value.get('values')),'selected':group}
@@ -224,6 +240,7 @@ class Console:
                 return {**image_mutate(self.root,group,str(value.get('mode','')),
                     str(value.get('message_id','')),str(value.get('key','')),value.get('values')),'selected':group}
             elif action=='sticker_prefill':
+                if Config(self.root,group).load().get('receive_only') and value.get('mode')!='cancel':raise ValueError('当前群处于仅接收状态，不执行AI识别')
                 job=(StickerPrefill(self.root,group).cancel(str(value.get('id',''))) if value.get('mode')=='cancel'
                     else start_sticker_prefill(self.root,group,value))
                 return {'ok':True,'job':job,'selected':group,'message':'AI识别只填入表单，不自动保存'}
@@ -239,6 +256,18 @@ class Console:
                 request=ManualOutbox(self.root,group).enqueue(value.get('text',''),value.get('request_id'),value.get('images'),value.get('reply_id'),value.get('at_ids'))
                 self.notice='手动消息已排队，发送成功后加入上下文和手动消息记忆'
                 return {'ok':True,'message':self.notice,'request':request,'selected':group}
+            elif action=='private_send':
+                from private_view import enqueue
+                return enqueue(self.root,str(value.get('peer','')),value.get('text'),value.get('request_id'))
+            elif action=='private_system':
+                from private_view import set_instruction
+                return set_instruction(self.root,str(value.get('peer','')),value.get('text'))
+            elif action=='private_profile':
+                from private_profiles import save
+                return save(self.root,str(value.get('peer','')),str(value.get('section','')),value.get('values'))
+            elif action=='private_setting':
+                from private_settings import save
+                return save(self.root,str(value.get('peer','')),value.get('scope'),value.get('key'),value.get('value'),value.get('inherit',False))
             elif action in {'persona','reply_protocol'}:
                 text=value.get('text')
                 if not isinstance(text,str):raise ValueError('提示词必须是文本')
@@ -313,7 +342,13 @@ class Console:
                 if len(parts)>=3 and parts[1] in {'set','get'}:choices=list(self.config.load())+list(ALIASES)+['persona','reply_protocol']
             elif command=='whitelist':choices=['add','remove','show']
             elif command=='view':choices=['all','chat','flow','system']
-            elif command=='member':choices=['list','show','type','block','unblock']
+            elif command=='member':
+                choices=['list','show','type','block','unblock','scope']
+                if len(parts)>=3:choices=['global','group']+(['AI','bot','human','owner','auto','clear'] if parts[1]=='type' else [])
+            elif command=='session':choices=['stop','resume','clear']
+            elif command=='avatar':choices=['refresh']
+            elif command=='reconnect':choices=['napcat','mcp']
+            elif command=='receive':choices=['on','off']
             elif command=='help':choices=COMMANDS+['all']
             elif command=='system':choices=['add','list','remove','delete','clear','--scope','group','all','--mode','context','once','timed','persistent','--minutes']
             elif command=='group':choices=[str(group) for group in self.groups()]
@@ -329,9 +364,18 @@ class Console:
         parts=text.lstrip('/').split(maxsplit=1)
         if not parts:return
         command=unique(parts[0],COMMANDS);rest=parts[1] if len(parts)>1 else ''
+        if command=='avatar':
+            if rest.strip()!='refresh':raise ValueError('/avatar refresh')
+            from debug_avatars import refresh_group
+            self.notice=refresh_group(self.root,self.group)['message'];return
         if command=='reconnect':
             from napcat_reconnect import reconnect
             reconnect(self,rest.strip() or 'napcat');return
+        if command=='receive':
+            from receive_mode import set_mode
+            option=rest.strip().lower()
+            if option not in {'on','off'}:raise ValueError('/receive on|off')
+            self.notice=set_mode(self.root,self.group,option=='on')['message'];return
         if command=='session':
             from session_control import request
             self.notice=request(self.root,self.group,rest.strip() or 'stop')['message'];return
@@ -558,6 +602,9 @@ class Console:
                 self.drain_web_actions()
                 if not self.running:break
                 if time.time()>=refresh_at:
+                    from owner_commands import drain as drain_owner_commands
+                    drain_owner_commands(self)
+                    if not self.running:break
                     self.supervisor.sync();self.refresh();refresh_at=time.time()+1
                 if msvcrt.kbhit():
                     char=msvcrt.getwch()

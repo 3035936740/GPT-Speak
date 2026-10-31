@@ -1,13 +1,14 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>群聊 Bot 控制台</title><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>群聊 Bot 控制台</title><script src="/theme.js"></script><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/private.css"><script type="module" src="/app.js"></script></head>
 <body>
 <div class="app">
 <aside class="sidebar">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><div><strong>Bot 控制台</strong><div class="connection"><span id="connection-dot" class="dot"></span><span id="connection">正在连接…</span></div></div></div>
-  <div class="side-heading"><span>群聊</span><span id="group-count" class="count">0</span></div>
+  <div class="side-heading"><div class="session-switch" role="group" aria-label="会话类型"><button id="show-groups" class="active" type="button" aria-pressed="true">群聊</button><button id="show-private" type="button" aria-pressed="false">私信</button></div><span id="group-count" class="count">0</span></div>
   <input id="group-search" type="search" class="side-search" placeholder="搜索群名或群号" aria-label="搜索群名或群号" autocomplete="off">
   <div id="groups" class="group-list" role="list" aria-label="授权群组"></div>
+  <div id="private-contacts" class="group-list" role="list" aria-label="私信联系人" hidden></div>
   <form id="white-form" class="add-group"><input id="white-id" inputmode="numeric" placeholder="输入群号添加" aria-label="要加入白名单的群号"><button id="white-add" type="submit">添加</button></form>
   <nav class="side-nav" aria-label="全局页面"><button data-view="system" type="button"><span class="nav-icon overview" aria-hidden="true"></span>所有群总览</button><button data-view="stickers" type="button"><span class="nav-icon sticker" aria-hidden="true"></span>共享表情库</button><button id="open-console" type="button"><span class="nav-icon console" aria-hidden="true"></span>命令行</button></nav>
   <div class="side-foot"><button id="theme-toggle" type="button" class="link-button" aria-pressed="false">深色模式</button><span id="footer-model" title="当前群的回复模型"></span></div>
@@ -15,8 +16,24 @@
 <main class="main">
   <header class="group-header">
     <div class="group-heading"><h1 id="group-title">正在读取群列表…</h1><div class="group-meta"><span id="group-status" class="status-pill">—</span><span id="group-subtitle"></span><span id="session-detail"></span></div></div>
-    <div id="group-actions" class="group-actions"><button id="reconnect-napcat" type="button">重连 NapCat</button><button id="reconnect-mcp" type="button" title="新建MCP会话并验证当前群，不重启其他应用">重连 NapCat MCP</button><button id="session-stop" type="button">终止当前会话</button><button id="session-clear" type="button">清空对话上下文</button><button id="pause" type="button">暂停</button><button id="restart" type="button">重启</button><button id="white-remove" type="button" class="danger-text">移出白名单</button></div>
+    <div id="group-actions" class="group-actions"><button id="receive-only" type="button">仅接收消息</button><button id="avatar-refresh" type="button">刷新头像</button><button id="reconnect-napcat" type="button">重连 NapCat</button><button id="reconnect-mcp" type="button" title="新建MCP会话并验证当前群，不重启其他应用">重连 NapCat MCP</button><button id="session-stop" type="button">终止当前会话</button><button id="session-clear" type="button">清空对话上下文</button><button id="pause" type="button">暂停</button><button id="restart" type="button">重启</button><button id="white-remove" type="button" class="danger-text">移出白名单</button></div>
   </header>
+  <section id="private-view" class="private-view" hidden aria-label="私信会话">
+    <div class="private-toolbar"><span id="private-service-state" class="hint">正在连接私信服务…</span><span class="spacer"></span><label class="check"><input id="private-auto" type="checkbox">自动回复</label><button id="private-refresh" type="button">刷新</button></div>
+    <nav id="private-tabs" class="tabs" aria-label="当前私信页面"><button type="button" data-private-tab="logs" class="active">聊天记录<span id="private-trace-count" class="count">0</span></button><button type="button" data-private-tab="status">运行状态</button><button type="button" data-private-tab="settings">行为设置</button><button type="button" data-private-tab="persona">人设与规则</button><button type="button" data-private-tab="memory">私聊记忆</button><button type="button" data-private-tab="knowledge">知识库</button><button type="button" data-private-tab="member">联系人标记</button></nav>
+    <div class="private-layout" data-private-pane="logs"><div class="private-chat-column">
+      <div class="private-log-toolbar"><div class="segmented" role="group" aria-label="私信显示内容"><button type="button" data-private-kind="all" class="active">全部</button><button type="button" data-private-kind="chat">只看聊天</button><button type="button" data-private-kind="flow">只看执行过程</button><button type="button" data-private-kind="system">只看系统提示词</button></div><input id="private-record-search" type="search" placeholder="搜索私信或执行记录" aria-label="搜索私信记录"><label class="check"><input id="private-follow" type="checkbox" checked>自动滚到最新</label></div>
+      <div id="private-messages" class="chat private-messages" aria-label="私信聊天记录" role="log" aria-live="polite"><div class="empty">选择左侧联系人，查看私信和群友印象</div></div>
+      <div id="private-log-count" class="chat-footer"></div>
+      <form id="private-composer" class="composer" aria-label="发送私信"><div class="composer-options"><label>发送类型<select id="private-role" aria-label="私信发送类型"><option value="bot">机器人消息（发私信）</option><option value="system">系统提示词（仅当前私聊）</option></select></label><span id="private-system-lifetime" class="hint" hidden>当前私聊 · 直到修改或清除</span><button id="private-clear-system" type="button" hidden>清除系统提示词</button></div><textarea id="private-text" rows="2" maxlength="2000" placeholder="选择联系人后发送文字私信" aria-label="私信内容" disabled></textarea><div class="composer-bottom"><span id="private-send-state" class="hint">私信会话单独保存，仅本人可见</span><button id="private-send" class="primary" type="submit" disabled>发送私信</button></div></form>
+    </div><aside class="private-impression"><h2>群友印象</h2><p class="hint">根据同一 QQ 账号在授权群的本人发言整理，辅助机器人自然接话。</p><div id="private-impression"><div class="empty">选择联系人后查看</div></div></aside></div>
+    <section id="private-status-pane" class="private-pane" data-private-pane="status" hidden></section>
+    <section id="private-settings-pane" class="private-pane" data-private-pane="settings" hidden></section>
+    <section id="private-persona-pane" class="private-pane" data-private-pane="persona" hidden></section>
+    <section id="private-memory-pane" class="private-pane" data-private-pane="memory" hidden></section>
+    <section id="private-knowledge-pane" class="private-pane" data-private-pane="knowledge" hidden></section>
+    <section id="private-member-pane" class="private-pane" data-private-pane="member" hidden></section>
+  </section>
   <nav id="group-tabs" class="tabs" data-context-tabs aria-label="当前群页面"><button data-tab="logs" class="active" type="button">聊天记录<span id="trace-count" class="count">0</span></button><button data-tab="status" type="button">运行状态</button><button data-tab="settings" type="button">行为设置</button><button data-tab="persona" type="button">人设与规则</button><button data-tab="database" type="button">群记忆</button><button data-tab="knowledge" type="button">知识库</button><button data-tab="members" type="button">群友标记</button></nav>
 
   <section id="tab-logs" class="tab active">
@@ -67,11 +84,12 @@
   <section id="tab-members" class="tab">
     <div class="page-bar"><input id="member-search" type="search" placeholder="搜索群友昵称、QQ号或标记" aria-label="搜索群友标记"><span class="spacer"></span><button id="member-refresh" type="button">刷新</button></div>
     <p class="page-note">标记只保存在当前群后台。手动标记优先；自动 bot 标记需要多次指令响应证据，不根据聊天文风猜测 AI 或真人。</p>
-    <form id="member-form" class="member-editor"><label>QQ号<input id="member-account" inputmode="numeric" pattern="[1-9][0-9]{4,14}" required aria-label="标记群友QQ号"></label><label>账号类型<select id="member-label"><option value="AI">AI</option><option value="bot">bot</option><option value="human">真人</option><option value="owner">bot主</option><option value="auto">恢复自动判断</option><option value="clear">清除标记和判断记录</option></select></label><label class="member-note">账号说明<input id="member-note" maxlength="200" placeholder="可选，按设置供模型参考"></label><button id="member-save" class="primary" type="submit">保存标记</button></form>
+    <form id="member-form" class="member-editor"><label>QQ号<input id="member-account" inputmode="numeric" pattern="[1-9][0-9]{4,14}" required aria-label="标记群友QQ号"></label><label>账号类型<select id="member-label"><option value="AI">AI</option><option value="bot">bot</option><option value="human">真人</option><option value="owner">bot主</option><option value="auto">恢复自动判断</option><option value="clear">清除标记和判断记录</option></select></label><label>标记范围<select id="member-scope" aria-label="手动标记生效范围"><option value="global">全局</option><option value="group">本群</option></select></label><label class="member-note">账号说明<input id="member-note" maxlength="200" placeholder="可选，按设置供模型参考"></label><button id="member-save" class="primary" type="submit">保存标记</button></form>
     <p id="member-count" class="page-note"></p><div id="member-records" class="data-table"></div>
   </section>
 
   <section id="tab-settings" class="tab">
+    <div class="page-bar"><span>完整设置包：全局配置、人设、启用群聊、群覆盖与群友标记</span><span class="spacer"></span><button id="settings-export" type="button">导出全部设置</button><button id="settings-import" type="button">导入设置文件</button><input id="settings-file" type="file" accept=".json,application/json" hidden></div>
     <div class="page-bar">
       <div class="scope-switch" role="group" aria-label="设置范围"><button data-scope="global" class="active" type="button">全局默认</button><button data-scope="group" type="button">只改这个群</button></div>
       <p id="scope-description" class="scope-note">所有没有单独设置的群都使用这里的值</p>
@@ -131,11 +149,12 @@
 <dialog id="member-dialog" class="intervention-dialog" aria-labelledby="member-dialog-title"><form id="member-dialog-form">
   <div class="dialog-head"><h2 id="member-dialog-title">群友资料与标记</h2><button id="member-dialog-close" type="button" class="icon-button" aria-label="关闭群友资料">×</button></div>
   <div id="member-dialog-person" class="member-person"></div>
+  <div class="store-field"><label>标记范围</label><div><div id="member-dialog-scope" class="segmented" role="group" aria-label="标记生效范围"><button type="button" data-member-scope="global">全局</button><button type="button" data-member-scope="group">本群</button></div><p id="member-dialog-scope-note" class="page-note"></p></div></div>
+  <div class="store-field"><label for="member-dialog-aliases">额外昵称</label><div class="collection-setting member-aliases-control"><span id="member-dialog-aliases-summary" class="collection-summary">未添加项目</span><button id="member-dialog-aliases" type="button" aria-label="编辑额外昵称">编辑</button></div></div>
   <div class="store-field"><label for="member-dialog-label">账号类型</label><select id="member-dialog-label"><option value="auto">自动判断 / 未标记</option><option value="AI">AI</option><option value="bot">bot</option><option value="human">真人</option><option value="owner">bot主</option><option value="clear">清除标记和判断记录</option></select></div>
-  <div class="store-field"><label for="member-dialog-aliases">额外昵称</label><textarea id="member-dialog-aliases" rows="2" placeholder="昵称B, aaaa（逗号或换行分隔）" maxlength="500"></textarea></div>
   <div class="store-field"><label for="member-dialog-note">账号说明</label><input id="member-dialog-note" maxlength="200" placeholder="可选，按设置供模型参考"></div>
   <div class="store-field"><label for="member-dialog-blocked">屏蔽（黑名单）</label><label class="member-block-control"><input id="member-dialog-blocked" type="checkbox"> 屏蔽此账号，后台仍可查看；模型不再读取或回复</label></div>
-  <p id="member-dialog-evidence" class="page-note"></p><p class="page-note">仅对当前群生效；人工资料优先。三项资料默认可供模型参考；模型自行标记默认关闭，可在行为设置分别控制。资料不会作为消息直接发送到QQ群。</p>
+  <p id="member-dialog-evidence" class="page-note"></p><p class="page-note">人工资料优先。三项资料默认可供模型参考；模型自行标记默认关闭，可在行为设置分别控制。资料不会作为消息直接发送到QQ群。</p>
   <div class="dialog-foot"><span id="member-dialog-result" class="hint" role="status"></span><button id="member-dialog-save" class="primary" type="submit">保存群友资料</button></div>
 </form></dialog>
 <dialog id="intervention-dialog" class="intervention-dialog" aria-labelledby="intervention-title">
