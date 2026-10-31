@@ -2,9 +2,11 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import tempfile
+import socket
+import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 import httpx
 from console_config import atomic, runtime, Config
 from debug_console import Console, Supervisor
@@ -14,6 +16,54 @@ from config_metadata import FIELDS
 
 
 class WebUITests(unittest.TestCase):
+    def test_disconnected_response_does_not_attempt_a_second_response(self):
+        handler_type=self.server.server.RequestHandlerClass
+        for phase in ('headers','body'):
+            for error in (ConnectionAbortedError(10053,'connection aborted'),ConnectionResetError(10054,'connection reset'),BrokenPipeError('broken pipe'),TimeoutError('write timed out')):
+                with self.subTest(phase=phase,error=type(error).__name__):
+                    handler=object.__new__(handler_type)
+                    handler.path='/api/snapshot?group=100'
+                    handler.allowed_host=Mock(return_value=True);handler.authorized=Mock(return_value=True)
+                    handler.send_response=Mock();handler.send_header=Mock();handler.end_headers=Mock()
+                    handler.wfile=Mock();handler.close_connection=False
+                    if phase=='headers':handler.end_headers.side_effect=error
+                    else:handler.wfile.write.side_effect=error
+                    with patch.object(self.server,'snapshot',return_value={'events':[]}):handler.do_GET()
+                    handler.send_response.assert_called_once_with(200)
+                    self.assertTrue(handler.close_connection)
+                    if phase=='headers':handler.wfile.write.assert_not_called()
+
+    def test_post_response_disconnect_does_not_repeat_completed_action(self):
+        handler=object.__new__(self.server.server.RequestHandlerClass)
+        handler.path='/api/action';handler.allowed_host=Mock(return_value=True);handler.authorized=Mock(return_value=True)
+        payload=json.dumps({'action':'pause','group':100}).encode()
+        handler.headers={'Content-Length':str(len(payload))};handler.rfile=Mock();handler.rfile.read.return_value=payload
+        handler.connection=Mock();handler.send_response=Mock();handler.send_header=Mock();handler.end_headers=Mock()
+        handler.wfile=Mock();handler.wfile.write.side_effect=ConnectionAbortedError(10053,'connection aborted')
+        with patch.object(self.server,'dispatch',return_value={'ok':True}) as dispatch:handler.do_POST()
+        dispatch.assert_called_once();handler.send_response.assert_called_once_with(200)
+        self.assertTrue(handler.close_connection)
+
+    def test_closed_snapshot_client_leaves_server_available(self):
+        entered=threading.Event();release=threading.Event();finished=threading.Event()
+        handler_type=self.server.server.RequestHandlerClass;original_finish=handler_type.finish
+        def snapshot(query):
+            entered.set();release.wait(3);return {'events':[]}
+        def finish(handler):
+            try:original_finish(handler)
+            finally:finished.set()
+        with patch.object(self.server,'snapshot',side_effect=snapshot),patch.object(handler_type,'finish',new=finish),patch.object(self.server.server,'handle_error') as errors:
+            client=socket.create_connection(('127.0.0.1',self.server.server.server_port),timeout=3)
+            try:
+                host='127.0.0.1:'+str(self.server.server.server_port)
+                client.sendall(('GET /api/snapshot?group=100 HTTP/1.0\r\nHost: '+host+'\r\nX-QQ-Debug-Key: '+self.server.token+'\r\n\r\n').encode())
+                self.assertTrue(entered.wait(3))
+                client.shutdown(socket.SHUT_RDWR);client.close();release.set()
+                self.assertTrue(finished.wait(3))
+                errors.assert_not_called()
+            finally:client.close();release.set()
+        self.assertEqual(self.client.get('/api/snapshot?group=100',headers=self.headers).status_code,200)
+
     def test_settings_export_preview_apply_and_selected_group_change(self):
         self.assertEqual(self.client.get('/api/settings-bundle').status_code,401)
         bundle=self.client.get('/api/settings-bundle',headers=self.headers).json()

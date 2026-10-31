@@ -34,13 +34,23 @@ class DebugWebUI:
         owner=self;cfg=self.config.load();self.bind_host=cfg['webui_host'];address=ipaddress.ip_address(self.bind_host)
         class Handler(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
+            def handle(self):
+                try:super().handle()
+                except (ConnectionError,TimeoutError):
+                    # A tab may disappear while request headers/body are read.
+                    self.close_connection=True
             def reply(self,status,value,mime='application/json; charset=utf-8'):
                 body=(json.dumps(value,ensure_ascii=False).encode('utf-8') if isinstance(value,(dict,list)) else value)
-                self.send_response(status)
-                self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(body)))
-                self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
-                self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
-                self.end_headers();self.wfile.write(body)
+                try:
+                    self.send_response(status)
+                    self.send_header('Content-Type',mime);self.send_header('Content-Length',str(len(body)))
+                    self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
+                    self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'; form-action 'self'")
+                    self.end_headers();self.wfile.write(body)
+                except (ConnectionError,TimeoutError):
+                    # Once a response starts, a broken connection cannot receive
+                    # another error response. It does not invalidate the action.
+                    self.close_connection=True
             def allowed_host(self):
                 if len(self.headers.get_all('Host',[]))!=1:return False
                 try:
