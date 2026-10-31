@@ -4,6 +4,8 @@
     123456789
   ],
   "enabled": false,
+  "stickers_enabled": true,
+  "knowledge_max_chars": 0,
   "member_reference_type_enabled": true,
   "member_reference_aliases_enabled": true,
   "member_reference_note_enabled": true,

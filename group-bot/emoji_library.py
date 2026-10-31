@@ -132,8 +132,10 @@ def market_face_packet(data):
 
 
 class EmojiLibrary:
-    def __init__(self, root, face_catalog, classifier=None, shared=False):
+    def __init__(self, root, face_catalog, classifier=None, shared=False, policy_root=None):
         self.root = Path(root)
+        self.policy_root=Path(policy_root) if policy_root is not None else (self.root.parent if self.root.name=='shared-emoji-library' else self.root)
+        self.excluded_path=(self.policy_root/'shared-emoji-library' if self.policy_root!=self.root else self.root)/'excluded.json'
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / 'index.json'
         self.shared = shared
@@ -174,6 +176,75 @@ class EmojiLibrary:
             return result if isinstance(result, dict) else {}
         except (OSError, ValueError):
             return {}
+
+    def enabled(self):
+        return read_json(self.policy_root/'settings.json').get('stickers_enabled',True) is not False
+
+    def is_excluded(self,key='',digest=''):
+        # Read afresh: other groups and an in-flight classifier must immediately
+        # see an operator's exclusion. This file is never pruned with rejections.
+        data=self._read(self.excluded_path)
+        return bool((digest and digest in data.get('hashes',{})) or
+            (key and (key in data.get('ids',{}) or self.aliases.get(key,key) in data.get('ids',{}))))
+
+    @serialized
+    def exclude(self,key,digest='',label='',kind='sticker'):
+        canonical=self.aliases.get(key,key);item=self.items.get(canonical,{})
+        kind=item.get('kind',kind)
+        digest=digest or item.get('content_hash') or next((d for d,k in self.hashes.items() if k==canonical),'')
+        if not digest and kind!='market_face' and item.get('path'):
+            digest=hashlib.sha256(asset_path(item,'path',self.root).read_bytes()).hexdigest()
+        if kind!='market_face' and not re.fullmatch(r'[a-f0-9]{64}',digest):raise ValueError('缺少图片哈希，无法永久排除')
+        if kind!='market_face':canonical='s'+digest[:16]
+        data=self._read(self.excluded_path)
+        ids=data.setdefault('ids',{});hashes=data.setdefault('hashes',{});entries=data.setdefault('items',{})
+        keys={key,canonical}|{alias for alias,value in self.aliases.items() if value in {key,canonical}}
+        for identity in keys:ids[identity]=canonical
+        if digest:hashes[digest]=canonical
+        entries[canonical]={'id':canonical,'content_hash':digest,'kind':kind,
+            'title':str(label or item.get('label') or canonical)[:100],'time':time.time()}
+        self.excluded_path.parent.mkdir(parents=True,exist_ok=True)
+        self._write(self.excluded_path,data)
+        for identity in list(self.items):
+            entry=self.items[identity]
+            if identity not in keys and (not digest or entry.get('content_hash')!=digest):continue
+            for field in ('path','preview'):
+                if not entry.get(field):continue
+                path=asset_path(entry,field,self.root)
+                if path.is_relative_to(self.root.resolve()) and path.is_file():path.unlink(missing_ok=True)
+            self.items.pop(identity,None)
+        for identity in keys:self.rejected.pop(identity,None)
+        self.save()
+        return canonical
+
+    def filter_delivery(self,part):
+        """Drop only disallowed sticker media, retaining text and drawn images."""
+        identities=part.get('_media_ids',[])
+        packet=part.get('_market_face') or {}
+        if not identities and packet.get('emoji_id'):
+            identities=['m'+hashlib.sha256(str(packet['emoji_id']).encode()).hexdigest()[:16]]
+        blocked=bool(identities) and (not self.enabled() or any(self.is_excluded(key) for key in identities))
+        if part.get('action')=='forward_group_single_msg':
+            return self.enabled() and not blocked
+        message=part.get('params',{}).get('message',[])
+        if not blocked:
+            for segment in message:
+                data=segment.get('data',{});file=str(data.get('file',''))
+                if segment.get('type')=='mface':
+                    key='m'+hashlib.sha256(str(data.get('emoji_id','')).encode()).hexdigest()[:16]
+                    blocked=not self.enabled() or self.is_excluded(key)
+                elif segment.get('type')=='face':blocked=not self.enabled()
+                elif segment.get('type')=='image' and file.startswith('base64://'):
+                    try:
+                        digest=hashlib.sha256(base64.b64decode(file[9:],validate=True)).hexdigest()
+                        blocked=self.is_excluded(digest=digest) or (not self.enabled() and digest in self.hashes)
+                    except ValueError:pass
+                if blocked:break
+        if blocked:
+            part['params']['message']=[s for s in message if s.get('type') not in {'image','face','mface'}]
+            part.pop('_media_ids',None)
+            return any(s.get('type') not in {'reply','at'} for s in part['params']['message'])
+        return True
 
     def reload(self):
         self.items = self._read(self.path)
@@ -244,12 +315,14 @@ class EmojiLibrary:
     def import_library(self, old_root):
         old_root = Path(old_root)
         report = {'added': 0, 'duplicates': 0, 'ignored': 0}
+        if not self.enabled():return report
         for old_key, item in self._read(old_root / 'index.json').items():
             if approved(item) and asset_path(item,'path',old_root).is_file():
                 source=asset_path(item,'path',old_root)
                 if not source.is_relative_to(Path(old_root).resolve()):
                     report['ignored'] += 1;continue
                 digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                if self.is_excluded(old_key,digest):report['ignored']+=1;continue
                 key = self.hashes.get(digest, 's' + digest[:16])
                 self.aliases[old_key] = key
                 if digest in self.hashes:
@@ -261,6 +334,7 @@ class EmojiLibrary:
                 report['added'] += 1
             elif (item.get('kind') == 'market_face' and item.get('source_group_id') in authorized_groups()
                     and re.fullmatch(r'-?\d+', str(item.get('source_message_id', '')))):
+                if self.is_excluded(old_key):report['ignored']+=1;continue
                 if old_key not in self.items:
                     self.items[old_key] = item
                     report['added'] += 1
@@ -277,6 +351,7 @@ class EmojiLibrary:
     def offer_candidate(self, data, usage=None):
         """Repetition is a candidate signal; normal visual admission still applies."""
         key = sticker_source_key(data)
+        if not self.enabled() or self.is_excluded(key):return
         canonical = self.aliases.get(key, key)
         if usage:
             self.usage_by_key[key]=dict(usage)
@@ -300,6 +375,7 @@ class EmojiLibrary:
 
     @serialized
     def observe(self, msg):
+        if not self.enabled():return
         segments = msg.get('message', [])
         if not isinstance(segments, list):
             return
@@ -317,6 +393,7 @@ class EmojiLibrary:
                     continue
                 packet['summary'] = str(packet['summary'] or '[商城表情]')[:50]
                 key = 'm' + hashlib.sha256(packet['emoji_id'].encode()).hexdigest()[:16]
+                if self.is_excluded(key):continue
                 previous = self.items.get(key, {})
                 item = {**previous,'id': key, 'kind': 'market_face', 'label':previous.get('label',packet['summary']) if previous.get('metadata_edited') else packet['summary'], 'data': packet, 'time': time.time()}
                 item['package_name']=str(previous.get('package_name') if previous.get('metadata_edited') else data.get('emoji_package_name') or data.get('package_name') or previous.get('package_name') or '')[:80]
@@ -365,6 +442,7 @@ class EmojiLibrary:
 
     @serialized
     def apply_admission(self, entry, key):
+        if not self.enabled() or self.is_excluded(key):return False
         if not valid_classification(entry, key) or key not in self.items or self.items[key]['kind'] != 'sticker':
             return False
         item=self.items[key]
@@ -381,6 +459,7 @@ class EmojiLibrary:
 
     @serialized
     def learn_emotions(self, observations, choices, maximum=3):
+        if not self.enabled():return 0
         allowed = {item['id'] for item in choices if approved(item)}
         emotions = {'开心', '无语', '疑惑', '震惊', '难过', '赞同', '安慰', '打招呼', '撒娇', '调侃', '其他'}
         added = 0
@@ -421,6 +500,7 @@ class EmojiLibrary:
         return keys
 
     def offer_uploads(self):
+        if not self.enabled():return
         for manifest in (self.root/'incoming').glob('*.json'):
             try:
                 data=json.loads(manifest.read_text(encoding='utf-8'))
@@ -450,6 +530,8 @@ class EmojiLibrary:
             reviewed=False
             local_upload=data.get('_upload_origin')==self._upload_origin
             try:
+                if not self.enabled():continue
+                if self.is_excluded(key):reviewed=True;continue
                 if not local_upload and not self.allow_candidate(data):continue
                 if data.get('_local_path'):
                     if not local_upload:continue
@@ -477,6 +559,7 @@ class EmojiLibrary:
                     preview.thumbnail((192, 192))
                 digest = hashlib.sha256(raw).hexdigest()
                 with self.transaction():
+                    if self.is_excluded(key,digest):reviewed=True;continue
                     existing = self.hashes.get(digest)
                     usage=self.usage_by_key.get(key,{})
                     reconsider=existing in self.rejected and self.rejected[existing].get('asset_type') in {'photo','uncertain','other'} and usage.get('seen_count',0)>=max(self.review_min_count,self.rejected[existing].get('review_seen_count',0)+self.review_step)
@@ -492,11 +575,14 @@ class EmojiLibrary:
                 # Neither a QQ sub_type nor an emotion label proves admission.
                 if self.classifier is None:
                     continue
+                if not self.enabled():continue
                 if not local_upload and not self.allow_candidate(data):continue
                 with tempfile.TemporaryDirectory(prefix='check-', dir=self.root) as folder:
                     candidate = Path(folder) / ('candidate.' + extension)
                     candidate.write_bytes(raw)
                     entry = await self.classifier(candidate, canonical)
+                if not self.enabled():continue
+                if self.is_excluded(key,digest):reviewed=True;continue
                 if not accepts(entry, canonical, usage, self.review_min_count):
                     if valid_classification(entry, canonical):
                         reviewed=True
@@ -514,6 +600,8 @@ class EmojiLibrary:
                             self.save()
                     continue
                 with self.transaction():
+                    if not self.enabled():continue
+                    if self.is_excluded(key,digest):reviewed=True;continue
                     if self.rejected.get(canonical,{}).get('asset_type')=='manual':
                         reviewed=True;continue
                     existing = self.hashes.get(digest)
@@ -566,6 +654,7 @@ class EmojiLibrary:
 
     @serialized
     def choices(self, text, received=()):
+        if not self.enabled():return []
         received = [self.aliases.get(key, key) for key in received]
         query = grams(text)
         common = {'微笑', '呲牙', '龇牙', '狗头', '喵喵', '汪汪', '捂脸', '笑哭', '吃瓜', '斜眼笑'}
@@ -576,10 +665,10 @@ class EmojiLibrary:
         native = ([{'id': 'f' + face_id, 'kind': 'qq_face', 'label': label, 'face_id': face_id,
             'explicitly_requested': True} for face_id, label in self.faces.items()] if face_request else [])
         native.sort(key=lambda item: (len(query & grams(item['label'])), item['label'] in common), reverse=True)
-        market = [item for item in self.items.values() if item['kind'] == 'market_face'
+        market = [item for item in self.items.values() if item['kind'] == 'market_face' and not self.is_excluded(item['id'])
             and item.get('source_group_id') in authorized_groups() and item.get('source_message_id')]
         market.sort(key=lambda item: (len(query & grams(item['label'])), item['time']), reverse=True)
-        pool = [{**item,'_asset_root':str(self.root.resolve())} for item in self.items.values() if approved(item)
+        pool = [{**item,'_asset_root':str(self.root.resolve())} for item in self.items.values() if approved(item) and not self.is_excluded(item['id'],item.get('content_hash'))
             and asset_path(item,'path',self.root).is_file() and asset_path(item,'preview',self.root).is_file()]
         # Reserve two recent expressions; rotate the rest of the library, with
         # a penalty for recently sent assets. Older collected stickers stay useful.

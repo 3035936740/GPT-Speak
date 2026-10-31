@@ -226,6 +226,7 @@ class DebugWebUI:
             'sticker_prefill_ready':bool(state.get('pid')) and read_json(folder/'sticker-prefill-worker.json').get('pid')==state.get('pid'),
             'intervention_count':sum(row['status']=='active' for row in Interventions(self.root,selected).list()),
             'online':bool(state.get('online')),'receive_only':bool(cfg.get('receive_only')),'session_paused':bool(read_json(folder/'session-control.json').get('paused')),
+            'stickers_enabled':cfg.get('stickers_enabled',True),
             'avatar_refresh':read_json(folder/'avatar-refresh.json').get('created',0),'worker_running':instance_locked(folder),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
             'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
             'records':len(records),'shown_records':len(filtered),'text_chars':stored_text_chars,

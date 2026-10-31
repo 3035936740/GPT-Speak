@@ -107,17 +107,25 @@ class KnowledgeBase:
         row['scope']='shared' if row['scope']==0 else 'group';row['enabled']=bool(row['enabled'])
         return row
 
-    def retrieve(self,group,query,budget=1800):
+    def retrieve(self,group,query,budget=0):
         if not self.path.exists():return []
-        tokens=sorted(terms(query))[:64]
+        unlimited=int(budget)==0
+        tokens=sorted(terms(query))
+        if not unlimited:tokens=tokens[:64]
         if not tokens:return []
         with self.connect() as db:
-            placeholders=','.join('?' for _ in tokens)
+            # Join a temporary query table instead of exceeding SQLite's bind
+            # parameter limit when the unlimited query has many unique terms.
+            db.execute('CREATE TEMP TABLE query_terms(term TEXT PRIMARY KEY)')
+            db.executemany('INSERT INTO query_terms VALUES (?)',((term,) for term in tokens))
             rows=db.execute('''SELECT c.id,c.position,c.content,d.id AS document_id,d.title,d.source,d.scope,
                 count(*) AS hits FROM terms t JOIN chunks c ON c.id=t.chunk_id
-                JOIN documents d ON d.id=c.document_id WHERE t.term IN ('''+placeholders+''')
-                AND d.enabled=1 AND d.scope IN (0,?) GROUP BY c.id ORDER BY hits DESC,c.position,c.id DESC LIMIT 40''',tokens+[group]).fetchall()
+                JOIN documents d ON d.id=c.document_id JOIN query_terms q ON q.term=t.term
+                WHERE d.enabled=1 AND d.scope IN (0,?) GROUP BY c.id ORDER BY hits DESC,c.position,c.id DESC'''+('' if unlimited else ' LIMIT 40'),[group]).fetchall()
         ranked=sorted(rows,key=lambda row:row['hits']/math.sqrt(max(1,len(terms(row['content'])))),reverse=True)
+        if unlimited:
+            return [{'id':row['document_id'],'title':row['title'],'source':row['source'],
+                'scope':'shared' if row['scope']==0 else 'group','content':row['content']} for row in ranked]
         result=[];used=set();remaining=max(0,int(budget)-2)
         for row in ranked:
             # Avoid spending the budget on adjacent, heavily overlapping excerpts.

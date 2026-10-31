@@ -60,7 +60,9 @@ class KnowledgeTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.save('x','binary\x00')
         with self.assertRaises(ValueError):checked(self.root,999)
         cfg=Config(self.root);values=cfg.load()
-        self.assertTrue(values['knowledge_enabled']);self.assertEqual(values['knowledge_max_chars'],1800)
+        self.assertTrue(values['knowledge_enabled']);self.assertEqual(values['knowledge_max_chars'],0)
+        cfg.validate({**values,'knowledge_max_chars':0})
+        cfg.validate({**values,'knowledge_max_chars':999999})
         with self.assertRaises(ValueError):cfg.validate({**values,'knowledge_max_chars':199})
         self.assertIn('番茄',terms('番茄 ABC'));self.assertIn('abc',terms('番茄 ＡＢＣ'))
 
@@ -69,6 +71,15 @@ class KnowledgeTests(unittest.TestCase):
         saved=self.save('配置.yaml',content)
         self.assertEqual(self.store.view(100,identity=saved['id'])['content'],content)
         self.assertTrue(self.store.retrieve(100,'番茄浇水'))
+
+    def test_unlimited_retrieval_returns_all_matching_chunks_beyond_old_limits(self):
+        for n in range(6):self.save('番茄资料'+str(n),('番茄浇水知识'+str(n)+'。')*700)
+        rows=self.store.retrieve(100,'番茄浇水')
+        self.assertEqual(len({row['id'] for row in rows}),6)
+        self.assertGreater(len(rows),40)
+        self.assertGreater(sum(len(row['content']) for row in rows),12000)
+        bounded=self.store.retrieve(100,'番茄浇水',budget=500)
+        self.assertLessEqual(len(json.dumps(bounded,ensure_ascii=False,separators=(',',':'))),500)
 
     def test_prompt_integration_respects_disable_and_total_budget(self):
         import bot
@@ -82,6 +93,10 @@ class KnowledgeTests(unittest.TestCase):
             self.assertLessEqual(len(prompt),12800)
             prompt=bot.build_prompt({**cfg,'knowledge_enabled':False},[],'被@',dict(target))
             self.assertNotIn('番茄种植手册',prompt)
+            for n in range(10):self.save('番茄浇水资料'+str(n),'番茄幼苗浇水避免积水。'*500)
+            prompt=bot.build_prompt({**cfg,'knowledge_max_chars':0},[],'被@',dict(target))
+            self.assertLessEqual(len(prompt),12800)
+            self.assertIn('"knowledge_references":[{',prompt)
 
 
 class KnowledgeWebTests(unittest.TestCase):

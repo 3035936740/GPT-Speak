@@ -58,7 +58,7 @@ def preferences(cfg, has_stickers, target=None):
     # Separate the action's availability from a soft preference. The planner
     # decides whether/which emotion fits; execution never takes another lottery.
     # Recent media lowers preference instead of banning an entire conversation.
-    suppressed = not has_stickers or factual
+    suppressed = not cfg.get('stickers_enabled',True) or not has_stickers or factual
     pressure=min(1,max(recent_media/4,.5 if last_bot_media else 0))
     factor=max(.1,1-cfg.get('sticker_recent_suppression_strength',.5)*pressure)
     def rate(key,default):

@@ -147,7 +147,7 @@ def database_mutate(root,group,table,mode,values=None,row_id=None,expected=None)
     return {'ok':True,'message':'数据库已保存，修改前快照已备份'}
 
 
-def library(root):return EmojiLibrary(Path(root)/'shared-emoji-library',Path(root)/'qq-faces.json',shared=True)
+def library(root):return EmojiLibrary(Path(root)/'shared-emoji-library',Path(root)/'qq-faces.json',shared=True,policy_root=root)
 
 
 def approve_image(lib, path, values):
@@ -164,6 +164,8 @@ def approve_image(lib, path, values):
     if not (values.get('label', '').strip() or values.get('description', '').strip()): raise ValueError('请填写表情名称或说明')
     raw = Path(path).read_bytes(); digest = hashlib.sha256(raw).hexdigest(); key = 's' + digest[:16]
     with lib.transaction():
+        if not lib.enabled():raise ValueError('表情总开关已关闭，不能收录表情')
+        if lib.is_excluded(key,digest):raise ValueError('此表情已永久排除，不能再次收录')
         backup = lib.root/'admin-backups'; backup.mkdir(exist_ok=True)
         atomic(backup/(str(time.time_ns())+'.json'), {'index':lib.items, 'hashes':lib.hashes, 'aliases':lib.aliases, 'rejected':lib.rejected})
         assets = own_asset(lib.root, key, path, digest)
@@ -178,7 +180,7 @@ def approve_image(lib, path, values):
 
 
 def sticker_view(root,query='',offset=0,state='all',kind='all',emotion=''):
-    if state not in {'all','approved','rejected','pending','unreviewed'}:raise ValueError('未知审核状态')
+    if state not in {'all','approved','rejected','pending','unreviewed','excluded'}:raise ValueError('未知审核状态')
     if kind not in {'all','market_face','image'}:raise ValueError('未知表情类型')
     if emotion and emotion not in EMOTIONS:raise ValueError('未知情绪分类')
     lib=library(root);rows=[]
@@ -193,6 +195,7 @@ def sticker_view(root,query='',offset=0,state='all',kind='all',emotion=''):
             'manual_admission':bool(item.get('manual_admission')),
             'content_hash':item.get('content_hash',''),'time':item.get('time',0)})
     for key,item in lib.rejected.items():
+        if lib.is_excluded(key):continue
         rows.append({'id':key,'kind':'rejected','title':'未收录 · '+item.get('asset_type','未知'),
             'state':'rejected','asset_type':item.get('asset_type',''),'review_seen_count':item.get('review_seen_count',0),'time':item.get('time',0)})
     incoming=lib.root/'incoming'
@@ -200,13 +203,15 @@ def sticker_view(root,query='',offset=0,state='all',kind='all',emotion=''):
         try:meta=json.loads(path.read_text(encoding='utf-8'))
         except (ValueError,OSError):continue
         rows.append({'id':path.stem,'kind':'pending','title':str(meta.get('label') or '待审核图片')[:80],'state':'pending','time':meta.get('time',0)})
+    for key,item in lib._read(lib.excluded_path).get('items',{}).items():
+        rows.append({**item,'state':'excluded','kind':item.get('kind','sticker')})
     rows=sorted(rows,key=lambda item:item.get('time',0),reverse=True)
     filtered=[row for row in rows
         if (state=='all' or row['state']==state)
         and (kind=='all' or (row['kind']=='market_face' if kind=='market_face' else row['kind']!='market_face'))
         and (not emotion or row.get('emotion')==emotion)
         and str(query).lower() in json.dumps(row,ensure_ascii=False).lower()]
-    offset=max(0,int(offset));return {'rows':filtered[offset:offset+24],'total':len(filtered),'offset':offset,'limit':24,'emotions':EMOTIONS}
+    offset=max(0,int(offset));return {'rows':filtered[offset:offset+24],'total':len(filtered),'offset':offset,'limit':24,'emotions':EMOTIONS,'stickers_enabled':lib.enabled()}
 
 
 def sticker_image(root,key):
@@ -230,7 +235,26 @@ def sticker_image(root,key):
 
 def sticker_mutate(root,mode,key='',values=None):
     lib=library(root)
+    if mode=='exclude':
+        digest='';label='';canonical=key
+        if re.fullmatch(r'u[a-f0-9]{16}',str(key)):
+            meta=lib._read(lib.root/'incoming'/(key+'.json'))
+            if not meta:raise ValueError('待审核图片已处理，请刷新')
+            digest=meta.get('digest','');label=meta.get('label','');canonical='s'+digest[:16]
+        with lib.transaction():
+            if not digest and key not in lib.items and key not in lib.rejected:raise ValueError('表情不存在，请刷新')
+            canonical=lib.exclude(canonical,digest,label)
+            excluded=lib._read(lib.excluded_path)
+            hashes=excluded.get('hashes',{})
+            for manifest in (lib.root/'incoming').glob('*.json'):
+                meta=lib._read(manifest)
+                if meta.get('digest') not in hashes:continue
+                image=(manifest.parent/str(meta.get('path',''))).resolve()
+                if image.parent==manifest.parent.resolve() and image.is_file():image.unlink()
+                manifest.unlink(missing_ok=True)
+        return {'ok':True,'message':'已删除本地表情并永久排除，所有群都不会再次收录或发送同一表情','id':canonical}
     if mode=='create':
+        if not lib.enabled():raise ValueError('表情总开关已关闭，不能收录表情')
         values=values or {};encoded=values.get('image_base64','')
         if not isinstance(encoded,str) or len(encoded)>2800000:raise ValueError('图片上限2MB')
         try:raw=base64.b64decode(encoded,validate=True)
@@ -242,6 +266,8 @@ def sticker_mutate(root,mode,key='',values=None):
         import hashlib
         digest=hashlib.sha256(raw).hexdigest()
         with lib.transaction():
+            if not lib.enabled():raise ValueError('表情总开关已关闭，不能收录表情')
+            if lib.is_excluded(digest=digest):raise ValueError('此表情已永久排除，不能再次收录')
             old=lib.hashes.get(digest)
             if old and old in lib.items:return {'ok':True,'message':'相同图片已入库，未重复保存'}
             if old:

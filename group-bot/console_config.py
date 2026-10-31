@@ -13,6 +13,7 @@ from configure_launch import validate as validate_model
 from storage_io import atomic_write_text, read_text
 
 DEFAULTS = {'bot_name':'yonagi', 'bot_aliases':['Ethereal Paradise','EP'],'avatar_remote_enabled':False,
+    'stickers_enabled':True,
     'receive_only':False,
     'member_labels_global_enabled':False,
     'owner_commands_enabled':False,'owner_command_prefix':'/','owner_command_aliases':{},
@@ -20,7 +21,7 @@ DEFAULTS = {'bot_name':'yonagi', 'bot_aliases':['Ethereal Paradise','EP'],'avata
     'private_reply_enabled':False,'private_use_group_impressions':True,'private_vision_enabled':True,
     'private_max_replies_per_hour':60,'private_max_model_calls_per_day':200,
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
-    'knowledge_enabled':True,'knowledge_max_chars':1800,
+    'knowledge_enabled':True,'knowledge_max_chars':0,
     'high_eq_enabled':True,
     'member_auto_bot_marking_enabled':True,'member_auto_bot_min_observations':10,
     'member_auto_bot_window_messages':200,'member_auto_bot_command_prefixes':['/','!','！','.','。','#','y'],
@@ -57,7 +58,7 @@ ALIASES = {'key':'webui_key','name':'bot_name','aliases':'bot_aliases','rate':'p
 PROTECTED = {'group_id','mcp_env_file','codex_exe'}
 from napcat_connection import DEFAULTS as CONNECTION_DEFAULTS
 DEFAULTS.update(CONNECTION_DEFAULTS)
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
 def pid_alive(pid):
@@ -171,7 +172,7 @@ class Config:
                 if isinstance(current[key],int) and not isinstance(value,int) and key not in {'generated_image_ttl_hours','generated_image_cleanup_interval_hours','generated_image_cleanup_interval_minutes'} and not any(word in key for word in ('probability','confidence','strength')):raise ValueError(key+' 必须为整数')
                 if ('probability' in key or 'confidence' in key) and not 0<=value<=1:raise ValueError(key+' 范围为 0~1')
                 if value<0:raise ValueError(key+' 不能为负数')
-                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0:raise ValueError(key+' 必须大于0')
+                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key=='knowledge_max_chars' and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>1000):raise ValueError(key+' 必须为短文本')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
         if not 20<=cfg['member_auto_bot_window_messages']<=2000:raise ValueError('自动bot判断消息窗口范围20～2000条')
@@ -187,7 +188,7 @@ class Config:
         if not 100<=cfg['console_max_records']<=100000:raise ValueError('控制台记录条数范围100~100000')
         if not 500<=cfg['console_max_text_chars']<=1000000:raise ValueError('控制台文本字符上限范围500~1000000')
         if not 500<=cfg['max_prompt_chars']<=100000:raise ValueError('模型输入字符上限范围500~100000')
-        if not 200<=cfg['knowledge_max_chars']<=12000:raise ValueError('知识库检索字符预算范围200～12000')
+        if type(cfg['knowledge_max_chars']) is not int or (cfg['knowledge_max_chars']!=0 and cfg['knowledge_max_chars']<200):raise ValueError('知识库检索字符预算为0（不限）或至少200字')
         if not 0<=cfg['style_adaptation_strength']<=1:raise ValueError('风格适应强度范围0~1')
         if not 0<=cfg['sticker_recent_suppression_strength']<=1:raise ValueError('近期发图抑制强度范围0~1')
         if not 60<=cfg['conversation_state_ttl_seconds']<=86400:raise ValueError('聊天状态有效期范围60~86400秒')

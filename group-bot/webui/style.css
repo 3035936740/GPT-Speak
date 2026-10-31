@@ -376,7 +376,9 @@ h1{font-size:20px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow
 .sticker-state.pending{background:var(--warn-soft);color:var(--warn)}
 .sticker-state.rejected{background:var(--bad-soft);color:var(--bad)}
 .sticker-entry .key{margin:6px 0 10px}
-.sticker-tools{display:flex;gap:6px;margin-top:auto}
+.sticker-tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}
+.sticker-master{display:flex;align-items:center;gap:8px;color:var(--ink-2);white-space:nowrap;font-size:13px}
+.sticker-state.excluded{color:var(--bad);background:var(--bad-soft)}
 .sticker-tools button{font-size:12.5px;padding:3px 10px}
 
 /* Dialogs, toast, banner */

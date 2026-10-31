@@ -134,10 +134,10 @@
   <section id="tab-stickers" class="tab">
     <div class="page-bar sticker-filters">
       <input id="sticker-search" type="search" placeholder="搜索名称、情绪或哈希" aria-label="搜索表情库">
-      <label>审核状态<select id="sticker-state" aria-label="筛选审核状态"><option value="all">全部</option><option value="approved">已通过</option><option value="rejected">未通过</option><option value="pending">待审核</option><option value="unreviewed">未审核</option></select></label>
+      <label>审核状态<select id="sticker-state" aria-label="筛选审核状态"><option value="all">全部</option><option value="approved">已通过</option><option value="rejected">未通过</option><option value="pending">待审核</option><option value="unreviewed">未审核</option><option value="excluded">永久排除</option></select></label>
       <label>表情类型<select id="sticker-kind" aria-label="筛选表情类型"><option value="all">全部</option><option value="market_face">QQ 商城表情</option><option value="image">图片表情</option></select></label>
       <label>情绪<select id="sticker-emotion" aria-label="筛选表情情绪"><option value="">全部</option></select></label>
-      <span class="spacer"></span><button id="sticker-refresh" type="button">刷新</button><button id="sticker-add" type="button" class="primary">手动录入表情包</button>
+      <span class="spacer"></span><div class="sticker-master"><span>表情总开关</span><label class="switch"><input id="stickers-enabled" type="checkbox" role="switch" aria-label="表情总开关"><span></span></label><span id="stickers-enabled-state" class="switch-label"></span></div><button id="sticker-refresh" type="button">刷新</button><button id="sticker-add" type="button" class="primary">手动录入表情包</button>
     </div>
     <p class="page-note">所有授权群共用。可人工确认直接入库，也可交给自动审核；支持从聊天图片详情收录。</p>
     <div id="sticker-records" class="sticker-grid"></div>

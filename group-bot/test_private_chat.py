@@ -346,7 +346,9 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
             {'id': 'long-note', 'title': '练习说明', 'content': '背景。' * 1000 + '节奏练习每天十分钟'})
         excerpts = private_knowledge(self.service.store.db, '11111', '节奏练习')
         self.assertIn('节奏练习', excerpts[0]['content'])
-        self.assertLessEqual(len(json.dumps(excerpts, ensure_ascii=False)), 1800)
+        self.assertGreater(len(json.dumps(excerpts, ensure_ascii=False)), 1800)
+        bounded = private_knowledge(self.service.store.db, '11111', '节奏练习', budget=1800)
+        self.assertLessEqual(len(json.dumps(bounded, ensure_ascii=False)), 1800)
 
     async def test_private_block_and_note_are_separate_from_group_labels(self):
         save_private_profile(self.root, '11111', 'member', {'note': '喜欢音游', 'aliases': ['小音'], 'blocked': True})

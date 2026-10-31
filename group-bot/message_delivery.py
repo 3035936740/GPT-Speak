@@ -114,12 +114,15 @@ def typing_delay(part):
     return random.uniform(.55,1.05)+min(2,len(text)*.035)
 
 
-async def deliver_burst(api, client, env, plan, allowed, on_sent, delay=None):
+async def deliver_burst(api, client, env, plan, allowed, on_sent, delay=None, filter_part=None):
     """Send short parts together, checking budgets and checkpointing every success."""
     last = {}
     sent = 0
     while plan and allowed():
         part = plan[0]
+        if filter_part is not None and not filter_part(part):
+            plan.pop(0)
+            continue
         last = await deliver_one(api, client, env, plan)
         on_sent(last, part)
         sent += 1

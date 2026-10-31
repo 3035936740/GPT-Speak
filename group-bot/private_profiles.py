@@ -40,20 +40,21 @@ def effective(cfg, row):
     return private_settings.apply(cfg, row)
 
 
-def knowledge(db, peer, query=None, budget=1800):
+def knowledge(db, peer, query=None, budget=0):
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='private_knowledge'").fetchone():
         return []
     rows = [{'id': r[0], 'title': r[1], 'content': r[2], 'stamp': r[3]} for r in db.execute(
-        'SELECT id,title,content,stamp FROM private_knowledge WHERE peer=? ORDER BY stamp DESC LIMIT 50', (str(peer),))]
+        'SELECT id,title,content,stamp FROM private_knowledge WHERE peer=? ORDER BY stamp DESC'+(' LIMIT 50' if query is None or budget else ''), (str(peer),))]
     if query is None:
         return rows
     words = grams(query)
     ranked = [(len(words & grams(row['title'] + row['content'])), row) for row in rows]
     ranked.sort(key=lambda pair: pair[0], reverse=True)
     result = []
-    for score, row in ranked[:3]:
+    for score, row in (ranked[:3] if budget else ranked):
         if not score:
             continue
+        if not budget:result.append(row);continue
         available = budget - len(json.dumps(result + [{**row, 'content': ''}], ensure_ascii=False))
         if available <= 0:
             break
