@@ -1,7 +1,10 @@
 """Bounded latest-message polling; history is optional and never a backlog gate."""
 import asyncio
 import logging
+import re
 import time
+from napcat_errors import NapCatAPIError
+from debug_events import safe_log
 
 log=logging.getLogger('qq-group-bot')
 
@@ -40,13 +43,23 @@ class LatestMessages:
                     if float(contact.get('msgTime',0))<=newest and failure is None:break
                     identity=contact.get('msgId')
                     if not identity:break
-                    message=await asyncio.wait_for(api(client,env,'get_msg',{'message_id':identity}),3)
+                    # A recent-contact snapshot can outlive the message it points
+                    # to, or refer to an event NapCat cannot parse as a message.
+                    # This optional recovery must not turn that into a poll error.
+                    try:
+                        message=await asyncio.wait_for(api(client,env,'get_msg',{'message_id':identity}),3)
+                    except NapCatAPIError as exc:
+                        if exc.action=='get_msg' and re.search(r'消息为空|消息不存在|已被撤回|(?:message|msg).*(?:empty|not found|does not exist|recalled|deleted)',exc.detail,re.I):
+                            log.debug('Latest message skipped; reason=empty_or_unavailable; retcode=%s',exc.retcode)
+                            break
+                        raise
                     if str(message.get('group_id'))!=str(group) or not message.get('message_id'):break
                     rows.append(message);self.latest=max(self.latest,float(message.get('time',0)))
                     log.info('Latest message recovered from recent contact; group=%s',group)
                     failure=None;break
             except Exception as exc:
-                log.warning('Latest message probe unavailable; error_type=%s',type(exc).__name__)
+                log.warning('Latest message probe unavailable; error_type=%s; action=%s; retcode=%s; detail=%s',
+                    type(exc).__name__,getattr(exc,'action','unknown'),getattr(exc,'retcode','unknown'),safe_log(str(exc))[:300])
         if failure:raise failure
         unique={str(row.get('message_id',row.get('message_seq',''))):row for row in rows}
         return {'messages':sorted(unique.values(),key=lambda row:row.get('time',0))}

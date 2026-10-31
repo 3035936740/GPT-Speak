@@ -180,7 +180,7 @@ class Console:
         return url
     def submit_web_action(self,value):
         future=Future();self.web_requests.put((future,value))
-        try:return future.result(timeout=40)
+        try:return future.result(timeout=None if value.get('action')=='knowledge' else 40)
         except FutureTimeoutError:
             future.cancel();raise TimeoutError('WebUI action timed out')
     def drain_web_actions(self):

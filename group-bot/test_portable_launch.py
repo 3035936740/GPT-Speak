@@ -15,6 +15,19 @@ manage=importlib.util.module_from_spec(spec);spec.loader.exec_module(manage)
 
 
 class PortableLaunchTests(unittest.TestCase):
+    @unittest.skipUnless(manage.os.name=='nt','Windows WSL launcher')
+    def test_wsl_start_uses_named_distribution_and_service_without_shell(self):
+        cfg={'mode':'wsl','distribution':'Ubuntu-22.04','service':'yonagi-napcat.service'}
+        expected=['wsl.exe','--distribution','Ubuntu-22.04','--user','root','--exec','systemctl','start','yonagi-napcat.service']
+        self.assertEqual(manage.napcat_command(cfg),expected)
+        with patch.object(manage,'napcat_ready',return_value=False),patch.object(manage,'launch_settings',return_value={'napcat':cfg}),patch.object(manage.subprocess,'run') as run:
+            manage.start_napcat(quiet=True)
+        self.assertEqual(run.call_args.args[0],expected)
+        self.assertTrue(run.call_args.kwargs['check'])
+        self.assertNotIn('shell',run.call_args.kwargs)
+        for key,value in [('distribution','--help'),('service','bad.service;echo')]:
+            with self.assertRaises(ValueError):manage.napcat_command({**cfg,key:value})
+
     def fixture(self,folder):
         root=Path(folder);bot=root/'group-bot';bot.mkdir()
         (bot/'debug_console.py').touch()

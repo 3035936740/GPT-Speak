@@ -9,9 +9,6 @@ import sqlite3
 import time
 import unicodedata
 
-MAX_CONTENT=200000
-
-
 def terms(text):
     text=unicodedata.normalize('NFKC',str(text)).casefold()
     result=set(re.findall(r'[a-z0-9_]{2,40}',text))
@@ -23,7 +20,9 @@ def terms(text):
 
 def chunks(text):
     # Overlap preserves phrases crossing a boundary and caps individual excerpts.
-    return [text[n:n+700] for n in range(0,len(text),600) if text[n:n+700].strip()]
+    for n in range(0,len(text),600):
+        part=text[n:n+700]
+        if part.strip():yield part
 
 
 class KnowledgeBase:
@@ -58,8 +57,8 @@ class KnowledgeBase:
         title=values.get('title','');content=values.get('content','');source=values.get('source','')
         scope=values.get('scope','group');enabled=values.get('enabled',True)
         if not isinstance(title,str) or not 1<=len(title.strip())<=150:raise ValueError('标题须为1～150字')
-        if not isinstance(content,str) or not 1<=len(content.strip())<=MAX_CONTENT:raise ValueError('正文须为1～200000字')
-        if '\x00' in content:raise ValueError('仅支持文本内容，请导入TXT或Markdown')
+        if not isinstance(content,str) or not content.strip():raise ValueError('正文须为非空文本')
+        if '\x00' in content:raise ValueError('仅支持文本内容，请选择文本文件')
         if not isinstance(source,str) or len(source)>200:raise ValueError('来源最多200字')
         if scope not in {'group','shared'} or type(enabled) is not bool:raise ValueError('未知知识范围或启用状态')
         with self.connect() as db:
@@ -74,8 +73,8 @@ class KnowledgeBase:
                 else:identity=secrets.token_hex(12)
                 version=str(time.time_ns())
                 db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)',
-                    (identity,0 if scope=='shared' else group,title.strip(),source.strip(),content.strip(),int(enabled),version,time.time()))
-                for position,part in enumerate(chunks(content.strip())):
+                    (identity,0 if scope=='shared' else group,title.strip(),source.strip(),content,int(enabled),version,time.time()))
+                for position,part in enumerate(chunks(content)):
                     cursor=db.execute('INSERT INTO chunks(document_id,position,content) VALUES (?,?,?)',(identity,position,part))
                     db.executemany('INSERT INTO terms VALUES (?,?)',[(cursor.lastrowid,term) for term in terms(title+' '+part)])
         return {'id':identity,'version':version}

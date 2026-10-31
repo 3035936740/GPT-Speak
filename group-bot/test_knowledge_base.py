@@ -56,13 +56,19 @@ class KnowledgeTests(unittest.TestCase):
 
     def test_validation_config_and_empty_read_does_not_create_database(self):
         self.assertEqual(self.store.retrieve(100,'hello'),[]);self.assertFalse(self.store.path.exists())
-        with self.assertRaises(ValueError):self.save('x','a'*200001)
+        with self.assertRaises(ValueError):self.save('x','  \n ')
         with self.assertRaises(ValueError):self.save('x','binary\x00')
         with self.assertRaises(ValueError):checked(self.root,999)
         cfg=Config(self.root);values=cfg.load()
         self.assertTrue(values['knowledge_enabled']);self.assertEqual(values['knowledge_max_chars'],1800)
         with self.assertRaises(ValueError):cfg.validate({**values,'knowledge_max_chars':199})
         self.assertIn('番茄',terms('番茄 ABC'));self.assertIn('abc',terms('番茄 ＡＢＣ'))
+
+    def test_large_structured_text_preserves_whitespace_and_indexes_tail(self):
+        content='  settings:\r\n    enabled: true\r\n'+(' '*900000)+'\n    topic: 番茄浇水\n  '
+        saved=self.save('配置.yaml',content)
+        self.assertEqual(self.store.view(100,identity=saved['id'])['content'],content)
+        self.assertTrue(self.store.retrieve(100,'番茄浇水'))
 
     def test_prompt_integration_respects_disable_and_total_budget(self):
         import bot
@@ -99,12 +105,42 @@ class KnowledgeWebTests(unittest.TestCase):
                     console.execute('/knowledge 独有测试资料')
                     self.assertIn('独有测试资料',console.notice)
                     console.execute('/help knowledge')
-                    self.assertIn('TXT/Markdown',console.notice)
+                    self.assertIn('YAML、JSON、INI',console.notice)
                     self.assertEqual(client.get('/api/knowledge?group=100',headers=headers).json()['total'],1)
                     self.assertEqual(client.get('/api/knowledge?group=200',headers=headers).json()['total'],0)
                     self.assertEqual(client.get('/api/knowledge?group=200&id='+saved['id'],headers=headers).status_code,400)
                     response=client.post('/api/action',headers=headers,json={'action':'knowledge','mode':'delete','group':100,'id':saved['id'],'expected':saved['version']})
                     self.assertEqual(response.status_code,200,response.text)
+            finally:server.close()
+
+    def test_knowledge_endpoint_accepts_beyond_generic_body_limits_and_preserves_scope(self):
+        from debug_webui import DebugWebUI
+        from knowledge_base import KnowledgeBase
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            cfg=json.loads(Path(__file__).with_name('settings.json').read_text(encoding='utf-8'))
+            cfg.update(group_id=100,chat_group_whitelist=[100,200]);atomic(root/'settings.json',cfg)
+            def dispatch(value):
+                store,group=checked(root,value['group'])
+                return {'result':store.save(group,value['values'])}
+            server=DebugWebUI(root,dispatch);server.start()
+            try:
+                with httpx.Client(base_url=server.base_url,trust_env=False,timeout=60) as client:
+                    headers={'X-QQ-Debug-Key':server.token}
+                    self.assertEqual(client.post('/api/knowledge',json={}).status_code,401)
+                    self.assertEqual(client.post('/api/knowledge',headers=headers,json={'action':'command'}).status_code,400)
+                    content='  config:\n'+(' '*(13*1024*1024))+'\n    tail: 番茄资料\n  '
+                    value={'action':'knowledge','group':100,'values':{'title':'大配置.ini','content':content}}
+                    result=client.post('/api/knowledge',headers=headers,json=value)
+                    self.assertEqual(result.status_code,200,result.text[:300])
+                    identity=result.json()['result']['id']
+                    row=client.get('/api/knowledge?group=100&id='+identity,headers=headers).json()
+                    self.assertEqual(row['content'],content)
+                    self.assertEqual(client.get('/api/knowledge?group=200',headers=headers).json()['total'],0)
+                    self.assertTrue(KnowledgeBase(root).retrieve(100,'番茄资料'))
+                    # The dedicated text endpoint does not remove other action limits.
+                    bounded_value={**value,'values':{'title':'其他接口限制','content':'x'*(4*1024*1024)}}
+                    self.assertEqual(client.post('/api/action',headers=headers,json=bounded_value).status_code,413)
             finally:server.close()
 
 

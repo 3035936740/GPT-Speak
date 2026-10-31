@@ -67,6 +67,14 @@ def local_path(value):
 
 def napcat_command(cfg):
     mode=cfg.get('mode')
+    if mode=='wsl' and os.name=='nt':
+        distro=cfg.get('distribution','Ubuntu-22.04')
+        service=cfg.get('service','yonagi-napcat.service')
+        if not isinstance(distro,str) or not distro or distro.startswith('-') or any(c in distro for c in '\r\n\0'):
+            raise ValueError('Invalid WSL distribution')
+        if not isinstance(service,str) or not service.endswith('.service') or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.@-' for c in service):
+            raise ValueError('Invalid NapCat service name')
+        return ['wsl.exe','--distribution',distro,'--user','root','--exec','systemctl','start',service]
     if mode=='docker':
         return ['docker','compose','-f',str(local_path(cfg['compose_file'])),'up','-d']
     if mode=='windows_hook' and os.name=='nt':
@@ -96,7 +104,8 @@ def start_napcat(quiet=False,dry_run=False):
     cfg=launch_settings().get('napcat',{})
     command=napcat_command(cfg)
     if dry_run:print(json.dumps({'command':command},ensure_ascii=False));return
-    if cfg['mode']=='docker':subprocess.run(command,cwd=ROOT,check=True)
+    if cfg['mode'] in {'docker','wsl'}:
+        subprocess.run(command,cwd=ROOT,check=True,**({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
     else:
         folder=(local_path(cfg['napcat_dir']) if cfg['mode']=='windows_hook'
             else local_path(cfg['launcher']).parent)

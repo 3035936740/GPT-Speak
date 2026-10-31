@@ -124,15 +124,18 @@ class DebugWebUI:
                 if not self.allowed_host() or (origin and origin!='http://'+self.headers.get('Host','')):
                     return reject(403,'Invalid local origin')
                 if not self.authorized():return reject(401,'授权会话失效，请在CLI输入 /webui')
-                if urlsplit(self.path).path!='/api/action':return self.reply(404,{'error':'Not found'})
+                path=urlsplit(self.path).path
+                if path not in {'/api/action','/api/knowledge'}:return self.reply(404,{'error':'Not found'})
+                knowledge=path=='/api/knowledge'
                 try:
                     length=int(self.headers.get('Content-Length','0'))
                     from manual_images import MAX_REQUEST_BYTES
-                    if not 0<length<=MAX_REQUEST_BYTES:return self.reply(413,{'error':'请求内容过大'})
-                    self.connection.settimeout(15)
+                    if length<=0 or (not knowledge and length>MAX_REQUEST_BYTES):return self.reply(413,{'error':'请求内容过大'})
+                    self.connection.settimeout(None if knowledge else 15)
                     value=json.loads(self.rfile.read(length))
                     if not isinstance(value,dict):raise ValueError('请求必须是JSON对象')
-                    if value.get('action')!='manual_send' and length>3*1024*1024:return self.reply(413,{'error':'请求内容过大'})
+                    if knowledge and value.get('action')!='knowledge':raise ValueError('此接口仅用于知识库操作')
+                    if not knowledge and value.get('action')!='manual_send' and length>3*1024*1024:return self.reply(413,{'error':'请求内容过大'})
                     result=owner.dispatch(value)
                     return self.reply(200,result)
                 except TimeoutError:return self.reply(504,{'error':'操作仍在处理中，请查看群状态后再操作'})

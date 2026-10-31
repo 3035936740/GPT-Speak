@@ -242,7 +242,7 @@ $('composer').onsubmit=async event=>{
     }
   }catch(error){composerResult(group,role,error.message,true);}finally{composerBusy.delete(key);renderComposer();}
 };
-async function api(path,body){const response=await fetch(path,{headers:{'X-QQ-Debug-Key':token,...(body?{'Content-Type':'application/json'}:{})},method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Error(data.error||'请求失败');return data;}
+async function api(path,body){if(path==='/api/action'&&body?.action==='knowledge')path='/api/knowledge';const response=await fetch(path,{headers:{'X-QQ-Debug-Key':token,...(body?{'Content-Type':'application/json'}:{})},method:body?'POST':'GET',...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok)throw Error(data.error||'请求失败');return data;}
 async function act(action,button){if(backendReady!==true&&!['command','restart','pause','delete'].includes(action.action))throw Error('调试服务还是旧版本：请在 CLI 输入 /exit 后重新启动 Debug');const operationGroup=action.group??selected;if(button)button.disabled=true;toast('正在处理…');try{const data=await api('/api/action',{group:operationGroup,...action});if(data.selected!==undefined&&selected===operationGroup)selected=data.selected;toast(data.message||'已完成');if(data.shutdown){closed=true;pollSequence++;$('connection').textContent='调试服务已退出';setDot('connection-dot',false);document.querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=true);}else await poll(true);return data;}catch(error){toast(error.message,true);throw error;}finally{if(button)button.disabled=closed;}}
 function setDot(id,online,error=false){$(id).classList.toggle('live',online);$(id).classList.toggle('error',error);}
 
@@ -682,7 +682,7 @@ async function loadKnowledge(){
   if(data.offset>0&&data.offset>=data.total){knowledgeOffset=Math.max(0,Math.floor((data.total-1)/20)*20);return loadKnowledge();}
   knowledgeData=data;updatePager('knowledge',data);
   const area=$('knowledge-records');area.replaceChildren();
-  if(!data.rows.length)area.append(node('div','暂无知识。可以新增一条，或导入 UTF-8 编码的 TXT / Markdown 文件。','empty'));
+  if(!data.rows.length)area.append(node('div','暂无知识。可以新增一条，或导入 TXT、Markdown、YAML、JSON、INI 等文本文件，不限文件大小和正文字数。','empty'));
   else{
     const table=node('table'),head=node('tr');for(const title of ['知识与摘要','范围 / 状态','来源 / 字数','操作'])head.append(node('th',title));table.append(head);
     for(const row of data.rows){
@@ -703,7 +703,7 @@ function openKnowledge(row=null){
     {name:'scope',label:'使用范围',value:row?.scope||'group',options:[{value:'group',label:'仅当前群'},{value:'shared',label:'所有群共享'}]},
     {name:'enabled',label:'状态',value:row?.enabled===false?'off':'on',options:[{value:'on',label:'启用：允许模型检索'},{value:'off',label:'停用：保留内容，不供模型检索'}]},
     {name:'source',label:'来源 / 文件名',value:row?.source||'',maxLength:200,placeholder:'可选，例如文档名称或资料出处'},
-    {name:'content',label:'知识正文',value:row?.content||'',long:true,maxLength:200000,placeholder:'粘贴资料或输入知识内容，最多200000字'}];
+    {name:'content',label:'知识正文',value:row?.content||'',long:true,placeholder:'粘贴资料或输入知识内容，不限字数'}];
   const inputs=openEditor(row?.id?'查看 / 编辑知识':'新增知识',fields,async inputs=>{
     const values=Object.fromEntries(fields.map(field=>[field.name,inputs[field.name].value]));values.enabled=values.enabled==='on';
     await act({action:'knowledge',mode:'save',group,id:row?.id||'',expected:row?.version,values},$('store-save'));await loadKnowledge();
@@ -718,15 +718,24 @@ $('knowledge-next').onclick=()=>{knowledgeOffset+=20;loadKnowledge().catch(error
 $('knowledge-jump').onclick=()=>{if(!knowledgeData)return;const page=Number($('knowledge-page').value),pages=Math.max(1,Math.ceil(knowledgeData.total/20));if(!Number.isInteger(page)||page<1||page>pages)return toast('页码请输入1～'+pages+'的整数',true);knowledgeOffset=(page-1)*20;loadKnowledge().catch(error=>toast(error.message,true));};
 $('knowledge-page').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();$('knowledge-jump').click();}};
 $('knowledge-import').onclick=()=>$('knowledge-file').click();
+async function readKnowledgeText(file){
+  const bytes=new Uint8Array(await file.arrayBuffer());let content;
+  if(bytes[0]===0xff&&bytes[1]===0xfe)content=new TextDecoder('utf-16le',{fatal:true}).decode(bytes);
+  else if(bytes[0]===0xfe&&bytes[1]===0xff)content=new TextDecoder('utf-16be',{fatal:true}).decode(bytes);
+  else{
+    try{content=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
+    catch{try{content=new TextDecoder('gb18030',{fatal:true}).decode(bytes);}catch{throw Error('无法读取文本编码，请另存为 UTF-8 后导入');}}
+  }
+  if(!content.trim())throw Error('文件内容不能为空');
+  if(content.includes('\u0000'))throw Error('仅支持文本文件，不能导入二进制内容');
+  return content;
+}
 $('knowledge-file').onchange=async()=>{
   const file=$('knowledge-file').files[0],group=selected;$('knowledge-file').value='';if(!file)return;
   try{
-    if(!/\.(txt|md|markdown)$/i.test(file.name))throw Error('请选择 TXT 或 Markdown 文件');
-    if(file.size>800000)throw Error('文件最多800KB，正文最多200000字');
-    let content;try{content=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());}catch{throw Error('请将文件另存为 UTF-8 编码后导入');}
-    if(!content.trim()||content.length>200000||content.includes('\u0000'))throw Error('正文须为1～200000字的文本');
+    const content=await readKnowledgeText(file);
     if(selected!==group)return toast('当前群已切换，请重新导入',true);
-    openKnowledge({title:file.name.replace(/\.(txt|md|markdown)$/i,'').slice(0,150),content,source:file.name.slice(0,200)});
+    openKnowledge({title:(file.name.replace(/\.[^.]+$/,'')||file.name).slice(0,150),content,source:file.name.slice(0,200)});
   }catch(error){toast(error.message,true);}
 };
 
