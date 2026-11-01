@@ -567,6 +567,8 @@ async function switchTab(tab){closePrivateUI();stashPromptDraft();currentTab=tab
 async function loadActivePane(){if(['settings','persona'].includes(currentTab))await loadConfig();else if(currentTab==='knowledge')await loadKnowledge();else if(currentTab==='database')await loadDatabase();else if(currentTab==='stickers')await loadStickers();else if(currentTab==='system')await loadSystem();else if(currentTab==='members')await loadMembers();}
 document.querySelectorAll('[data-context-tabs] [data-tab]').forEach(button=>button.onclick=()=>switchTab(button.dataset.tab));
 document.querySelectorAll('.side-nav [data-view]').forEach(button=>button.onclick=()=>switchTab(button.dataset.view));
+$('open-about').onclick=()=>$('about-dialog').showModal();
+$('about-close').onclick=()=>$('about-dialog').close();
 document.querySelectorAll('[data-kind]').forEach(button=>button.onclick=()=>{kind=button.dataset.kind;document.querySelectorAll('[data-kind]').forEach(item=>item.classList.toggle('active',item===button));poll(true);});
 $('group-search').oninput=()=>snapshot&&renderGroups();$('record-search').oninput=()=>poll(true);$('config-search').oninput=()=>configData&&renderConfig();$('level-filter').onchange=()=>snapshot&&renderRecords();$('clear-search').onclick=()=>{$('record-search').value='';poll(true);};
 

@@ -65,9 +65,17 @@
   "proactive_topic_quiet_minutes": 20,
   "proactive_topic_min_hours": 36,
   "proactive_topic_max_hours": 72,
-  "bot_name": "yonagi",
+  "bot_name": "白色大肥龙",
   "bot_aliases": [
-    "yonagi"
+    "Luna",
+    "GPT 6 Luna",
+    "GPT 6",
+    "GPT",
+    "露娜",
+    "白龙娘",
+    "白龙",
+    "龙娘",
+    "大肥龙"
   ],
   "console_max_records": 6000,
   "chat_image_display": "image",

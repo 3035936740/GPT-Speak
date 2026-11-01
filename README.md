@@ -1,6 +1,12 @@
-# QQ Group AI Bot & Debugger
+# GPT Speak
 
 基于 NapCat / OneBot 的 QQ 群聊 AI Bot，包含 CLI、WebUI、图片理解、共享表情库、群记忆、知识库和按群覆盖的配置。
+
+项目名称为 **GPT Speak**。默认采用 GPT 6 Luna 白龙娘设定，参考部署者的“白色大肥龙”配置：角色名 Luna／露娜，银白长发、白色弯角、淡紫眼睛、膜翼与白鳞长尾，语气自然清淡、略带慵懒；句尾通常不用句号。默认显示名“白色大肥龙”，支持 Luna、GPT 6 Luna、露娜、白龙娘等别名。角色设定不替代实际模型选择，模型仍由配置决定。
+
+项目地址：[3035936740/GPT-Speak](https://github.com/3035936740/GPT-Speak)。WebUI左侧“命令行”下方的“关于”可查看项目介绍并打开GitHub项目页。
+
+新安装从 `persona-default.txt` 和 `reply_protocol-default.txt` 初始化人设与回复规则，两份合计约2600字。已有全局或群级人设、别名和连接配置继续保留，不导入示例中的群号或连接凭据。WebUI与CLI使用GPT Speak品牌，群内角色名按当前配置显示。
 
 ## 群聊接话
 
@@ -75,7 +81,7 @@ NapCat 安装来源遵循 [官方安装说明](https://napneko.github.io/guide/b
 
 1. 在 NapCat WebUI `http://127.0.0.1:6099/webui` 登录 QQ，开启 OneBot HTTP，配置访问令牌。Docker 模式在容器内监听 `0.0.0.0:3000`，主机仅映射 `127.0.0.1:3000`；WebUI 和 WS 端口也仅映射到本机。随机 WebUI 令牌保存在本地 `runtime/napcat-docker/compose.json`。
 2. 新安装填写 `group-bot/napcat.env` 的 `NAPCAT_HOST` 和 `NAPCAT_TOKEN`。已有安装继续使用 `settings.json` 的 `mcp_env_file`，例如 `../qq-mcp/.env`，不替换既有连接凭据。
-3. 修改 `group-bot/settings.json` 的 `group_id`、`chat_group_whitelist`、账号和模型，确认后开启 `enabled`。安装模板默认禁用回复；缺少的人设从 `persona-default.txt` 初始化为 yonagi，已有个人/群级人设保留。
+3. 修改 `group-bot/settings.json` 的 `group_id`、`chat_group_whitelist`、账号和模型，确认后开启 `enabled`。安装模板默认禁用回复；缺少的人设从 `persona-default.txt` 初始化为GPT 6 Luna白龙娘，回复规则从 `reply_protocol-default.txt` 初始化，已有个人/群级人设保留。
 4. Windows 运行 `Start-QQ-Group-Bot.cmd`；Linux/macOS 运行 `sh ./Start-QQ-Group-Bot.sh`。启动 CLI 并打开 WebUI，终端也会显示地址。无图形界面时使用终端地址。
 
 启动参数：
@@ -180,6 +186,8 @@ token来自本项目 Codex CLI 的 `turn.completed.usage`，持久化于 `runtim
 - AI 生图放在运行目录的 `temp/ai-images/`，与长期表情库分开；不会因发送成功立即删除。清理模式可选择分钟间隔、每天固定时间、逐图到期或 Windows 任务计划程序，启动时也检查时间戳。默认间隔 120 分钟、图片保留 2 小时；保存 Windows 清理模式时会同步该项目的计划任务。需要手动同步时，在部署目录执行 `.\qq-mcp\.venv\Scripts\python.exe .\group-bot\windows_image_cleanup.py --sync`。
 - 记忆和表达学习保存在本地运行数据中；学习群内表达时保留核心人设。
 - 默认回复失败只记后台日志，不向群里发送兜底套话；可通过配置调整。
+- 分析与回复共用话题上下文选择：显式引用优先；同账号的接续追问可在会话状态有效期内保留上一轮问答，避免被大群闲聊挤掉。它只是理解背景，不重放旧请求；重连历史不参与自动接续，屏蔽、指令和视频仅记录的边界继续生效。分析输入超预算时先移除无关闲聊，再压缩保护消息正文。
+- 公共身份规则跟随当前选定人物卡：默认GPT 6 Luna白龙娘可按设定说明自己的角色身份；旧yonagi人设仍按自己的身份/性别表达偏好工作。角色专属限制只从操作员人设文件读取，不从群友聊天提取；已有个人设置不会被自动重写。
 - 群聊繁忙时，当前回复生成与分段发送完成前继续积累新消息；下一轮将待接话的文字请求与普通新发言合成一次对话交给模型，不再逐条追赶。批次保留发送者、时间和消息ID，按总输入预算保留较新的内容，消费过的消息不会再逐条触发。独立绘图请求仍使用原来的绘图通道。后台积压图片优先自动读取最新一张，较早图片保留记录，需要时可通过当前请求或引用读取。
 - QQ链接卡片（JSON、XML、share）转换为标明“转发文本：链接卡片”的标题、摘要和链接，卡片封面不送去识图。原生视频显示为“[视频]”，群聊和私聊仅保存记录，即使附带@也不读取视频、不触发指令、识图、学习或自动回复；合并聊天记录内部的视频同样只保留占位。
 - NapCat断线时取消当前群尚未完成的回复、识图和学习任务；重连成功的首批消息及延迟补回的旧消息只写入历史存档，不执行旧指令、不补回复或识图。此后新到的消息才恢复AI处理；不会自动恢复已手动暂停的会话。聊天快照使用原子替换并对Windows短暂文件占用进行有限重试。
@@ -243,7 +251,7 @@ CLI 支持短命令与 Tab 补全，例如：
 
 ## 底部输入框与手动消息
 
-聊天记录底部常驻输入框默认发送系统干预，可切换为“yonagi 消息（发到群）”。Enter 发送，Shift+Enter 换行；草稿按群和类型分别保留。系统干预可选择范围和有效期，默认当前群、当前对话窗口，不立即触发模型或 QQ 回复。
+聊天记录底部常驻输入框默认发送系统干预，可切换为当前角色的“消息（发到群）”。Enter 发送，Shift+Enter 换行；草稿按群和类型分别保留。系统干预可选择范围和有效期，默认当前群、当前对话窗口，不立即触发模型或 QQ 回复。
 
 系统提示词列表和管理面板可逐条“删除”，删除后从列表隐藏并停止影响后续任务；本地保留删除审计，已经开始的任务仍使用创建时的快照。CLI 支持 `/sys delete 干预ID`；`remove` 停用单条，`clear` 停用生效项。
 
@@ -255,7 +263,7 @@ CLI 支持短命令与 Tab 补全，例如：
 
 上传图片通过受密钥保护的本地 WebUI 接口校验和排队，发送时使用图片内容，不要求 NapCat 访问本机文件路径。成功后原图进入长期图片缓存，供聊天记录查看；它与 AI 生图临时目录分开。上传暂存副本在发送、归档和本地记录完成后删除，后续归档保留期限按图片记忆策略管理。
 
-发送成功后写入最近聊天存档、当前上下文以及群数据库的 `manual_messages` 表（数据库查看页名称“yonagi手动消息”）。消息按 Bot 发言记录，不冒充群友学习样本；QQ 回显按消息 ID 去重。长期结构化记录保留 30 天，当前上下文仍受窗口和条数限制。CLI 可使用 `/say 消息内容`。
+发送成功后写入最近聊天存档、当前上下文以及群数据库的 `manual_messages` 表（数据库查看页名称“Bot手动消息”）。消息按 Bot 发言记录，不冒充群友学习样本；QQ 回显按消息 ID 去重。长期结构化记录保留 30 天，当前上下文仍受窗口和条数限制。CLI 可使用 `/say 消息内容`。
 
 这些入口需要更新后的 WebUI 和群后台一起运行。更新后手动在旧 CLI 输入 `/exit`，再运行 `Start-QQ-Group-Bot.cmd`。
 
@@ -292,7 +300,7 @@ CLI 支持短命令与 Tab 补全，例如：
 
 表情只从本轮可见、已收录且可用的候选解析，去除重复 ID/内容；使用次数在对应表情真正发送成功后更新，每张分别计数。上下文以带括号的 `[表情包：说明]` 记住已发表情，不把内部说明发进 QQ 正文。后台的 `reply_delivery` 与 `delivery_queue` 决策分别显示分段规划及实际出队条数、表情 ID、引用目标和 @ 对象，方便排查“规划了但没发”。
 
-每条都检查停止状态和消息额度，逐条写入存档并保存未发队列。中途失败/重启仅恢复尚未成功的部分，发送结果不明时停止自动重发。参考 MaiBot 的语义断句、文字附件解析及逐段发送设计，在现有一次回复调用中完成组合规划，不额外增加断句模型调用；核心 yonagi 人设不变。参考来源：[断句](https://github.com/Mai-with-u/MaiBot/blob/main/src/chat/utils/llm_sentence_splitter.py)、[回复与附件](https://github.com/Mai-with-u/MaiBot/blob/main/src/maisaka/builtin_tool/context.py)。
+每条都检查停止状态和消息额度，逐条写入存档并保存发送状态。连接中断或重启后不补发旧尾部，发送结果不明时停止自动重发。参考 MaiBot 的语义断句、文字附件解析及逐段发送设计，在现有一次回复调用中完成组合规划，不额外增加断句模型调用；角色遵循当前选定的人设。参考来源：[断句](https://github.com/Mai-with-u/MaiBot/blob/main/src/chat/utils/llm_sentence_splitter.py)、[回复与附件](https://github.com/Mai-with-u/MaiBot/blob/main/src/maisaka/builtin_tool/context.py)。
 
 更新后在旧 CLI 手动 `/exit` 或 `/stop`，再打开 `Start-QQ-Group-Bot.cmd`；只刷新页面不能加载新的 Python 发送逻辑。更新不会改写已有全局/群设置、头像授权或清理模式。
 

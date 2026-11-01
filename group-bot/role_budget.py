@@ -36,7 +36,11 @@ def fit_role_prompt(prefix,payload,limit,compact_prefix):
     # Configured member policies and optional moderation instructions are retained.
     prefix=compact_prefix
     if fits():return render()
-    while len(data.get('recent_chat',[]))>1 and not fits():data['recent_chat'].pop(0)
+    protected=set(data.get('context_selection',{}).get('protected_ids',[]))
+    while len(data.get('recent_chat',[]))>1 and not fits():
+        removable=next((i for i,row in enumerate(data['recent_chat']) if str(row.get('id')) not in protected),None)
+        if removable is None:break
+        data['recent_chat'].pop(removable)
     if fits():return render()
     for person in data.get('group_identities',{}).values():
         if isinstance(person,dict):person.pop('account_note',None);person.pop('extra_names',None)

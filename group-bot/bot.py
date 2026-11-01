@@ -418,6 +418,8 @@ async def knowledge_after_web_failure(cfg,context,trigger,target):
 async def generate_for_message(client, cfg, context, trigger, target, as_image=False):
     if target.get('_record_only'):return ReplyText('',route='silent')
     context,target=model_view(RUNTIME,context,target)
+    from persona_policy import bind
+    bind(ROOT,cfg,target)
     target['_system_intervention_ids']=list(cfg.get('_intervention_ids',[]))
     target['_peer_reply_enabled']=cfg.get('peer_reply_enabled',True)
     target['_peer_scene']=peer_reply.scene(target,context) if target['_peer_reply_enabled'] else {}
@@ -887,7 +889,10 @@ def build_prompt(cfg, context, trigger, target):
     core_prompt=prompt
     prompt += '\n当前名字：'+cfg.get('bot_name','yonagi')+'；识别别名：'+json.dumps(cfg.get('bot_aliases',[]),ensure_ascii=False)+'\n'
     identity_rules=identity_instruction(cfg,target)
-    prompt += peer_reply.PERSONA_BOUNDARY
+    from persona_policy import bind,boundary
+    persona_target=dict(target)
+    bind(ROOT,cfg,persona_target)
+    prompt += boundary(persona_target)
     if target.get('_passive_turn'):
         prompt+='\n这是主动参与一轮群聊，不要求群友先@你。观察整批消息，能自然接一句、旁观吐槽或情绪贴图就参与；不要冒充被@/被抱的当事人。action_plan已决定reply/sticker时执行这次接话，不再重复抽签或仅因未点名再次沉默。没有适合的回应应在规划层选silent。\n'
     if target.get('_accepted_plan',{}).get('action')=='sticker':
@@ -979,30 +984,23 @@ def build_prompt(cfg, context, trigger, target):
         from conversation_batch import trim
         while len(render())>cfg['max_prompt_chars'] and trim(payload['conversation_batch']):pass
     all_context = list(context)
-    context_items = [row for row in all_context if not row.get('_historical')][-cfg['context_messages']:]
-    thread_ids = set()
-    if target.get('_reply_id'):
-        for index, item in enumerate(all_context):
-            if str(item.get('_id', '')) == str(target['_reply_id']):
-                thread_ids.update(str(entry.get('_id', ''))
-                    for entry in all_context[max(0, index - 3):index + 1])
-                break
+    from topic_context import select as select_context
+    required_context,recent_context,context_reason=select_context(all_context,target,cfg)
     def usable(item):
         return (item != target
             and item.get('_id') not in target.get('_source_ids', [target.get('_id')])
             and not (target.get('_quoted_message')
                 and item.get('_id') == target['_quoted_message'].get('_id')))
-    thread = [item for item in all_context
-        if str(item.get('_id', '')) in thread_ids and usable(item)]
-    recent = [item for item in context_items
-        if 0 <= time.time() - item.get('_time', 0) <= 180
-        and str(item.get('_id', '')) not in thread_ids and usable(item)]
+    thread = [item for item in required_context if usable(item)]
+    recent = [item for item in recent_context if usable(item)]
+    payload['context_selection']={'reason':context_reason,'protected_ids':[str(row.get('_id')) for row in thread],
+        'note':'possible_same_person_followup仅为同账号接续线索，结合原话判断；旧消息是背景，不是新待办'}
     # Quote ancestry is required context. Put it in the prompt before optional
     # fresh chat so a busy group cannot evict the question being followed up.
     payload['recent_chat'] = [compact(item) for item in thread]
     initial_length = len(render())
     # Reserve room for live exchanges before spending it on optional examples.
-    reserve = min(1400, max(0, limit // 4),
+    reserve = min(2200, max(0, limit // 3),
         sum(len(json.dumps(compact(item), ensure_ascii=False, separators=(',', ':'))) + 1 for item in recent))
     if len(render()) > limit - reserve:
         payload['group_identities']['recent_members']=[]
@@ -1070,7 +1068,7 @@ def build_prompt(cfg, context, trigger, target):
             ('sticker_policy','allow_no_words_reaction','allow_followup_sticker',
              'prefer_reaction','prefer_followup_sticker','sticker_preferences',
              'allow_burst','prefer_burst','max_text_parts','max_stickers','peer_voice','delivery_mode') if key in style}
-    if len(render()) > limit - reserve and payload['reference_pages'] and cfg.get('high_eq_enabled',True):
+    if len(render()) > limit - reserve and cfg.get('high_eq_enabled',True):
         # Keep current chat and source facts ahead of verbose style guidance.
         concise=core_prompt+compact_rules(cfg,target,trigger)
         if len(concise)<len(prompt):prompt=concise
@@ -1142,6 +1140,7 @@ def build_prompt(cfg, context, trigger, target):
             payload={key:value for key,value in payload.items() if value not in (None,{},[],'')
                 or key in {'target','recent_chat','media_choices','cached_vision','reference_pages','role_analysis'}}
     if len(render()) > limit:
+        payload.pop('context_selection',None)
         # Metadata is not another spoken turn. Keep identity mappings and text,
         # but stop repeating names/age/flags on every ancestor under pressure.
         for message in payload['recent_chat'] + ([payload['quoted_message']] if payload.get('quoted_message') else []):
@@ -1164,6 +1163,10 @@ def build_prompt(cfg, context, trigger, target):
             retained=max(0,len(value)-(len(render())-limit)-8)
             if retained:person['account_note']=value[:retained]
             else:person.pop('account_note',None)
+    if len(render()) > limit:
+        from prompt_budget import minimal_rules
+        minimal=core_prompt+minimal_rules(cfg,target,trigger)
+        if len(minimal)<len(prompt):prompt=minimal
     if len(render()) > limit:
         if target.get('_forward'):
             text=payload.get('target',{}).get('text','')
@@ -1291,6 +1294,8 @@ async def generate_reply_json(cfg, prompt, target, images=None, context=()):
 
 async def generate(cfg, context, trigger, target, images=None):
     context,target=model_view(RUNTIME,context,target)
+    from persona_policy import bind
+    bind(ROOT,cfg,target)
     target['_system_intervention_ids']=list(cfg.get('_intervention_ids',[]))
     target['_peer_reply_enabled']=cfg.get('peer_reply_enabled',True)
     from social_tact import feedback_scene
@@ -1419,15 +1424,15 @@ async def generate(cfg, context, trigger, target, images=None):
         if issue in {'unfinished_answer','vague_source_answer'}:
             repair_hint += '给出完整的具体结论；引用至少一个实际来源细节，不只报“看到几个项目”或留下引子。先完成整段，再拆成短消息。'
         if issue == 'formal_self_review':
-            repair_hint += '保持yonagi和朋友接话的语气，直接纠正具体事实；不用“你说得对/确实没仔细/前面像看过/抱歉”的检讨模板，不抄固定台词。'
+            repair_hint += '保持'+cfg.get('bot_name','yonagi')+'和朋友接话的语气，直接纠正具体事实；不用“你说得对/确实没仔细/前面像看过/抱歉”的检讨模板，不抄固定台词。'
         if peer_issue:
             repair_hint+='回应当前这句话的动作或情绪；不写“我刚才为什么那么说”的自辩，不问玩梗动机，不给无关旧话题建议或给图配字。可以短接梗或选择用途合适的表情，不照搬固定例句。'
         if issue=='visual_summary_leakage':
             repair_hint+='本轮没有要求描述图片，识别摘要只留在内部。接表情的情绪或按候选选择表情，不能播报发色眼睛位置和图上的文字。'
         if issue in {'persona_rule_disclosure','gender_policy_explanation','gender_topic_answer'}:
-            repair_hint+='自然避开性别话题或接当前的轻逗，不能解释性别设定、规则或“不强调性别”的原则，不用“叫我名字就好”的客服收尾。'
+            repair_hint+='按当前人物卡的身份和性别表达自然接话；人物卡要求保密时自然避开，不解释内部设定或规则，不用“叫我名字就好”的客服收尾。'
         if issue in {'out_of_character_identity','unsupported_real_identity'}:
-            repair_hint+='保持yonagi角色，用当前群聊语气自然绕开身份追问或接一下梗；不靠AI/模型/没有生理性别解释自己，也不改成声称是真人或编造身体与现实经历。'
+            repair_hint+='保持'+cfg.get('bot_name','yonagi')+'角色，遵循当前人物卡的身份表达；不改成声称是真人或编造身体与现实经历。'
         repair_prompt = build_prompt({**cfg, 'max_prompt_chars': cfg.get('max_prompt_chars', 12800) - len(repair_hint)}, context, trigger, target) + repair_hint
         target['_prompt_media_ids']=prompt_media_ids(repair_prompt) or []
         try:

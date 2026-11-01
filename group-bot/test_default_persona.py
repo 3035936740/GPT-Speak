@@ -42,9 +42,30 @@ class DefaultPersonaTests(unittest.TestCase):
         self.assertEqual(path,self.root/'reply_protocol.txt')
         self.assertFalse(path.exists())
 
+    def test_protocol_default_initializes_only_when_missing(self):
+        (self.root/'reply_protocol-default.txt').write_text('GPT回复规则',encoding='utf-8')
+        path=Config(self.root).prompt_path('reply_protocol')
+        self.assertEqual(path.read_text(encoding='utf-8'),'GPT回复规则')
+        path.write_text('已有自定义规则',encoding='utf-8')
+        self.assertEqual(Config(self.root).prompt_path('reply_protocol').read_text(encoding='utf-8'),'已有自定义规则')
+
+    def test_shipped_default_matches_gpt_character_and_names(self):
+        from console_config import DEFAULTS
+        import json
+        root=Path(__file__).parent
+        persona=(root/'persona-default.txt').read_text(encoding='utf-8')
+        protocol=(root/'reply_protocol-default.txt').read_text(encoding='utf-8')
+        example=json.loads((root/'settings.example.json').read_text(encoding='utf-8'))
+        self.assertIn('GPT 6 Luna',persona)
+        self.assertIn('白龙',persona)
+        self.assertIn('句尾',persona)
+        self.assertLessEqual(len(persona)+len(protocol),3000)
+        self.assertEqual(example['bot_name'],DEFAULTS['bot_name'])
+        self.assertEqual(example['bot_aliases'],DEFAULTS['bot_aliases'])
+
     def test_empty_template_reports_an_actionable_error(self):
         (self.root/'persona-default.txt').write_bytes(b'')
-        with self.assertRaisesRegex(ValueError,'默认yonagi人设不能为空'):
+        with self.assertRaisesRegex(ValueError,'默认提示词不能为空'):
             Config(self.root).prompt_path('persona')
         self.assertFalse((self.root/'persona.txt').exists())
 

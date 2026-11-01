@@ -553,7 +553,7 @@ class Console:
             from console_panels import render
             return render(self,width,height)
         cfg=self.config.load();state=read_json(runtime(self.root,self.group)/'state.json')
-        header=f"QQ 调试台 | {self.names.get(self.group,self.group)} ({self.group}) | {'在线' if state.get('online') else '等待连接/已停止'} | {cfg['model']} {cfg['reasoning_effort']} fast={cfg['fast_mode']}"
+        header=f"GPT Speak | {self.names.get(self.group,self.group)} ({self.group}) | {'在线' if state.get('online') else '等待连接/已停止'} | {cfg['model']} {cfg['reasoning_effort']} fast={cfg['fast_mode']}"
         if self.group in self.supervisor.exited:header+=' | 后台退出码='+str(self.supervisor.exited[self.group])+'，用 /restart 重试'
         body=[]
         labels={'received':'← 群友','sent':'→ bot','stage':'流程','decision':'判断','trigger':'触发','group':'群'}

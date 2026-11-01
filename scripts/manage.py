@@ -40,6 +40,9 @@ def initialize():
         dest=bot/name
         if not dest.exists():
             with dest.open('xb') as stream:stream.write((bot/source).read_bytes())
+    protocol=bot/'reply_protocol.txt';template=bot/'reply_protocol-default.txt'
+    if not protocol.exists() and template.is_file():
+        with protocol.open('xb') as stream:stream.write(template.read_bytes())
     return bot
 
 

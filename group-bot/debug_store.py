@@ -14,7 +14,7 @@ from console_config import Config, runtime, atomic
 from emoji_library import EmojiLibrary
 from sticker_filter import approved, EMOTIONS
 
-TABLES={'notes':'记忆 / 表达','people':'群友资料','sources':'学习来源','manual_messages':'yonagi手动消息',
+TABLES={'notes':'记忆 / 表达','people':'群友资料','sources':'学习来源','manual_messages':'Bot手动消息',
     'note_metadata':'记忆置信与反馈','supersessions':'事实修订关系'}
 
 

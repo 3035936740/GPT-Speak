@@ -12,7 +12,7 @@ import ctypes
 from configure_launch import validate as validate_model
 from storage_io import atomic_write_text, read_text
 
-DEFAULTS = {'bot_name':'yonagi', 'bot_aliases':['Ethereal Paradise','EP'],'avatar_remote_enabled':False,
+DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
     'forward_messages_enabled':True,'forward_images_enabled':False,
     'receive_only':False,
@@ -272,7 +272,7 @@ class Config:
 
 
 def global_prompt_path(root,name):
-    """Initialize an absent local persona from the versioned Yonagi default.
+    """Initialize absent prompt files from versioned character defaults.
 
     Exclusive creation preserves a custom prompt even if another process
     creates it during initialization. Existing files, including empty ones,
@@ -280,11 +280,11 @@ def global_prompt_path(root,name):
     """
     if name not in {'persona','reply_protocol'}:raise ValueError('未知提示词')
     root=Path(root);path=root/(name+'.txt')
-    if name=='persona' and not path.exists():
-        template=root/'persona-default.txt'
+    if not path.exists():
+        template=root/(name+'-default.txt')
         if template.is_file():
             content=template.read_bytes()
-            if not content.strip():raise ValueError('默认yonagi人设不能为空：'+str(template))
+            if not content.strip():raise ValueError('默认提示词不能为空：'+str(template))
             try:
                 with path.open('xb') as stream:stream.write(content)
             except FileExistsError:pass

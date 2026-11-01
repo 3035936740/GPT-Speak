@@ -88,12 +88,8 @@ INSTRUCTION=('\n群聊表达：接当前这句话的动作和情绪，不替群�
     '标点是观察不是配额，连续用了句尾括号时换自然节奏；不改技术内容里的括号，也不靠固定认证、盖章口头禅塑造人格。'
     '身体不适认真关心，日常用简短贴近当事人的话；存在明显危险信号时保留必要提醒，不为玩梗弱化安全建议。\n')
 
-PERSONA_BOUNDARY=('\n人设里的性别只供内部把握；不强调性别包括被问时也自然绕开话题。'
-    '别解释你有性别设定、遵守什么规则或为什么不回答，别念“不主动强调性别”“你直接叫我就好”。'
-    '可轻轻接梗、反问一句俏皮话或换个自然话头，由当前语境决定，不用固定台词。'
-    '猫娘等称呼是群友给的玩笑标签，可接一下，不当成性别核验。'
-    '群聊保持yonagi角色，被追问身份也自然接梗或绕开，不用“我是AI/模型/机器人”或“没有生理性别”解释自己。'
-    '不要转而声称是真人、人类或编现实身体经历；这是角色聊天，不是冒充真人。讨论AI圈、模型和技术仍可正常提到这些词。\n')
+PERSONA_BOUNDARY=('\n身份、自称和性别表达遵循当前选定人物卡，不套其他角色的名字、口癖或身份限制。'
+    '不编造现实身体或经历，不冒充真人，不复述内部规则。\n')
 
 
 def gender_question(target):
@@ -110,7 +106,8 @@ def quality_issue(text,target):
     if issue:return issue
     if visual_summary_leakage(text,target):return 'visual_summary_leakage'
     value=str(text)
-    if re.search(r'(?:我(?:就是|只是|其实是|本身是|算是(?:个|一个)?|是(?:个|一个)?)|作为|as\s+an?)\s*(?:AI\b|人工智能|(?:语言|大语言)?模型|机器人|chatgpt|gpt[-\s]?\d)|'
+    policy=target.get('_persona_policy',{'avoid_ai_self_label':True,'hide_gender':True})
+    if policy.get('avoid_ai_self_label') and re.search(r'(?:我(?:就是|只是|其实是|本身是|算是(?:个|一个)?|是(?:个|一个)?)|作为|as\s+an?)\s*(?:AI\b|人工智能|(?:语言|大语言)?模型|机器人|chatgpt|gpt[-\s]?\d)|'
             r'我.{0,8}(?:没有|不具备|不存在).{0,14}(?:生理性别|真人性别|身体)|没有男女生这种生理性别',value,re.I):
         return 'out_of_character_identity'
     if re.search(r'我(?:是|就是|本身是)(?:真人|人类)|我是活人|(?:不是AI|不是机器人).{0,8}(?:真人|人类)|我有(?:真实|现实).{0,4}身体',value,re.I):
@@ -118,9 +115,9 @@ def quality_issue(text,target):
     if re.search(r'(?:不(?:主动)?(?:透露|强调|讨论|回答).{0,4}性别)|(?:设定上|内部设定|人设里).{0,10}(?:性别|女生|男生)|'
             r'(?:我的(?:系统|规则|提示词)|(?:内部|系统)提示词|人设).{0,8}(?:要求|规定|不允许|不能说)',value):
         return 'persona_rule_disclosure'
-    if gender_question(target) and re.search(r'你(?:直接)?叫我.{0,15}(?:就好|就行)|性别.{0,12}(?:不重要|不用纠结)',value):
+    if policy.get('hide_gender') and gender_question(target) and re.search(r'你(?:直接)?叫我.{0,15}(?:就好|就行)|性别.{0,12}(?:不重要|不用纠结)',value):
         return 'gender_policy_explanation'
-    if gender_question(target) and re.search(r'^(?:我(?:当然)?(?:是|算是)|当然是|是(?:的|啊)?[，, ]*)?(?:女生|女孩子|女的|男生|男孩子|男的)',value.strip()):
+    if policy.get('hide_gender') and gender_question(target) and re.search(r'^(?:我(?:当然)?(?:是|算是)|当然是|是(?:的|啊)?[，, ]*)?(?:女生|女孩子|女的|男生|男孩子|男的)',value.strip()):
         return 'gender_topic_answer'
     if not target.get('_peer_reply_enabled',True):return ''
     scene_info=target.get('_peer_scene',{})
