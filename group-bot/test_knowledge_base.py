@@ -30,6 +30,28 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(self.store.retrieve(100,'quantum entanglement'),[])
         self.assertEqual({row['title'] for row in self.store.retrieve(200,'番茄')},{'共享教程','二群秘方'})
 
+    def test_named_json_record_is_whole_ranked_first_and_keeps_scope(self):
+        record={'id':'testify','charts':[{'rating':12.0,'notes':2221,'chart':'Silent END'},None]}
+        self.save('谱面库',json.dumps({'other':{'notes':1},'testify':record},ensure_ascii=False),source='charts.json')
+        self.save('大量泛匹配资料',('查询定数物量谱师的信息。'*1000),scope='shared')
+        self.save('另一个群',json.dumps({'testify':{'secret':'other group'}}),group=200)
+        self.save('停用',json.dumps({'testify':{'secret':'disabled'}}),enabled=False)
+        rows=self.store.retrieve(100,'@169901502 看一下testify的定数物量谱师')
+        self.assertEqual(json.loads(rows[0]['content']),{'testify':record})
+        self.assertEqual(rows[0]['source'],'charts.json')
+        self.assertNotIn('secret',json.dumps(rows))
+        bounded=self.store.retrieve(100,'testify 定数 物量 谱师',budget=800)
+        self.assertIn('2221',bounded[0]['content']);self.assertIn('Silent END',bounded[0]['content'])
+
+    def test_json_array_records_and_non_json_text_keep_specific_matches(self):
+        self.save('列表',json.dumps([{'title':'unrelated','notes':1},{'title':'1f1e33','notes':1818}]))
+        rows=self.store.retrieve(100,'1f1e33 notes')
+        self.assertEqual(json.loads(rows[0]['content']),{'title':'1f1e33','notes':1818})
+        self.save('文字指南','罕见标题 raretitle 的定数物量谱师记录在这里。')
+        self.save('泛匹配文字',('定数物量谱师相关查询。'*600))
+        rows=self.store.retrieve(100,'查raretitle定数物量谱师')
+        self.assertIn('raretitle',rows[0]['content'])
+
     def test_update_delete_reindex_and_revision_guard(self):
         saved=self.save('旧知识','苹果说明')
         row=self.store.view(100,identity=saved['id'])

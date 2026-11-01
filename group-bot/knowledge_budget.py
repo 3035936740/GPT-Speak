@@ -1,8 +1,14 @@
-"""Knowledge uses leftover prompt space after conversational context is fitted."""
+"""Reserve useful source evidence, then fill leftover space without growing the cap."""
 import json
 
 
 def encoded(value):return json.dumps(value,ensure_ascii=False,separators=(',',':'))
+
+
+def seed_references(rows,limit):
+    # Protect a small grounded excerpt before optional style, galleries or archive
+    # consume the entire prompt. Retrieval remains unlimited, not delivery.
+    return fit_references(rows,min(1800,max(200,limit//5))) if rows else []
 
 
 def fit_references(rows,budget):

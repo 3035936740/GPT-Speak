@@ -1,6 +1,7 @@
 """Fit every optional analysis request before invoking the model transport."""
 from copy import deepcopy
 import json
+import logging
 
 
 class RoleBudgetError(ValueError):pass
@@ -8,13 +9,18 @@ class RoleBudgetError(ValueError):pass
 
 def fit_role_prompt(prefix,payload,limit,compact_prefix):
     base=dict(payload);references=base.get('knowledge_references',[])
-    if references:base['knowledge_references']=[]
+    if references:
+        from knowledge_budget import seed_references
+        base['knowledge_references']=seed_references(references,limit)
     result=_fit_role_prompt(prefix,base,limit,compact_prefix)
     if not references:return result
     used_prefix=prefix if result.startswith(prefix) else compact_prefix
     data=json.loads(result[len(used_prefix):])
     from knowledge_budget import attach
-    return attach(used_prefix,data,'knowledge_references',references,limit)
+    result=attach(used_prefix,data,'knowledge_references',references,limit)
+    logging.getLogger('qq-group-bot').info('Knowledge role budget; retrieved=%s; attached=%s; chars=%s; total=%s; cap=%s',
+        len(references),len(data.get('knowledge_references',[])),len(json.dumps(data.get('knowledge_references',[]),ensure_ascii=False,separators=(',',':'))),len(result),limit)
+    return result
 
 
 def _fit_role_prompt(prefix,payload,limit,compact_prefix):

@@ -321,7 +321,9 @@ class PrivateChat:
             latest = next((row['text'] for row in reversed(payload['private_conversation']) if row['role'] == 'user'), '')
             payload['private_knowledge'] = private_profiles.knowledge(self.store.db, peer, latest, cfg['knowledge_max_chars'])
         knowledge_candidates=payload.get('private_knowledge',[])
-        if knowledge_candidates:payload['private_knowledge']=[]
+        if knowledge_candidates:
+            from knowledge_budget import seed_references
+            payload['private_knowledge']=seed_references(knowledge_candidates,cfg.get('max_prompt_chars',12800))
         budget = cfg.get('max_prompt_chars', 12800)
         while True:
             prompt = persona + rules + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))

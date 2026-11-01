@@ -29,6 +29,28 @@ class KnowledgeBudgetTests(unittest.TestCase):
         self.assertIn('KNOWLEDGE_0',actual);self.assertNotIn('KNOWLEDGE_199',actual)
         self.assertEqual(refs,original)
 
+    def test_source_is_reserved_before_optional_hints_and_archive_fill_the_cap(self):
+        stamp=time.time();cfg={**bot.settings(),'max_prompt_chars':12800}
+        quote={'_id':'quote','_uid':'11111','sender':'甲','text':'QUOTE_REQUIRED','_time':stamp-30}
+        history=[{'_id':str(n),'_uid':'33333','sender':'乙','text':'old background '*1000,'_time':stamp-300,'_historical':True} for n in range(10)]+[quote]
+        target={'_id':'current','_uid':'11111','sender':'甲','text':'testify 定数物量谱师','at_bot':True,'_time':stamp,
+            '_quoted_message':quote,'_reply_id':'quote','_person_profile':{'optional':'x'*9000},
+            '_learned_style':{'optional':'y'*8000},'_memories':[{'content':'z'*8000}],
+            '_media_choices':[{'id':'sticker'+str(n),'kind':'sticker','label':'候选'*40} for n in range(30)]}
+        refs=[{'id':'doc','title':'谱面库','source':'charts.json','content':json.dumps({'testify':{'rating':12.0,'notes':2221,'chart':'Silent END'}},ensure_ascii=False)}]
+        with patch.object(bot,'knowledge_for_message',return_value=refs):prompt=bot.build_prompt(cfg,history,'at',target)
+        self.assertLessEqual(len(prompt),12800);self.assertIn('2221',prompt);self.assertIn('Silent END',prompt)
+        self.assertIn('QUOTE_REQUIRED',prompt);self.assertIn('testify 定数物量谱师',prompt)
+        self.assertNotIn('"knowledge_references":[]',prompt)
+
+    def test_role_source_survives_nearly_full_context_and_optional_pools(self):
+        data={'target':{'id':'current','text':'CURRENT'},'quoted_message':{'id':'quote','text':'QUOTE'},
+            'recent_chat':[{'id':'protected','text':'PROTECTED'}]+[{'id':str(n),'text':'x'*250} for n in range(30)],
+            'context_selection':{'protected_ids':['protected']},'expression_candidates':[{'text':'x'*9000}],
+            'knowledge_references':[{'id':'doc','source':'charts.json','content':'testify 12.0 2221 Silent END'}]}
+        prompt=fit_role_prompt('rules'*1000,data,12800,'concise rules\n')
+        self.assertLessEqual(len(prompt),12800);self.assertIn('2221',prompt);self.assertIn('PROTECTED',prompt);self.assertIn('QUOTE',prompt)
+
     def test_role_analysis_retains_all_fitting_chat_before_knowledge(self):
         data={'target':{'id':'current','text':'CURRENT'},'quoted_message':{'id':'quote','text':'QUOTE'},
             'recent_chat':[{'id':str(n),'text':'LIVE_'+str(n)+' '+('讨论内容'*40)} for n in range(24)],

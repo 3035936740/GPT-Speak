@@ -110,7 +110,7 @@ class KnowledgeBase:
     def retrieve(self,group,query,budget=0):
         if not self.path.exists():return []
         unlimited=int(budget)==0
-        tokens=sorted(terms(query))
+        tokens=sorted(terms(re.sub(r'@\d+',' ',str(query))))
         if not unlimited:tokens=tokens[:64]
         if not tokens:return []
         with self.connect() as db:
@@ -121,8 +121,27 @@ class KnowledgeBase:
             rows=db.execute('''SELECT c.id,c.position,c.content,d.id AS document_id,d.title,d.source,d.scope,
                 count(*) AS hits FROM terms t JOIN chunks c ON c.id=t.chunk_id
                 JOIN documents d ON d.id=c.document_id JOIN query_terms q ON q.term=t.term
-                WHERE d.enabled=1 AND d.scope IN (0,?) GROUP BY c.id ORDER BY hits DESC,c.position,c.id DESC'''+('' if unlimited else ' LIMIT 40'),[group]).fetchall()
-        ranked=sorted(rows,key=lambda row:row['hits']/math.sqrt(max(1,len(terms(row['content'])))),reverse=True)
+                WHERE d.enabled=1 AND d.scope IN (0,?) GROUP BY c.id ORDER BY hits DESC,c.position,c.id DESC''',[group]).fetchall()
+            frequencies=dict(db.execute('''SELECT t.term,count(*) FROM terms t JOIN chunks c ON c.id=t.chunk_id
+                JOIN documents d ON d.id=c.document_id JOIN query_terms q ON q.term=t.term
+                WHERE d.enabled=1 AND d.scope IN (0,?) GROUP BY t.term''',[group]))
+            total=db.execute('SELECT count(*) FROM chunks c JOIN documents d ON d.id=c.document_id WHERE d.enabled=1 AND d.scope IN (0,?)',[group]).fetchone()[0]
+            from knowledge_records import specific_anchors,records
+            anchors=specific_anchors(tokens,frequencies,total)
+            documents=db.execute('''SELECT d.id,d.title,d.source,d.scope,d.content FROM documents d WHERE d.enabled=1 AND d.scope IN (0,?)
+                AND EXISTS (SELECT 1 FROM chunks c JOIN terms t ON c.id=t.chunk_id JOIN query_terms q ON q.term=t.term WHERE c.document_id=d.id)''',[group]).fetchall() if anchors else []
+        query_terms=set(tokens)
+        def score(row):
+            content_terms=terms(row['content']);matched=content_terms&query_terms
+            weight=sum((1+math.log((total+1)/(frequencies.get(word,0)+1)))**2 for word in matched)
+            return (bool(matched&anchors),weight/math.sqrt(max(1,len(content_terms))))
+        ranked=sorted(rows,key=score,reverse=True)
+        extracted=[]
+        for document in documents:
+            for path,content in records(document['content'],anchors):
+                extracted.append({'document_id':document['id'],'title':document['title'],'source':document['source'],
+                    'scope':document['scope'],'content':content,'position':-100000*(len(extracted)+1)})
+        ranked=extracted+ranked
         if unlimited:
             return [{'id':row['document_id'],'title':row['title'],'source':row['source'],
                 'scope':'shared' if row['scope']==0 else 'group','content':row['content']} for row in ranked]
