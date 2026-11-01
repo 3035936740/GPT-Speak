@@ -933,6 +933,10 @@ def build_prompt(cfg, context, trigger, target):
             for name in payload['dialogue_reference']['group_names'][-12:]]
     payload['social_act'] = target.get('_social_act') or social_act(target.get('text', ''))
     payload['turn_source_ids'] = target.get('_source_ids', [target.get('_id')])
+    if target.get('_conversation_batch'):
+        from conversation_batch import INSTRUCTION
+        prompt+='\n'+INSTRUCTION+'\n'
+        payload['conversation_batch']=json.loads(json.dumps(target['_conversation_batch']))
     payload['interaction_memory'] = target.get('_interaction_memory', {})
     payload['conversation_state'] = json.loads(json.dumps(target.get('_conversation_state', {})))
     payload['person_profile'] = target.get('_person_profile', {})
@@ -971,6 +975,9 @@ def build_prompt(cfg, context, trigger, target):
         payload['quoted_message'] = compact(target['_quoted_message'])
     def render():
         return prompt + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+    if 'conversation_batch' in payload:
+        from conversation_batch import trim
+        while len(render())>cfg['max_prompt_chars'] and trim(payload['conversation_batch']):pass
     all_context = list(context)
     context_items = [row for row in all_context if not row.get('_historical')][-cfg['context_messages']:]
     thread_ids = set()
@@ -1787,6 +1794,8 @@ async def _run(smoke=False):
                 item['text'] = item['text'].replace('[图片，未读取内容]', '[图片，读取中]')
             elif status == 'unavailable':
                 item['text'] = item['text'].replace('[图片，读取中]', '[图片，读取失败]')
+            elif status == 'deferred':
+                item['text'] = item['text'].replace('[图片，读取中]', '[图片，未读取内容]')
             item['_visual_status'] = status
             debug_events.update_message(item.get('_id'), item.get('text', ''), visual_status=status,
                 image_hashes=list(item.get('_image_keys',{}).values())[:2],
@@ -1812,13 +1821,14 @@ async def _run(smoke=False):
                         summary = None
                 return image_memory.lookup(key=key) or summary
         image_reader = ImageRecognition(image_memory, recognize_image, publish_vision,
-            lambda: 'text' not in active_jobs and not pending_mentions,
+            lambda: not active_jobs and not pending_mentions,
+            coalesce=True,
             allow_item=lambda item:not suspended(settings()) and not is_blocked(item,blocked_accounts(RUNTIME)))
         image_worker = asyncio.create_task(image_reader.collector())
         async def classify_sticker(path, key):
             nonlocal daily_calls
             # Incoming @ replies take priority over background asset admission.
-            while 'text' in active_jobs or pending_mentions:
+            while active_jobs or pending_mentions:
                 if (RUNTIME / 'STOP').exists() or not settings()['enabled'] or not emojis.enabled():
                     return {}
                 await asyncio.sleep(2)
@@ -2161,6 +2171,17 @@ async def _run(smoke=False):
                         if lane not in active_jobs:
                             target, trigger = item, '被@或接续对话'
                             pending_mentions.remove(item)
+                            if lane=='text' and not item.get('_remaining_delivery'):
+                                grouped=[old for old in pending_mentions if reply_lane(old,cfg)=='text'
+                                    and not old.get('_remaining_delivery') and now>=old.get('_not_before',0)]
+                                for old in grouped:pending_mentions.remove(old)
+                                calls=[item]+grouped
+                                anchor=max([row for row in calls if row.get('at_bot') or row.get('_audience')=='direct'] or calls,key=lambda row:row.get('_time',0))
+                                ids={str(key) for old in calls for key in old.get('_source_ids',[old.get('_id')])}
+                                ids.update(passive.pending)
+                                from conversation_batch import attach
+                                target=attach(anchor,[row for row in visible_history if str(row.get('_id')) in ids],cfg)
+                                passive.consume(list(ids),now)
                             break
                 if target is None:
                     blocked=('model_budget' if daily_calls>=cfg['max_model_calls_per_day'] else 'reply_budget' if not allowed
@@ -2168,7 +2189,13 @@ async def _run(smoke=False):
                     decision=passive.check(cfg,visible_history,now,last_send,blocked)
                     if decision.get('target'):
                         target=decision['target'];trigger='群聊轮次接话；'+decision['reason']
+                        from conversation_batch import attach
+                        batch_ids=set(target['_passive_batch_ids'])
+                        target=attach(target,[row for row in visible_history if str(row.get('_id')) in batch_ids],cfg)
                         passive.consume(target['_passive_batch_ids'],now)
+                if target and target.get('_conversation_batch'):
+                    log.info('Conversation batch; messages=%s; omitted=%s; anchor=%s',
+                        target['_conversation_batch']['count'],target['_conversation_batch']['omitted'],target.get('_id'))
                 if target:
                     if is_blocked(target,excluded):continue
                     visible_history,target=model_view(RUNTIME,history,target)

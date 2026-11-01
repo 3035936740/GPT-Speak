@@ -11,6 +11,9 @@ def fit_role_prompt(prefix,payload,limit,compact_prefix):
     def render():return prefix+json.dumps(data,ensure_ascii=False,separators=(',',':'))
     def fits():return len(render())<=limit
     if fits():return render()
+    from conversation_batch import trim
+    while not fits() and trim(data.get('conversation_batch',{})):pass
+    if fits():return render()
     for key,empty in [('expression_candidates',[]),('memory_candidates',[]),('person_profile',{}),
         ('peer_scene',{}),('continuation',{}),('previous_analysis_summary',{})]:
         if key in data:data[key]=empty

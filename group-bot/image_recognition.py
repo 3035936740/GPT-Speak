@@ -6,10 +6,11 @@ from image_sources import failure_details
 
 
 class ImageRecognition:
-    def __init__(self, memory, recognize, publish, can_start=lambda: True, allow_item=lambda item: True):
+    def __init__(self, memory, recognize, publish, can_start=lambda: True, allow_item=lambda item: True, coalesce=False):
         self.memory, self.recognize, self.publish = memory, recognize, publish
         self.can_start = can_start
         self.allow_item = allow_item
+        self.coalesce = coalesce
         self.queue = asyncio.Queue(maxsize=64)
         self.pending = {}
         self.lock = asyncio.Lock()
@@ -50,6 +51,11 @@ class ImageRecognition:
             try:
                 while not self.can_start():
                     await asyncio.sleep(.5)
+                if self.coalesce:
+                    while not self.queue.empty():
+                        self.publish(item, [], 'deferred')
+                        self.queue.task_done()
+                        item=self.queue.get_nowait()
                 if not self.allow_item(item):continue
                 summaries = []
                 for url in item.get('_images', [])[:2]:
