@@ -277,9 +277,13 @@ def message_text(msg):
         elif kind == 'mface':
             parts.append('[商城表情：' + str(data.get('summary', '')).strip('[]') + ']')
         elif kind == 'forward':parts.append('[聊天记录]')
+        elif kind in {'json','xml','share'}:
+            from message_cards import render
+            parts.append(render(segment))
+        elif kind == 'video':parts.append('[视频]')
         elif kind == 'reply':
             parts.append('[引用回复]')
-    return ''.join(parts).strip()[:600]
+    return ''.join(parts).strip()[:6000 if any(s.get('type') in {'json','xml','share'} for s in segments) else 600]
 
 
 def mentioned(msg, self_id):
@@ -311,6 +315,8 @@ def chat_item(msg, self_id):
     if msg.get('_forward'):
         item['_forward']=msg['_forward'];item['_forward_outer_text']=msg.get('_forward_outer_text','')
     if isinstance(segments, list):
+        from message_cards import has_video
+        if has_video(msg):item['_record_only']=True
         item['_image_keys'] = {s.get('data', {}).get('url', ''): image_source_key(s.get('data', {}))
             for s in segments if s.get('type') == 'image' and s.get('data', {}).get('url')}
         item['_at_ids'] = [str(s.get('data', {}).get('qq')) for s in segments if s.get('type') == 'at']
@@ -410,6 +416,7 @@ async def knowledge_after_web_failure(cfg,context,trigger,target):
 
 
 async def generate_for_message(client, cfg, context, trigger, target, as_image=False):
+    if target.get('_record_only'):return ReplyText('',route='silent')
     context,target=model_view(RUNTIME,context,target)
     target['_system_intervention_ids']=list(cfg.get('_intervention_ids',[]))
     target['_peer_reply_enabled']=cfg.get('peer_reply_enabled',True)
@@ -1688,9 +1695,7 @@ async def _run(smoke=False):
             saved_seen = []
         seen, seen_order = set(saved_seen), deque(saved_seen)
         def checkpoint_seen():
-            temp = seen_path.with_suffix('.tmp')
-            temp.write_text(json.dumps(list(seen_order)), encoding='utf-8')
-            temp.replace(seen_path)
+            atomic_write_text(seen_path,json.dumps(list(seen_order)))
         def remember(key):
             if key not in seen:
                 seen.add(key)
@@ -1710,6 +1715,12 @@ async def _run(smoke=False):
             if msg.get('time',0)<=clear_before:
                 remember(key);continue
             item=chat_item(msg,self_id);item['_historical']=True
+            if item.get('_record_only') or any(s.get('type') in {'json','xml','share'} for s in msg.get('message',[]) if isinstance(s,dict)):
+                for previous in history:
+                    if str(previous.get('_id'))==key:
+                        previous.update(text=item['text'])
+                        if item.get('_record_only'):previous['_record_only']=True
+                debug_events.update_message(key,item['text'],**debug_message_metadata(item,history))
             if item.get('_forward'):
                 for previous in history:
                     if str(previous.get('_id'))==key:previous.update(text=item['text'],_forward=item['_forward'],_forward_outer_text=item.get('_forward_outer_text',''))
@@ -1726,6 +1737,9 @@ async def _run(smoke=False):
         journal.checkpoint(history)
         language.save()
         checkpoint_seen()
+        # Login/bootstrap can take a long time. Anything received while they
+        # were running is background, even if absent from the bounded snapshot.
+        started_at=max(started_at,int(time.time()))
         state_path = RUNTIME / 'state.json'
         try:
             state = json.loads(state_path.read_text(encoding='utf-8'))
@@ -1925,6 +1939,27 @@ async def _run(smoke=False):
                     debug_events.emit('stage',text='当前会话已终止，等待新消息'+('；短期上下文已清空' if control['mode']=='clear' else ''))
                 await asyncio.sleep(.2)
         session_watcher=asyncio.create_task(watch_session())
+        recovery_pending=False
+        async def discard_disconnected_work():
+            nonlocal received_live,learning_job,learning_batch,sticker_prefill_task
+            received_live=False
+            jobs=list(active_jobs.values())
+            for job in jobs:job['_operator_cancelled']=True
+            tasks=[job['task'] for job in jobs]+[image_worker,emoji_worker]
+            if learning_job:tasks.append(learning_job)
+            if sticker_prefill_task:tasks.append(sticker_prefill_task)
+            for task in tasks:task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+            active_jobs.clear();pending_mentions.clear();passive.pending.clear()
+            learning_job,learning_batch,sticker_prefill_task=None,[],None
+            await image_reader.close()
+            for queue in (image_reader.queue,emojis.queue):
+                while not queue.empty():
+                    queue.get_nowait();queue.task_done()
+            emojis.queued.clear()
+            social.data.update(tasks={},awaiting={},topic={});social.save()
+            checkpoint_pending()
+            log.info('Connection lost; cancelled unfinished AI work; awaiting fresh inbox baseline')
         known_excluded=blocked_accounts(RUNTIME)
         while not (RUNTIME / 'STOP').exists():
             cfg = settings()
@@ -1978,15 +2013,26 @@ async def _run(smoke=False):
                 day, daily_calls = current_day, 0
             poll_succeeded = False
             try:
+                if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
+                result = await message_feed.poll(api,client,env,cfg['group_id'])
+                poll_succeeded = True
+                now=time.time()
+                if recovery_pending:
+                    # The first successful snapshot is a baseline, never a batch
+                    # of live triggers. Retain a time fence for late old arrivals.
+                    started_at=max(started_at,now,max((float(m.get('time',0)) for m in result.get('messages',[])),default=0))
+                    for row in history:row['_historical']=True
+                    focus.entries=[]
+                    received_live=False
+                    recovery_pending=False
+                    image_worker=asyncio.create_task(image_reader.collector())
+                    if not suspended(cfg):emoji_worker=asyncio.create_task(emojis.collector(client))
+                    log.info('NapCat reconnected; recovered messages archived without AI processing; live_after=%s',started_at)
                 if not suspended(cfg) and (sticker_prefill_task is None or sticker_prefill_task.done()):
                     if sticker_prefill_task is not None:sticker_prefill_task.result()
                     sticker_prefill_task=None
                     if sticker_prefill.pending():
                         sticker_prefill_task=asyncio.create_task(sticker_prefill.process_next(cfg,generate_json,reserve_extra_call))
-                if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
-                result = await message_feed.poll(api,client,env,cfg['group_id'])
-                poll_succeeded = True
-                now=time.time()
                 incoming = []
                 emojis.review_min_count=cfg.get('sticker_repeat_review_min_count',5)
                 emojis.review_step=cfg.get('sticker_repeat_review_step',3)
@@ -1998,7 +2044,7 @@ async def _run(smoke=False):
                 command_items=[chat_item(msg,self_id) for msg in ordered_messages]
                 for item in command_items:
                     if suspended(cfg) or item.get('_time',0)<=started_at:item['_historical']=True
-                if not suspended(cfg):annotate_commands(RUNTIME,[row for row in history if not row.get('_historical')],[row for row in command_items if not row.get('_historical')],cfg,self_id)
+                if not suspended(cfg):annotate_commands(RUNTIME,[row for row in history if not row.get('_historical') and not row.get('_record_only')],[row for row in command_items if not row.get('_historical') and not row.get('_record_only')],cfg,self_id)
                 command_map={str(item.get('_id')):item.get('_bot_command') for item in command_items if item.get('_bot_command')}
                 # Persist the whole arrival batch before any per-message API or AI work.
                 hidden=deleted_ids(RUNTIME)
@@ -2013,7 +2059,7 @@ async def _run(smoke=False):
                         continue
                     remember(key)
                     item = chat_item(msg, self_id)
-                    if item.get('_time',0)>started_at and not item.get('is_bot') and not is_blocked(item,excluded) and not (set(map(str,item.get('_at_ids',[])))-{str(self_id)}):
+                    if not item.get('_record_only') and item.get('_time',0)>started_at and not item.get('is_bot') and not is_blocked(item,excluded) and not (set(map(str,item.get('_at_ids',[])))-{str(self_id)}):
                         from owner_commands import handle as owner_command
                         owner_reply=owner_command(ROOT,item['_uid'],item.get('text',''),key,str(cfg['group_id']))
                         if owner_reply:
@@ -2026,6 +2072,9 @@ async def _run(smoke=False):
                         if item.get('_time',0)>clear_before:history.append(item);journal.append(item)
                         continue
                     if key in command_map:item['_bot_command']=command_map[key]
+                    if item.get('_record_only'):
+                        history.append(item);journal.append(item)
+                        continue
                     if member_labels.observe(item,history,cfg):
                         log.info('Member auto label updated; account=%s; label=bot; evidence=command_responses',item.get('_uid'))
                     identities.annotate(item,history,cfg)
@@ -2473,6 +2522,9 @@ async def _run(smoke=False):
                 # must not keep new @ replies behind a three-minute global pause.
                 connection_failed = not poll_succeeded or isinstance(exc, httpx.HTTPError)
                 log.error('%s: %s', 'NapCat API failure' if connection_failed else 'Bot processing failure', str(exc))
+                if connection_failed and not recovery_pending:
+                    recovery_pending=True
+                    await discard_disconnected_work()
                 save_state({'pid': os.getpid(), 'online': not connection_failed, 'group_id': cfg['group_id'],
                     'last_poll': datetime.now().isoformat(), 'day': day,
                     'model_calls_today': daily_calls, 'reply_times': list(reply_times), 'recent_bot_replies': list(own_replies), 'image_attempt_times': list(image_attempt_times), 'error': str(exc)[:300]})

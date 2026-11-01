@@ -1,4 +1,4 @@
-"""Transport recovery must resume @ replies without a global timed silence."""
+"""Transport recovery resumes fresh @ replies and never drains old work."""
 import asyncio
 import json
 from pathlib import Path
@@ -26,10 +26,10 @@ class RecoveryTests(unittest.TestCase):
         asyncio.run(self.scenario('archive'))
     def test_failed_bootstrap_does_not_replay_old_poll_messages(self):
         asyncio.run(self.scenario('archive_failed'))
-    def test_recovered_poll_starts_waiting_mention_immediately(self):
+    def test_recovered_poll_archives_waiting_mention_and_answers_next_new_message(self):
         asyncio.run(self.scenario('poll'))
 
-    def test_failed_delivery_retries_only_unsent_part_without_regeneration(self):
+    def test_connection_loss_discards_unsent_parts_without_regeneration(self):
         asyncio.run(self.scenario('delivery'))
 
     def test_local_processing_failure_does_not_mark_qq_offline(self):
@@ -69,6 +69,8 @@ class RecoveryTests(unittest.TestCase):
                     raise AssertionError('recovery stalled despite healthy API')
                 if failure == 'poll' and polls == 1:
                     raise httpx.ConnectError('NapCat temporarily unavailable')
+                if failure == 'poll' and polls >= 3:incoming['message_id']='new-after-recovery'
+                if failure == 'delivery' and polls >= 4:(bot.RUNTIME/'STOP').touch()
                 if failure=='receive' and polls>=3:(bot.RUNTIME/'STOP').touch()
                 if failure=='receive_resume':
                     if polls==2:cfg['receive_only']=True
@@ -153,7 +155,7 @@ class RecoveryTests(unittest.TestCase):
                     patch.object(asyncio, 'sleep', tick):
                 await bot.run()
                 self.assertEqual(generations,0 if failure=='receive' else 2 if failure in {'session','session_clear','receive_resume'} else 1,(polls,start_polls,sent,states[-1:] ))
-                self.assertLessEqual(polls,8 if failure in {'receive_resume','session'} else 6 if failure in {'session','session_clear'} else 3)
+                self.assertLessEqual(polls,8 if failure in {'receive_resume','session'} else 6 if failure in {'session','session_clear'} else 4 if failure in {'poll','delivery'} else 3)
                 self.assertLessEqual(max(delays), 6)
                 final = json.loads((bot.RUNTIME / 'state.json').read_text(encoding='utf-8'))
                 if failure=='receive':
@@ -161,14 +163,15 @@ class RecoveryTests(unittest.TestCase):
                     self.assertTrue((bot.RUNTIME/'recent-chat.jsonl').exists())
                     self.assertEqual(final['model_calls_today'],0)
                 elif failure == 'delivery':
-                    self.assertEqual(sent, ['第一句', '第二句'])
-                    self.assertEqual(len(final['reply_times']), 2)
+                    self.assertEqual(sent, ['第一句'])
+                    self.assertEqual(attempts,2)
+                    self.assertEqual(len(final['reply_times']), 1)
                 elif failure=='image':
                     self.assertEqual(sent,['']);self.assertTrue(image_path.exists())
                 else:
                     self.assertEqual(sent, ['在（'])
                 if failure == 'poll':
-                    self.assertEqual(start_polls, [2])
+                    self.assertEqual(start_polls, [3])
                     self.assertTrue(any(s.get('online') is False and 'error' in s for s in states))
                 if failure == 'local':
                     errors = [s for s in states if 'error' in s]

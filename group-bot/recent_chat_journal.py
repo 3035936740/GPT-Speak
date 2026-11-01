@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 
 
-FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical',
+FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical', '_record_only',
     '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text')
 
 
@@ -92,13 +92,9 @@ class RecentChatJournal:
     def checkpoint(self, items=None):
         records = self._bounded(self.records if items is None else items)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_suffix(self.path.suffix + '.tmp')
-        with temp.open('w', encoding='utf-8', newline='\n') as stream:
-            for item in records:
-                stream.write(json.dumps(item, ensure_ascii=False, separators=(',', ':')) + '\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-        temp.replace(self.path)
+        from storage_io import atomic_write_text
+        atomic_write_text(self.path, ''.join(json.dumps(item, ensure_ascii=False,
+            separators=(',', ':'))+'\n' for item in records))
         self.records = records
         self.ids = {item['_id'] for item in records}
 

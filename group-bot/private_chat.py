@@ -41,9 +41,12 @@ def private_text(row):
         kind = segment.get('type')
         if kind == 'text':
             result.append(str(segment.get('data', {}).get('text', '')))
+        elif kind in {'json','xml','share'}:
+            from message_cards import render
+            result.append(render(segment))
         elif kind in {'image', 'face', 'record', 'video', 'file', 'forward'}:
             result.append({'image': '[图片]', 'face': '[QQ表情]',
-                'record': '[语音：未转写]', 'video': '[视频：未读取]',
+                'record': '[语音：未转写]', 'video': '[视频]',
                 'file': '[文件：未读取]', 'forward': '[合并转发：未读取]'}[kind])
     return ''.join(result).strip()[:2000]
 
@@ -342,6 +345,13 @@ class PrivateChat:
                                   max(self.store.enabled_at, now - 300,cutoff))
         if not batch:
             self.store.mark(peer, marker)
+            return
+        from message_cards import has_video
+        for row in batch:
+            if has_video(row):self.store.add_message(peer,message_key(row),'user',private_text(row),message_order(row)[0])
+        batch=[row for row in batch if not has_video(row)]
+        if not batch:
+            self.store.mark(peer,marker)
             return
         incoming = message_key(batch[-1])
         from owner_commands import handle as owner_command

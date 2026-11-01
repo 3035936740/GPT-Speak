@@ -32,6 +32,9 @@ def plain(segments):
         elif kind=='face':result.append('[QQ表情]')
         elif kind=='reply':result.append('[引用回复]')
         elif kind=='forward':result.append('[聊天记录]')
+        elif kind in {'json','xml','share'}:
+            from message_cards import render
+            result.append(render(segment))
         elif kind in {'record','video','file'}:result.append({'record':'[语音]','video':'[视频]','file':'[文件]'}[kind])
     return ''.join(result)
 

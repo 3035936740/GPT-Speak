@@ -81,6 +81,15 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.store.history('22222'), [])
         self.assertEqual(len(self.service.store.history('11111')), 2)
 
+    async def test_video_is_recorded_without_a_model_call_or_reply(self):
+        row=message('video',stamp=self.now-1)
+        row['message']=[{'type':'video','data':{'url':'https://invalid.test/video.mp4'}}]
+        await self.service.handle('11111',[row],'video-marker')
+        await self.service.handle('11111',[row],'video-marker')
+        self.assertFalse(self.sent);self.assertFalse(self.prompts)
+        history=self.service.store.history('11111')
+        self.assertEqual(len(history),1);self.assertEqual(history[0]['text'],'[视频]')
+
     async def test_default_only_admits_friends_in_authorized_groups(self):
         await self.service.handle('22222', [message('2', '22222')], 'otherfriend')
         await self.service.handle('33333', [message('3', '33333')], 'notfriend')
