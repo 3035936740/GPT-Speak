@@ -101,6 +101,9 @@ def gender_question(target):
 
 
 def quality_issue(text,target):
+    from chat_language import quality_issue as shorthand_issue
+    issue=shorthand_issue(text,target)
+    if issue:return issue
     from social_tact import quality_issue as tact_issue
     issue=tact_issue(text,target)
     if issue:return issue

@@ -48,6 +48,8 @@ def failure_reason(kind, error):
         return error.reason
     if kind == 'image':
         return 'image'
+    from prompt_cache import ConstraintViolation
+    if isinstance(error,ConstraintViolation):return 'invalid_answer'
     if isinstance(error, httpx.TransportError):
         return 'network'
     if isinstance(error, (TimeoutError, asyncio.TimeoutError)) or 'timed out' in str(error).lower():

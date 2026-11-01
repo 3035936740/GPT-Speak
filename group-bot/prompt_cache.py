@@ -19,16 +19,23 @@ def stable_schema(spec):
     visit(result);return result
 
 
-def check_constraints(spec,value):
+class ConstraintViolation(ValueError):
+    def __init__(self,kind,path):
+        self.kind=kind;self.path=path
+        # Log the field, never a user message, generated answer or candidate IDs.
+        super().__init__('Model output failed local '+kind+' constraint at '+path)
+
+
+def check_constraints(spec,value,path='$'):
     """Provider validates the stable schema; application rechecks original enums/consts."""
     if not isinstance(spec,dict):return
-    if 'const' in spec and value!=spec['const']:raise ValueError('Model output failed local const constraint')
-    if 'enum' in spec and value not in spec['enum']:raise ValueError('Model output failed local enum constraint')
+    if 'const' in spec and value!=spec['const']:raise ConstraintViolation('const',path)
+    if 'enum' in spec and value not in spec['enum']:raise ConstraintViolation('enum',path)
     if isinstance(value,dict):
         for name,child in spec.get('properties',{}).items():
-            if name in value:check_constraints(child,value[name])
+            if name in value:check_constraints(child,value[name],path+'.'+name)
     if isinstance(value,list) and isinstance(spec.get('items'),dict):
-        for item in value:check_constraints(spec['items'],item)
+        for index,item in enumerate(value):check_constraints(spec['items'],item,path+'['+str(index)+']')
 
 
 def transport_schema(source,runtime):

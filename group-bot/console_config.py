@@ -14,6 +14,8 @@ from storage_io import atomic_write_text, read_text
 
 DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
+    'model_avatar_query_enabled':True,'model_profile_query_enabled':True,'profile_query_cache_seconds':300,
+    'tool_workflow_enabled':True,'tool_workflow_max_steps':4,'web_answer_max_chars':300,
     'forward_messages_enabled':True,'forward_images_enabled':False,
     'receive_only':False,
     'member_labels_global_enabled':False,
@@ -24,6 +26,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
     'knowledge_enabled':True,'knowledge_max_chars':0,
     'high_eq_enabled':True,
+    'pinyin_abbreviation_guess_enabled':True,
     'member_auto_bot_marking_enabled':True,'member_auto_bot_min_observations':10,
     'member_auto_bot_window_messages':200,'member_auto_bot_command_prefixes':['/','!','！','.','。','#','y'],
     'member_model_block_enabled':False,'member_model_block_min_messages':3,
@@ -176,6 +179,9 @@ class Config:
                 if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key=='knowledge_max_chars' and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>1000):raise ValueError(key+' 必须为短文本')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
+        if not 1<=cfg['tool_workflow_max_steps']<=6:raise ValueError('工具流程步骤上限范围1～6')
+        if not 0<=cfg['profile_query_cache_seconds']<=3600:raise ValueError('公开简介缓存时间范围0～3600秒，0为不缓存')
+        if not 20<=cfg['web_answer_max_chars']<=2000:raise ValueError('联网回答字数上限范围20～2000')
         if not 20<=cfg['member_auto_bot_window_messages']<=2000:raise ValueError('自动bot判断消息窗口范围20～2000条')
         if not 2<=cfg['member_auto_bot_min_observations']<=cfg['member_auto_bot_window_messages']//2:raise ValueError('同前缀响应阈值至少2次，不能超过消息窗口的一半')
         prefixes=cfg['member_auto_bot_command_prefixes']

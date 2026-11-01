@@ -7,6 +7,17 @@ class RoleBudgetError(ValueError):pass
 
 
 def fit_role_prompt(prefix,payload,limit,compact_prefix):
+    base=dict(payload);references=base.get('knowledge_references',[])
+    if references:base['knowledge_references']=[]
+    result=_fit_role_prompt(prefix,base,limit,compact_prefix)
+    if not references:return result
+    used_prefix=prefix if result.startswith(prefix) else compact_prefix
+    data=json.loads(result[len(used_prefix):])
+    from knowledge_budget import attach
+    return attach(used_prefix,data,'knowledge_references',references,limit)
+
+
+def _fit_role_prompt(prefix,payload,limit,compact_prefix):
     data=deepcopy(payload)
     def render():return prefix+json.dumps(data,ensure_ascii=False,separators=(',',':'))
     def fits():return len(render())<=limit

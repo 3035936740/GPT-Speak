@@ -68,7 +68,10 @@ def evidence(context, target, cfg=None):
     thread,fresh,reason=select(context,target,cfg)
     recent=sorted(thread+fresh,key=lambda row:row.get('_time',0))
     quoted = target.get('_quoted_message')
+    from chat_language import context as language_context
     return {'target':item(target), 'explicit_at_bot':bool(target.get('at_bot')),
+        'shorthand_context':language_context(cfg or {},target),
+        'public_profile_results':target.get('_profile_context',[]),
         'conversation_batch':target.get('_conversation_batch',{}),
         'context_selection':{'reason':reason,'protected_ids':[str(row.get('_id')) for row in thread]},
         'recent_chat':[item(message) for message in recent],
@@ -82,9 +85,10 @@ def evidence(context, target, cfg=None):
             for page in target.get('_reference_pages',[])[:1]]}
 
 
-def checked(role, result, valid_ids):
+def checked(role, result, valid_ids, shorthand=None):
     required = set(SPECS[role]) - ({'plan','source_action','image_response_mode','feedback_target'} if role=='context' else set())
     allowed=set(SPECS[role])|({'member_updates'} if role=='context' else set())
+    if role=='context':allowed.add('shorthand_reading')
     if not isinstance(result,dict) or not required <= set(result) <= allowed:
         return None
     confidence=result.get('confidence')
@@ -103,6 +107,11 @@ def checked(role, result, valid_ids):
             return None
     if role=='context' and result['reference_message_id'] and result['reference_message_id'] not in valid_ids:
         return None
+    if role=='context' and 'shorthand_reading' in result:
+        from chat_language import checked_reading
+        reading=checked_reading(result['shorthand_reading'],shorthand,valid_ids)
+        result=dict(result);result.pop('shorthand_reading')
+        if reading:result['shorthand_reading']=reading
     return result
 
 
@@ -144,6 +153,10 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
             from member_model import update_schema,instruction,consume_updates
             profile_schema=update_schema(cfg,target,context) if role=='context' else None
             spec=schema(role)
+            if role=='context' and data.get('shorthand_context'):
+                from chat_language import READING_SCHEMA
+                spec['properties']={**spec['properties'],'shorthand_reading':READING_SCHEMA}
+                spec['required'].append('shorthand_reading')
             if profile_schema:
                 spec['properties']={**spec['properties'],'member_updates':profile_schema}
                 spec['required'].append('member_updates')
@@ -164,7 +177,13 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                     'preferences':target.get('_reply_style',{}).get('sticker_preferences',{}),
                     'candidates':[{key:item[key] for key in ('id','kind','emotion','use_when','recently_received') if key in item}
                         for item in target.get('_media_choices',[])[:4]]}
+            role_knowledge=payload.get('knowledge_references',[])
+            if role_knowledge:payload['knowledge_references']=[]
             instructions=INSTRUCTIONS[role].replace('yonagi',cfg.get('bot_name','yonagi'))
+            if data.get('shorthand_context') and role in {'context','emotion'}:
+                from chat_language import INSTRUCTION as language_instruction
+                instructions+=language_instruction
+                if role=='context':instructions+='shorthand_reading给出当前缩写的可能展开、交际动作和把握程度；无法确认时possible_reading留空、speech_act=unclear、confidence=low。只引用本轮可见消息ID；这不是对用户的永久评价。'
             if target.get('_conversation_batch'):
                 from conversation_batch import INSTRUCTION
                 instructions+='\n'+INSTRUCTION
@@ -230,8 +249,7 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                     state.pop('tasks',None)
                     state.pop('relationship',None)
                 if len(render())>limit:payload['previous_analysis_summary']={}
-                while len(payload.get('recent_chat',[]))>2 and len(render())>limit:
-                    payload['recent_chat'].pop(0)
+                # fit_role_prompt alone owns chat trimming and quote protection.
                 if len(render())>limit:payload['group_identities']['recent_members']=[]
                 prompt=render()
             try:
@@ -243,10 +261,13 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                 if role=='context':
                     concise+='按当前问题和引用判断动作；明确点名应回应，无关则silent；纯图分享选sticker/silent，不描述画面。knowledge_references足够覆盖已收录事实就reply且needs_web_search=false；需最新信息、明确联网或事实不足才搜索，不把已读网页说成不可访问。plan按schema表达，表达/记忆只选相关候选。'
                 if profile_schema:concise+=instruction(cfg,target,context)
+                if data.get('shorthand_context'):
+                    concise+='\n缩写先看引用和语气，展开只作猜测；不确定不硬夸、不强行解码，不凭猜测标记或屏蔽。'
+                if role_knowledge:payload['knowledge_references']=role_knowledge
                 prompt=fit_role_prompt(prefix,payload,role_cfg.get('max_prompt_chars',12800),concise)
                 log.info('Role input chars=%s; cap=%s; role=%s',len(prompt),role_cfg.get('max_prompt_chars',12800),role)
                 result=await generate_json(role_cfg,prompt,path,list(image_paths) if role=='vision' else None)
-                accepted=checked(role,result,valid_ids)
+                accepted=checked(role,result,valid_ids,data.get('shorthand_context'))
                 if accepted:
                     if role=='context' and profile_schema:
                         consume_updates(cfg,target,context,accepted,runtime)

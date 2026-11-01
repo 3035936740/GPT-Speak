@@ -81,6 +81,61 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.store.history('22222'), [])
         self.assertEqual(len(self.service.store.history('11111')), 2)
 
+    async def test_public_profile_on_demand_is_not_an_operator_note(self):
+        import profile_queries
+        profile_queries._cache.clear()
+        self.messages=[message('profile',stamp=self.now-1,text='看看我的个人简介')]
+        calls=[]
+        async def api(action,params=None):
+            calls.append(action)
+            if action=='get_stranger_info':return {'user_id':11111,'nickname':'本人','personal_note':'QQ公开签名','phone':'隐藏'}
+            return await self.api(action,params)
+        self.service.api=api
+        await self.service.handle('11111',self.messages,'profile-marker')
+        self.assertEqual(len(self.sent),1);self.assertIn('QQ公开签名',self.prompts[0])
+        self.assertIn('public_profile_results',self.prompts[0]);self.assertNotIn('隐藏',self.prompts[0])
+        self.assertNotIn('QQ公开签名',json.dumps(self.service.store.history('11111'),ensure_ascii=False))
+        self.assertIn('get_stranger_info',calls)
+
+    async def test_public_profile_toggle_change_during_query_cancels_reply(self):
+        import profile_queries
+        profile_queries._cache.clear()
+        self.messages=[message('profile',stamp=self.now-1,text='看看我的个人简介')]
+        async def api(action,params=None):
+            if action=='get_stranger_info':
+                Config(self.root).set('model_profile_query_enabled','off')
+                return {'user_id':11111,'personal_note':'不要传入'}
+            return await self.api(action,params)
+        self.service.api=api
+        await self.service.handle('11111',self.messages,'profile-marker')
+        self.assertFalse(self.prompts);self.assertFalse(self.sent)
+
+    async def test_large_private_knowledge_does_not_evict_fitting_conversation(self):
+        for n in range(8):self.service.store.add_message('11111',str(n),'user','LIVE_'+str(n)+' '+('近期聊天'*20),self.now-10+n)
+        profile={'observations':[],'familiarity':'暂不熟悉'}
+        with patch('private_profiles.knowledge',return_value=[]):baseline=self.service.prompt('11111',profile)
+        refs=[{'id':str(n),'title':'知识','content':'FACT_'+str(n)+' '+('相关资料'*1000)} for n in range(30)]
+        with patch('private_profiles.knowledge',return_value=refs):actual=self.service.prompt('11111',profile)
+        self.assertLessEqual(len(actual),self.service.config()['max_prompt_chars'])
+        for n in range(8):self.assertIn('LIVE_'+str(n)+' ',baseline);self.assertIn('LIVE_'+str(n)+' ',actual)
+        self.assertIn('FACT_0',actual);self.assertNotIn('FACT_29',actual)
+
+    async def test_private_avatar_is_attached_and_identified_separately_from_chat_images(self):
+        self.messages=[message('avatar',stamp=self.now-1,text='我的头像好看吗')]
+        async def download(client,url,path,cfg):path.write_bytes(b'fake-test-image')
+        with patch('bot.download_image',download):await self.service.handle('11111',self.messages,'avatar-marker')
+        self.assertEqual(len(self.sent),1);self.assertIn('"avatar_qq_id":"11111"',self.prompts[0])
+        self.assertIn('"avatar_status":"attached"',self.prompts[0])
+
+    async def test_pinyin_guess_switch_controls_private_prompt(self):
+        self.service.store.add_message('11111','shorthand','user','csncsn',self.now-1)
+        profile={'observations':[],'familiarity':'暂不熟悉'}
+        prompt=self.service.prompt('11111',profile)
+        self.assertIn('shorthand_context',prompt);self.assertIn('不是释义词典',prompt)
+        Config(self.root).set('pinyin_abbreviation_guess_enabled','off')
+        prompt=self.service.prompt('11111',profile)
+        self.assertNotIn('shorthand_context',prompt);self.assertNotIn('拼音缩写：',prompt)
+
     async def test_video_is_recorded_without_a_model_call_or_reply(self):
         row=message('video',stamp=self.now-1)
         row['message']=[{'type':'video','data':{'url':'https://invalid.test/video.mp4'}}]

@@ -28,6 +28,8 @@ FIELDS = {
     'text_transport': field('model', '文本模型传输方式', '沿用本机已有登录和模型传输，不填写API密钥。', 'text_transport', 'string', options=['http', 'default']),
     'model_timeout_seconds': field('model', '文字回复超时（秒）', '私聊文字生成的等待时间。', 'model_timeout_seconds', 'integer', low=1, high=7200),
     'use_group_impressions': field('member', '参考此人的群聊印象', '仅参考当前好友本人的有来源印象。', 'private_use_group_impressions'),
+    'avatar_query_enabled': field('member', '按需查询头像', '默认开启，仅当前明确询问或使用头像时读取；还需开启私聊识图。与后台头像显示独立。', 'model_avatar_query_enabled', default=True),
+    'profile_query_enabled': field('member', '按需查询公开简介', '默认开启，仅对象明确的简介、签名等请求查询；接口未提供时不编造。', 'model_profile_query_enabled', default=True),
     'reference_aliases': field('member', '参考联系人别名', '允许模型参考联系人标记中的额外昵称。', 'member_reference_aliases_enabled'),
     'reference_note': field('member', '参考联系人说明', '允许模型参考联系人标记中的说明。', 'member_reference_note_enabled'),
     'high_eq_enabled': field('reply', '高情商接话', '理解倾诉和夸奖，避免客服式解释或被吐槽后顶嘴。', 'high_eq_enabled'),

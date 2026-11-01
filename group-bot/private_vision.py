@@ -10,7 +10,7 @@ from image_sources import failure_details, validate_source
 
 
 @asynccontextmanager
-async def prepare(rows, cfg, folder, event, client=None):
+async def prepare(rows, cfg, folder, event, client=None, avatars=()):
     pictures = []
     for row in rows:
         segments = row.get('message', [])
@@ -18,6 +18,9 @@ async def prepare(rows, cfg, folder, event, client=None):
             pictures.extend({'message_id': str(row.get('message_id') or row.get('real_id') or ''),
                              'position': index + 1, 'url': segment.get('data', {}).get('url', '')}
                             for index, segment in enumerate(segments) if segment.get('type') == 'image')
+    if cfg.get('model_avatar_query_enabled',True):
+        pictures.extend({'message_id':'public-avatar','position':0,'url':'https://q1.qlogo.cn/g?b=qq&s=640&nk='+uid,
+            'avatar':True,'qq_id':uid,'label':label} for uid,label in avatars)
     enabled = cfg['private_vision_enabled']
     context = {'enabled': enabled, 'total_images': len(pictures), 'attached_images': [], 'unread_images': len(pictures)}
     if not pictures or not enabled:
@@ -35,10 +38,11 @@ async def prepare(rows, cfg, folder, event, client=None):
             for picture in pictures[-limit:]:
                 path = Path(temporary) / (str(len(paths) + 1) + '.jpg')
                 try:
-                    validate_source(picture['url'])
+                    validate_source(picture['url'],allow_avatar=picture.get('avatar',False))
                     await asyncio.wait_for(download_image(client, picture['url'], path, cfg), timeout=20)
                     paths.append(path)
-                    context['attached_images'].append({'image_index': len(paths), 'message_id': picture['message_id'], 'segment': picture['position']})
+                    context['attached_images'].append({'image_index': len(paths), 'message_id': picture['message_id'], 'segment': picture['position'],
+                        **({'avatar_qq_id':picture['qq_id'],'label':picture['label']} if picture.get('avatar') else {})})
                 except (OSError, ValueError, httpx.HTTPError, Image.DecompressionBombError, Image.DecompressionBombWarning, TimeoutError) as error:
                     event('stage', '私聊图片读取失败；' + failure_details(error, picture['url']), level='WARNING')
             context['unread_images'] -= len(paths)
