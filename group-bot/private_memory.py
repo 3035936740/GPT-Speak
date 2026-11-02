@@ -1,0 +1,66 @@
+"""The same memory schema and CRUD as groups, in an isolated database per friend."""
+from pathlib import Path
+from group_memory import GroupMemory
+
+
+def folder(root,peer,check=True):
+    import re
+    from private_view import contacts
+    if not re.fullmatch(r'[1-9][0-9]{4,14}',str(peer)) or (check and str(peer) not in contacts(root)):raise ValueError('联系人不在授权好友列表')
+    return Path(root)/'runtime-private'/'contacts'/str(peer)
+
+
+def open_memory(root,peer,check=True):
+    path=folder(root,peer,check);path.mkdir(parents=True,exist_ok=True)
+    return GroupMemory(path/'group-memory.sqlite3')
+
+
+def view(root,peer,table='notes',query='',offset=0):
+    from debug_store import database_view
+    return database_view(root,0,table,query,offset,folder=folder(root,peer))
+
+
+def mutate(root,peer,table,mode,values=None,row_id=None,expected=None):
+    from debug_store import database_mutate
+    memory=open_memory(root,peer);memory.close()
+    return database_mutate(root,0,table,mode,values,row_id,expected,folder=folder(root,peer))
+
+
+def observe(root,peer,identity,text,stamp):
+    memory=open_memory(root,peer,False)
+    try:memory.observe({'_id':str(identity),'_uid':str(peer),'text':text,'_time':stamp})
+    finally:memory.close()
+
+
+def recall(root,peer,text):
+    path=folder(root,peer,False)/'group-memory.sqlite3'
+    if not path.exists():return []
+    memory=GroupMemory(path)
+    try:return memory.retrieve({'_uid':str(peer),'text':text},[],limit=1200)
+    finally:memory.close()
+
+
+def prepare_learning(service,peer,cfg):
+    path=folder(service.root,peer,False)/'group-memory.sqlite3'
+    if not path.exists():return None
+    memory=GroupMemory(path)
+    batch=memory.learning_batch(cfg.get('learning_min_messages',25),cfg.get('learning_interval_seconds',600))
+    if not batch:memory.close();return None
+    prompt,evidence=memory.learning_prompt(batch,cfg.get('learning_prompt_chars',4800))
+    prompt='下面是当前好友本人的独立私聊来源。模板里的群聊天、群友、群内梗在这里均指本次私聊；不要暗示是对方在群里说过，也不涉及其他好友。\n'+prompt
+    session=service.store.get('session:'+peer)
+    memory.set_meta('last_learning_attempt',service.clock());memory.close()
+    service.store.call_started(service.clock())
+    async def run():
+        import private_profiles
+        import private_events
+        from bot import generate_json
+        with private_events.trace(service.store,peer):
+            result=await generate_json({**cfg,'_private_context':True,'group_id':0,'_web_search_mode':'disabled'},prompt,service.root/'learning.schema.json')
+        fresh=private_profiles.effective(service.config(),private_profiles.profile(service.store.db,peer))
+        if not service.active(fresh) or not service.can_chat(peer) or not fresh.get('_private_long_memory_enabled',True) or session!=service.store.get('session:'+peer):return
+        memory=GroupMemory(path)
+        try:memory.apply_learning(result,evidence)
+        finally:memory.close()
+        service.store.event(peer,'stage','当前好友的私聊记忆学习已完成')
+    return run()

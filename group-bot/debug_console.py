@@ -258,7 +258,28 @@ class Console:
                 return {'ok':True,'message':self.notice,'request':request,'selected':group}
             elif action=='private_send':
                 from private_view import enqueue
-                return enqueue(self.root,str(value.get('peer','')),value.get('text'),value.get('request_id'))
+                return enqueue(self.root,str(value.get('peer','')),value.get('text'),value.get('request_id'),value.get('images'),value.get('reply_id'))
+            elif action=='private_refresh':
+                from private_directory import refresh
+                return refresh(self.root)
+            elif action=='private_reconnect':
+                from napcat_reconnect import reconnect_private
+                return reconnect_private(self,value.get('mode','napcat'))
+            elif action=='private_hydrate':
+                from private_media import hydrate
+                return hydrate(self.root,str(value.get('peer','')))
+            elif action=='private_avatar_refresh':
+                from debug_avatars import private_avatar
+                peer=str(value.get('peer',''));own=str(Config(self.root).load().get('expected_self_id'))
+                for identity in (peer,own):private_avatar(self.root,peer,identity,True)
+                return {'ok':True,'message':'当前联系人和Bot头像已刷新'}
+            elif action=='private_session':
+                from private_view import control_session
+                return control_session(self.root,str(value.get('peer','')),value.get('mode'))
+            elif action=='private_memory':
+                from private_memory import mutate
+                return mutate(self.root,str(value.get('peer','')),value.get('table','notes'),value.get('mode'),
+                    value.get('values'),value.get('row_id'),value.get('expected'))
             elif action=='private_system':
                 from private_view import set_instruction
                 return set_instruction(self.root,str(value.get('peer','')),value.get('text'))

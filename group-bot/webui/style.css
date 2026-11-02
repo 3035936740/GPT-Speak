@@ -402,6 +402,10 @@ dialog::backdrop{background:#0d111a66}
 .dialog-foot span{font-size:12.5px;color:var(--ink-3)}
 .collection-setting{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .collection-summary{flex:1;min-width:120px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);font-size:13px}
+.memory-collection-control{display:grid;grid-template-columns:minmax(0,1fr) auto;min-width:0;min-height:36px}
+.memory-collection-control .collection-summary{min-width:0;max-width:none}
+.memory-collection-control>button{min-width:64px;height:36px}
+.memory-collection-control>.collection-error{grid-column:1/-1;margin:0}
 .member-aliases-control{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;min-width:0;min-height:36px}
 .member-aliases-control>.collection-summary{min-width:0;max-width:none}
 .member-aliases-control>button{height:36px;min-width:64px;justify-self:end}

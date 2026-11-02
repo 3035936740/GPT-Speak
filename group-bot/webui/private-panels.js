@@ -1,3 +1,4 @@
+import {initPrivateData,privateMemory,privateKnowledge} from '/private-data-panels.js';
 import {initPrivateSettings,renderPrivateSettings,openCollectionEditor,collectionSummary} from '/private-settings.js';
 const $=id=>document.getElementById(id);
 let helpers=null,current=null,active='logs';
@@ -44,7 +45,17 @@ function status(data,peer){
     ['群友印象',data.contact_settings.use_group_impressions?'参考本人群聊印象':'不参考'],['共享私聊额度',String(data.runtime.max_replies_per_hour||0)+' 条 / 小时；'+String(data.runtime.max_model_calls_per_day||0)+' 次模型调用 / 日']];
   entries.push(['私聊识图',data.contact_settings.vision_enabled?'开启':'关闭']);
   entries.push(['名单状态',data.can_chat?'允许接入':data.access_reason||'未获准']);
-  const grid=n('div',undefined,'private-status-grid');for(const [label,value] of entries){const card=n('article',undefined,'private-status-card');card.append(n('span',label,'hint'),n('strong',value));grid.append(card);}area.append(grid);
+  entries.push(['后台进程',data.runtime.pid||'—'],['最后轮询',data.runtime.last_poll||'—'],
+    ['好友列表更新',data.runtime.directory_updated?new Date(data.runtime.directory_updated*1000).toLocaleString('zh-CN',{hour12:false}):'—'],
+    ['正在处理的会话',String(data.runtime.active_conversations||0)],['当前会话',data.session?.paused?'已终止，等待恢复':'可接话'],
+    ['最近24小时模型调用',String(data.runtime.model_calls_today||0)],['最近1小时自动回复',String(data.runtime.replies_last_hour||0)],
+    ['待发送手动消息',String(data.runtime.queued_manual||0)],['私聊知识条数',String(data.runtime.knowledge_count||0)],
+    ['文本 / 识图超时',String(data.runtime.model_timeout_seconds||0)+' / '+String(data.runtime.vision_timeout_seconds||0)+' 秒'],
+    ['模型输入预算',String(data.runtime.max_prompt_chars||0)+' 字符'],['模型传输',data.runtime.transport||'默认'],
+    ['Fast模式',data.runtime.fast_mode?'开启':'关闭']);
+  const strip=n('div',undefined,'vitals');for(const [label,value,note] of [['QQ连接',data.status.online?'在线':'未连接','私信服务独立连接状态'],['当前好友',data.session?.paused?'会话已终止':data.contact_settings.reply_enabled?'自动回复开启':'仅接收消息',data.access_reason||'按权限与冷却处理'],['最近24小时模型调用',String(data.runtime.model_calls_today||0),data.runtime.model||''],['进行中的会话',String(data.runtime.active_conversations||0),'全部私聊共享发送额度']]){const box=n('div',undefined,'vital');box.append(n('div',label,'vital-label'),n('div',value,'vital-value'),n('div',note,'vital-note'));strip.append(box);}area.append(strip);if(helpers.usageCard)area.append(helpers.usageCard(0));
+  const grid=n('div',undefined,'status-sections'),sections=[['连接与运行',['后台进程','最后轮询','好友列表更新','模型传输','Fast模式','回复模型','当前会话']],['记录与记忆',['私聊消息','私聊知识条数','群友印象','模型输入预算','私聊识图','名单状态']],['私聊回复控制',['当前好友自动回复','回复长度上限','同一好友冷却','共享私聊额度','文本 / 识图超时','最近1小时自动回复','待发送手动消息']]];
+  for(const [heading,names] of sections){const card=n('section',undefined,'status-card');card.append(n('h3',heading));for(const label of names){const entry=entries.find(row=>row[0]===label);if(!entry)continue;const row=n('div',undefined,'status-row');row.append(n('div',label,'label'),n('div',String(entry[1]),'value'));card.append(row);}grid.append(card);}area.append(grid);
   if(data.status.error||data.status.recent_errors?.[peer])area.append(n('p','最近异常：'+(data.status.recent_errors?.[peer]||data.status.error),'private-panel-error'));
   const states=data.runtime.delivery_states||{},labels={sent:'已发送',failed:'处理失败',uncertain:'发送结果未确认',silent:'未回复',cancelled:'已取消',claimed:'处理中',sending:'发送中'};
   const summary=n('div',undefined,'private-history-summary');summary.append(n('h3','自动回复记录'));for(const [key,count] of Object.entries(states))summary.append(n('p',(labels[key]||key)+'：'+count));if(!Object.keys(states).length)summary.append(n('p','收到新私信后会记录回复状态。','hint'));area.append(summary);
@@ -57,29 +68,6 @@ function persona(data,peer){
     {key:'protocol',label:'私聊回复规则',type:'textarea',rows:5,maxLength:6000,placeholder:'留空使用默认私聊规则：一对一自然接话、只引用本人印象、会话相互独立。'}],
     {persona:data.profile.persona,protocol:data.profile.protocol});
   if(data.system_instruction){const note=n('div',undefined,'private-system-record');note.append(n('h3','当前系统提示词'),n('p',data.system_instruction));area.append(note);}
-}
-
-function memory(data,peer){
-  const area=panel('memory'),signature=JSON.stringify([peer,data.messages,data.impression.observations]);if(area.dataset.signature===signature)return;area.dataset.signature=signature;area.replaceChildren();
-  title(area,'私聊记忆','只读取当前好友的私信。近期'+data.contact_settings.context_messages+'条用于回复上下文（可在行为设置关闭参考）；本地最多保留100条、30天。');
-  area.append(n('h3','从群聊形成的本人印象'));
-  for(const observation of data.impression.observations||[]){const card=n('article',undefined,'impression-card');card.append(n('p','观察到 '+observation.message_count+' 条本人发言','hint'));
-    for(const interest of observation.interests||[])card.append(n('p',interest.content));if(observation.speech_style)card.append(n('p','常用句子约 '+observation.speech_style.median_message_length+' 字'));area.append(card);}
-  area.append(n('h3','独立私聊记录'));
-  if(!data.messages.length)area.append(n('p','还没有私信记忆，好友发来新消息后逐渐积累。','hint'));
-  for(const message of data.messages){const row=n('article',undefined,'private-memory-record');row.append(n('div',(message.role==='assistant'?data.bot_name:data.name)+' · '+new Date(message.stamp*1000).toLocaleString('zh-CN',{hour12:false}),'hint'),n('p',message.text));area.append(row);}
-}
-
-function knowledge(data,peer){
-  const area=panel('knowledge'),signature=JSON.stringify([peer,data.knowledge]);if(area.dataset.signature===signature)return;area.dataset.signature=signature;area.replaceChildren();
-  title(area,'私聊知识库','仅供当前好友的私聊回复检索；不会作为其他好友或群聊的知识。');
-  form(area,peer,'knowledge',[{key:'title',label:'知识标题',maxLength:80},{key:'content',label:'知识正文',type:'textarea',rows:5,maxLength:4000}],{title:'',content:''});
-  const list=n('div',undefined,'private-knowledge-list');
-  for(const entry of data.knowledge){const card=n('article',undefined,'private-knowledge-card'),tools=n('div',undefined,'row-tools'),edit=n('button','编辑'),remove=n('button','删除','danger-text');edit.type=remove.type='button';
-    edit.onclick=()=>{drafts.set(peer+':knowledge',entry);area.dataset.signature='';knowledge(data,peer);};
-    remove.onclick=async()=>{if(!confirm('删除这条私聊知识？删除前会保留备份。'))return;try{await helpers.act({action:'private_profile',peer,section:'knowledge',values:{id:entry.id,delete:true}},remove);area.dataset.signature='';await helpers.refresh();}catch(error){remove.textContent=error.message;}};
-    tools.append(edit,remove);card.append(n('h3',entry.title),n('p',entry.content),tools);list.append(card);}
-  if(!data.knowledge.length)list.append(n('p','还没有专属知识，可以在上面添加。','hint'));area.append(list);
 }
 
 function member(data,peer){
@@ -96,11 +84,11 @@ export function renderPrivatePanels(data,peer){
     if(!peer&&name!=='settings'){const area=panel(name);area.dataset.signature='';area.replaceChildren(n('div','选择左侧私信联系人后查看'+names[name],'empty'));}
   }
   renderPrivateSettings(data,peer);
-  if(peer&&data.profile&&data.contact_settings){status(data,peer);persona(data,peer);memory(data,peer);knowledge(data,peer);member(data,peer);}
+  if(peer&&data.profile&&data.contact_settings){status(data,peer);persona(data,peer);if(active==='memory')privateMemory(panel('memory'),peer);if(active==='knowledge')privateKnowledge(panel('knowledge'),peer);member(data,peer);}
 }
 
 export function initPrivatePanels(options){
-  helpers=options;
+  helpers=options;initPrivateData(options);
   initPrivateSettings(options);
   document.querySelectorAll('[data-private-tab]').forEach(button=>button.onclick=()=>{
     active=button.dataset.privateTab;document.querySelectorAll('[data-private-tab]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-selected',String(item===button));});

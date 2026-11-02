@@ -60,6 +60,19 @@ def avatar(root,group,kind,account,refresh=False):
                     try:row=json.loads(line);allowed.add(qq_id(row.get('_uid') or row.get('user_id')))
                     except ValueError:pass
         if account not in allowed:raise ValueError('该账号不在本群可见记录中')
+    return cached_avatar(root,Config(root,group).load(),kind,account,refresh)
+
+
+def private_avatar(root,peer,account,refresh=False):
+    from private_view import contacts
+    root=Path(root);cfg=Config(root).load();account=qq_id(account)
+    if str(peer) not in contacts(root) or account not in {str(peer),str(cfg.get('expected_self_id'))}:raise ValueError('私聊头像账号无效')
+    if not cfg.get('avatar_remote_enabled'):
+        cfg={**cfg,'avatar_remote_enabled':any(Config(root,g).load().get('avatar_remote_enabled',False) for g in contacts(root)[str(peer)]['groups'])}
+    return cached_avatar(root,cfg,'user',account,refresh)
+
+
+def cached_avatar(root,cfg,kind,account,refresh=False):
     key=kind+'-'+account;failure_key=(str(root.resolve()),key)
     folder=root/'runtime/avatar-cache';path=folder/(key+'.bin')
     with _lock:
@@ -67,7 +80,9 @@ def avatar(root,group,kind,account,refresh=False):
         if not refresh and time.time()-_failures.get(failure_key,0)<60:
             if path.exists():return path.read_bytes(),'image/png'
             raise ValueError('头像暂不可用')
-    if not Config(root,group).load().get('avatar_remote_enabled',False):raise ValueError('头像联网未启用，使用默认头像')
+    if not cfg.get('avatar_remote_enabled',False):
+        if not refresh and path.exists():return path.read_bytes(),'image/png'
+        raise ValueError('头像联网未启用，使用默认头像')
     url=(f'https://p.qlogo.cn/gh/{account}/{account}/100' if kind=='group' else
          f'https://q1.qlogo.cn/g?b=qq&nk={account}&s=100')
     if refresh:url+=('&' if '?' in url else '?')+'_t='+str(time.time_ns())

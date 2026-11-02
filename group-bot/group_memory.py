@@ -40,12 +40,20 @@ class GroupMemory:
                 uses INTEGER DEFAULT 0, positive INTEGER DEFAULT 0, negative INTEGER DEFAULT 0,
                 last_used REAL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS supersessions(old_id TEXT PRIMARY KEY, new_id TEXT);
+            CREATE TABLE IF NOT EXISTS note_origins(note_id TEXT PRIMARY KEY, origin TEXT);
             CREATE TABLE IF NOT EXISTS manual_messages(id TEXT PRIMARY KEY, request_id TEXT UNIQUE,
                 sender TEXT, qq_id TEXT, text TEXT, stamp REAL);
         ''')
         salt = self.db.execute("SELECT value FROM meta WHERE key='salt'").fetchone()
         self.salt = salt['value'] if salt else secrets.token_hex(16)
         self.set_meta('salt', self.salt)
+        # Legacy WebUI-created notes have no learning metadata or source evidence.
+        # Automatic learning always writes evidence; never reclassify its metadata.
+        for row in self.db.execute('SELECT id,evidence FROM notes WHERE id NOT IN (SELECT note_id FROM note_metadata)').fetchall():
+            try:empty=json.loads(row['evidence'] or '[]')==[]
+            except (ValueError,TypeError):empty=False
+            if empty:self.db.execute("INSERT OR IGNORE INTO note_origins VALUES (?,'operator')",(row['id'],))
+        self.db.commit()
         self.prune()
 
     def digest(self, value):
@@ -68,7 +76,8 @@ class GroupMemory:
         if row.get('speaker') in self.blocked or row.get('subject') in self.blocked:return False
         if 'evidence' in row:
             evidence=json.loads(row['evidence'])
-            if not evidence:return False
+            if not evidence:
+                return bool(row.get('id') and self.db.execute("SELECT 1 FROM note_origins WHERE note_id=? AND origin='operator'",(row['id'],)).fetchone())
             if any(entry.get('speaker') in self.blocked for entry in evidence):return False
         return True
 
@@ -108,6 +117,7 @@ class GroupMemory:
         self.db.execute('DELETE FROM people WHERE stamp < ?', (now - 90 * 86400,))
         self.db.execute('DELETE FROM manual_messages WHERE stamp < ?', (now - 30 * 86400,))
         self.db.execute('DELETE FROM note_metadata WHERE note_id NOT IN (SELECT id FROM notes)')
+        self.db.execute('DELETE FROM note_origins WHERE note_id NOT IN (SELECT id FROM notes)')
         self.db.execute('DELETE FROM supersessions WHERE old_id NOT IN (SELECT id FROM notes) OR new_id NOT IN (SELECT id FROM notes)')
         self.db.commit()
 
@@ -359,9 +369,9 @@ class GroupMemory:
 
     def jargon(self, text, limit=350):
         result = []
-        for row in self.db.execute("SELECT * FROM notes WHERE kind='jargon' ORDER BY stamp DESC"):
+        for row in self.db.execute("SELECT * FROM notes WHERE kind='jargon' AND id NOT IN (SELECT old_id FROM supersessions) ORDER BY stamp DESC"):
             if not self.allowed(row):continue
-            tags = json.loads(row['keywords'])
+            tags = [tag for tag in json.loads(row['keywords']) if isinstance(tag,str) and tag]
             if not any(tag.lower() in text.lower() for tag in tags):
                 continue
             item = {'meaning': row['content'], 'matched_terms': [tag for tag in tags if tag.lower() in text.lower()],

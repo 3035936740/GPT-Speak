@@ -281,7 +281,7 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_crash_marker_does_not_requeue_uncertain_manual_send(self):
         store = self.service.store
-        store.db.execute("INSERT INTO outbox VALUES ('interrupted','11111','不要重复','sending',?,'','')", (self.now,))
+        store.db.execute("INSERT INTO outbox(id,peer,text,status,stamp,sent_id,error) VALUES ('interrupted','11111','不要重复','sending',?,'','')", (self.now,))
         store.db.commit()
         store.close()
         self.service.store = PrivateStore(self.service.folder, self.now)

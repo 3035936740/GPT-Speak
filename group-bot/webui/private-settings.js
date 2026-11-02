@@ -6,7 +6,25 @@ export function collectionSummary(value){
   return items.length+' 项 · '+preview+(items.length>3?'…':'');
 }
 
-export function openCollectionEditor({title,value,key='',itemType,context={},note='',onSave}){
+export function memoryCollection(name,raw){
+  if(name==='keywords')return {array:true,itemTemplate:''};
+  if(name==='evidence')return {array:true,itemTemplate:{id:'',speaker:'',text:''}};
+  if(['content','text','traits'].includes(name)){
+    try{const value=typeof raw==='string'?JSON.parse(raw):raw;if(value!==null&&typeof value==='object')return {array:Array.isArray(value)};}catch{}
+  }
+  return null;
+}
+
+export function collectionDraftInput(field,make){
+  const el=make('div',undefined,'collection-setting memory-collection-control'),summary=make('span',undefined,'collection-summary'),button=make('button','编辑'),error=make('span','','collection-error');
+  const control={value:field.value??''};button.type='button';button.disabled=!!field.disabled;button.setAttribute('aria-label','编辑'+field.label);
+  const parse=()=>{const raw=control.value;const value=typeof raw==='string'?JSON.parse(raw.trim()||'[]'):raw;if(value===null||typeof value!=='object'||field.collection.array&&!Array.isArray(value))throw Error('此字段应为'+(field.collection.array?'数组':'数组或对象'));return value;};
+  const draw=()=>{try{summary.textContent=collectionSummary(parse());}catch{summary.textContent='原数据格式有误';}};draw();
+  button.onclick=()=>{try{error.textContent='';openCollectionEditor({title:field.label,value:parse(),itemTemplate:field.collection.itemTemplate,note:'用＋添加、−删除。先保存此字段的草稿，再保存记忆记录后生效；取消不修改原记录。',onSave:async next=>{if(!el.isConnected||!el.closest('dialog')?.open)throw Error('记忆编辑窗口已关闭，请重新打开');if(field.collection.array&&!Array.isArray(next))throw Error('此字段须为数组');control.value=JSON.stringify(next);draw();}});}catch(reason){error.textContent=reason.message;}};
+  el.append(summary,button,error);return {el,control,button};
+}
+
+export function openCollectionEditor({title,value,key='',itemType,itemTemplate,context={},note='',onSave}){
   const make=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;};
   const dialog=make('dialog',undefined,'collection-editor'),form=make('form'),head=make('div',undefined,'dialog-head');
   dialog.setAttribute('aria-label',title);
@@ -85,7 +103,7 @@ export function openCollectionEditor({title,value,key='',itemType,context={},not
     }
     const initialEntries=list?current.map(value=>['',value]):Object.entries(current);
     for(const [name,initial] of initialEntries)append(name,initial);
-    add.onclick=()=>{if(!pending){const role=!list&&roleMap&&depth===0;const name=role?['context','emotion','vision'].find(name=>!entries.some(entry=>entry.nameInput.value===name))||'':'';append(name,role?{model:'',reasoning_effort:''}:'',true);}};
+    add.onclick=()=>{if(!pending){const role=!list&&roleMap&&depth===0;const name=role?['context','emotion','vision'].find(name=>!entries.some(entry=>entry.nameInput.value===name))||'':'';const initial=role?{model:'',reasoning_effort:''}:list&&depth===0&&itemTemplate!==undefined?JSON.parse(JSON.stringify(itemTemplate)):'';append(name,initial,true);}};
     if(roleMap&&depth===0){const header=make('div',undefined,'collection-role-heading');header.append(make('span','角色'),make('span','模型'),make('span','思考等级'),make('span',''));area.append(header);}
     area.append(rows,empty,add);sync();
     return {el:area,read(){
@@ -147,7 +165,7 @@ export function renderPrivateSettings(data,peer){
     const box=n('div',undefined,'setting'+(!overridden?' inherited':'')),label=n('div'),heading=n('div',meta.label,'setting-title');
     heading.append(n('span',locked?'全部私聊共享':overridden?'单独设置':local?'继承私聊默认':'使用原默认','scope-badge'+(overridden?' override':'')));
     label.append(heading,n('p',meta.help,'setting-help'));
-    if(['qq_list','name_list'].includes(meta.type)){
+    if(['qq_list','name_list','mapping'].includes(meta.type)){
       const edit=n('div',undefined,'edit collection-setting'),summary=n('span',collectionSummary(values[key]||[]),'collection-summary'),button=n('button','编辑');button.type='button';button.disabled=locked;button.dataset.privateSetting=key;button.setAttribute('aria-label','编辑'+meta.label);
       button.onclick=()=>openCollectionEditor({title:meta.label,value:values[key]||[],key:meta.runtime,itemType:meta.type,note:meta.help,onSave:async(value,save)=>{await helpers.act({action:'private_setting',peer,scope,key,value,inherit:false},save);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();}});
       edit.append(summary,button);

@@ -22,7 +22,7 @@ from sticker_prefill import StickerPrefill
 from debug_history import recover_chat,lane
 from worker_instance import instance_locked
 
-ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/private-panels.js':'private-panels.js','/private-settings.js':'private-settings.js','/private.css':'private.css','/style.css':'style.css','/theme.js':'theme.js'}
+ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/private-chat-renderer.js':'private-chat-renderer.js','/private-data-panels.js':'private-data-panels.js','/private-panels.js':'private-panels.js','/private-settings.js':'private-settings.js','/private.css':'private.css','/style.css':'style.css','/theme.js':'theme.js'}
 
 
 class DebugWebUI:
@@ -109,6 +109,24 @@ class DebugWebUI:
                             query.get('message_id',[''])[0],query.get('key',[''])[0])
                         return self.reply(200,raw,mime)
                     if parsed.path=='/api/system':return self.reply(200,owner.system_status())
+                    if parsed.path=='/api/private-memory':
+                        from private_memory import view
+                        return self.reply(200,view(owner.root,query.get('peer',[''])[0],query.get('table',['notes'])[0],query.get('q',[''])[0],query.get('offset',[0])[0]))
+                    if parsed.path=='/api/private-knowledge':
+                        from private_knowledge import view
+                        return self.reply(200,view(owner.root,query.get('peer',[''])[0],query.get('q',[''])[0],query.get('state',['all'])[0],query.get('offset',[0])[0],query.get('id',[''])[0]))
+                    if parsed.path=='/api/private-usage':
+                        from account_usage import snapshot
+                        data=snapshot(owner.root,0,query.get('refresh',['0'])[0]=='1');data['scope']='全部私聊'
+                        return self.reply(200,{'data':data})
+                    if parsed.path=='/api/private-image':
+                        from private_media import image
+                        raw,mime=image(owner.root,query.get('peer',[''])[0],query.get('id',[''])[0],query.get('slot',['0'])[0])
+                        return self.reply(200,raw,mime)
+                    if parsed.path=='/api/private-avatar':
+                        from debug_avatars import private_avatar
+                        raw,mime=private_avatar(owner.root,query.get('peer',[''])[0],query.get('id',[''])[0],query.get('refresh',['0'])[0]=='1')
+                        return self.reply(200,raw,mime)
                     if parsed.path=='/api/avatar':
                         raw,mime=avatar(owner.root,int(query.get('group',['0'])[0]),query.get('kind',[''])[0],query.get('id',[''])[0],query.get('refresh',['0'])[0]=='1')
                         return self.reply(200,raw,mime)
@@ -147,8 +165,8 @@ class DebugWebUI:
                     self.connection.settimeout(None if knowledge else 15)
                     value=json.loads(self.rfile.read(length))
                     if not isinstance(value,dict):raise ValueError('请求必须是JSON对象')
-                    if knowledge and value.get('action')!='knowledge':raise ValueError('此接口仅用于知识库操作')
-                    if not knowledge and value.get('action')!='manual_send' and length>3*1024*1024:return self.reply(413,{'error':'请求内容过大'})
+                    if knowledge and not (value.get('action')=='knowledge' or value.get('action')=='private_profile' and value.get('section')=='knowledge'):raise ValueError('此接口仅用于知识库操作')
+                    if not knowledge and value.get('action') not in {'manual_send','private_send'} and length>3*1024*1024:return self.reply(413,{'error':'请求内容过大'})
                     result=owner.dispatch(value)
                     return self.reply(200,result)
                 except TimeoutError:return self.reply(504,{'error':'操作仍在处理中，请查看群状态后再操作'})

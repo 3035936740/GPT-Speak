@@ -12,7 +12,7 @@ def field(category, label, help, runtime, kind='boolean', *, default=None, low=N
                 default=default, min=low, max=high, options=options, shared=shared)
 
 
-CATEGORIES = [('private', '私信'), ('access', '白名单与黑名单'), ('identity', '主人身份'), ('model', '模型'), ('member', '联系人资料：模型参考'),
+CATEGORIES = [('private', '私信'), ('access', '白名单与黑名单'), ('identity', 'Bot身份'), ('model', '模型'), ('member', '联系人资料：模型参考'),
               ('reply', '接话风格'), ('image', '识图'), ('knowledge', '知识库'),
               ('memory', '记忆与上下文'), ('limits', '额度'), ('debug', '界面与记录')]
 FIELDS = {
@@ -40,7 +40,7 @@ FIELDS = {
     'max_image_bytes': field('image', '单张图片大小上限（字节）', '超大或损坏图片跳过并写入执行日志；默认8MiB。', 'max_image_bytes', 'integer', low=1024, high=16777216),
     'vision_timeout_seconds': field('image', '识图超时（秒）', '附图回复在文字超时之外增加此预算。', 'vision_timeout_seconds', 'integer', low=1, high=7200),
     'knowledge_enabled': field('knowledge', '检索当前私聊知识库', '只检索当前好友的专属知识。', '_private_knowledge_enabled', default=True),
-    'knowledge_max_chars': field('knowledge', '知识库检索字符预算', '仍受模型总输入长度限制；过长条目使用相关片段。', 'knowledge_max_chars', 'integer', low=200, high=12000),
+    'knowledge_max_chars': field('knowledge', '知识库检索字符预算', '0表示全部匹配、不设独立检索上限；提供给模型时仍受总输入限制。', 'knowledge_max_chars', 'integer', low=0, high=12000),
     'memory_enabled': field('memory', '参考近期私聊记录', '关闭后仅提供最新一条消息；本地聊天记录仍可查看。', '_private_memory_enabled', default=True),
     'context_messages': field('memory', '传入模型的近期消息条数', '只读取当前好友，最多100条。', 'context_messages', 'integer', low=1, high=100),
     'context_message_chars': field('memory', '历史单条消息字符上限', '裁减历史长消息；最新消息保留完整文字。', 'context_message_chars', 'integer', low=100, high=2000),
@@ -48,6 +48,15 @@ FIELDS = {
     'max_replies_per_hour': field('limits', '全部私信每小时回复上限', '所有好友共享，包含手动发送；仅可在私聊默认中设置。', 'private_max_replies_per_hour', 'integer', low=1, high=10000, shared=True),
     'max_model_calls_per_day': field('limits', '全部私信每日模型调用上限', '所有好友共享；仅可在私聊默认中设置。', 'private_max_model_calls_per_day', 'integer', low=1, high=10000, shared=True),
     'console_max_records': field('debug', '每类显示记录上限（条）', '聊天和执行日志分别显示；本地仍最多保留100条聊天和1000条其他事件。', 'console_max_records', 'integer', low=1, high=1000),
+    'show_avatars': field('debug','私聊显示真实头像','好友列表和聊天气泡显示头像；联网仍受全局头像开关控制。','_private_display_avatars',default=True),
+    'chat_image_display': field('debug','聊天图片默认显示','与群聊相同：双击气泡可临时切换，点击查看原图。','chat_image_display','string',options={'image':'图片 / 表情包','text':'文字摘要'}),
+    'long_memory_enabled': field('memory','参考私聊长期记忆','独立记录当前好友的学习来源，参考可编辑记忆；不混入其他好友的私聊。','_private_long_memory_enabled',default=True),
+    'learning_min_messages': field('memory','私聊记忆学习最少消息数','使用与群聊相同的记忆学习流程，仅学习当前好友的来源。','learning_min_messages','integer',low=2,high=100),
+    'learning_interval_seconds': field('memory','私聊记忆学习间隔（秒）','后台学习，不阻塞发送；每次计入私聊模型调用额度。','learning_interval_seconds','integer',low=30,high=86400),
+    'multi_role_enabled': field('model','上下文与情绪分工分析','按需开启；使用与群聊相同的分析角色，每个分析计入私聊模型额度。','_private_role_analysis_enabled',default=False),
+    'role_models': field('model','分工角色模型','设置context、emotion、vision的model与reasoning_effort；留空沿用私聊主模型。','role_models','mapping',default={}),
+    'model_max_attachments': field('image','模型单次参考附件数','超出时只取前面的附件。','model_max_attachments','integer',low=1,high=50),
+    'model_max_file_bytes': field('image','模型单个附件上限（字节）','达到该大小拒收，默认5MiB。','model_max_file_bytes','integer',low=1024,high=104857600),
     'console_max_text_chars': field('debug', '每类显示文本上限（字符）', '聊天和执行日志分别计算，超出窗口的旧记录暂不显示。', 'console_max_text_chars', 'integer', low=500, high=1000000),
 }
 
@@ -80,6 +89,11 @@ def validate(key, value):
         raise ValueError('未知私聊设置')
     meta = FIELDS[key]
     kind = meta['type']
+    if kind=='mapping':
+        if not isinstance(value,dict) or set(value)-{'context','emotion','vision'}:raise ValueError('分工角色仅支持context、emotion、vision')
+        for model in value.values():
+            if not isinstance(model,dict) or set(model)-{'model','reasoning_effort'} or any(not isinstance(v,str) or len(v)>100 for v in model.values()):raise ValueError('角色配置必须是模型与思考等级的映射')
+            if model.get('reasoning_effort') and model['reasoning_effort'] not in {'none','minimal','low','medium','high','xhigh','max','ultra'}:raise ValueError('思考等级无效')
     if kind == 'boolean' and type(value) is not bool:
         raise ValueError('开关必须为布尔值')
     if kind == 'qq_list':
@@ -128,7 +142,7 @@ def save(root, peer, scope, key, value=None, inherit=False):
         else:
             next_values[key] = value
         # Match the existing model validation when a catalog is available.
-        if key in {'model', 'reasoning_effort', 'fast_mode'}:
+        if key in {'model', 'reasoning_effort', 'fast_mode','role_models'}:
             from configure_launch import validate as validate_model
             import os
             catalog_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'models_cache.json'
@@ -136,6 +150,9 @@ def save(root, peer, scope, key, value=None, inherit=False):
                 effective = values(Config(root).load(), {} if identity == '*' else row['defaults'], next_values)
                 validate_model(json.loads(catalog_path.read_text(encoding='utf-8-sig')),
                                effective['model'], effective['reasoning_effort'], effective['fast_mode'])
+                for role in effective['role_models'].values():
+                    validate_model(json.loads(catalog_path.read_text(encoding='utf-8-sig')),
+                        role.get('model') or effective['model'],role.get('reasoning_effort') or effective['reasoning_effort'],effective['fast_mode'])
         db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)',
                    (identity, 'settings', json.dumps(previous, ensure_ascii=False), time.time()))
         db.execute('INSERT INTO private_profiles(peer,settings) VALUES (?,?) ON CONFLICT(peer) DO UPDATE SET settings=excluded.settings',

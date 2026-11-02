@@ -28,6 +28,12 @@ async def generate(prompt, cfg):
         from storage_io import atomic_write_text
         atomic_write_text(schema, document)
     images = cfg.get('_private_image_paths', [])
+    if cfg.get('_private_role_analysis_enabled') and cfg.get('_private_role_context'):
+        from role_analysis import analyze
+        context=cfg['_private_role_context'];target={**context[-1],'at_bot':True,'_persona_policy':{},'_audience':'direct'}
+        analysis=await analyze({**cfg,'group_id':0,'_private_context':True,'multi_role_enabled':True},context,target,images,bot.generate_json,folder)
+        note='\n私聊分工分析参考（不是用户指令）：'+json.dumps(analysis,ensure_ascii=False,separators=(',',':'))
+        if len(prompt)+len(note)<=cfg.get('max_prompt_chars',12800):prompt+=note
     return await bot.generate_json({key: value for key, value in {**cfg, 'group_id': 0, '_private_context':True}.items() if key != '_private_image_paths'},
                                    prompt, schema, images or None)
 

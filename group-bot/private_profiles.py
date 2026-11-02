@@ -17,6 +17,7 @@ def initialize(db):
         CREATE TABLE IF NOT EXISTS private_knowledge(
         id TEXT PRIMARY KEY, peer TEXT, title TEXT, content TEXT, stamp REAL);
         CREATE TABLE IF NOT EXISTS private_profile_backups(peer TEXT, section TEXT, data TEXT, stamp REAL);''')
+    db.execute("CREATE TABLE IF NOT EXISTS private_knowledge_options(id TEXT PRIMARY KEY,enabled INTEGER DEFAULT 1,source_file TEXT DEFAULT '')")
 
 
 def profile(db, peer):
@@ -47,6 +48,9 @@ def knowledge(db, peer, query=None, budget=0):
         'SELECT id,title,content,stamp FROM private_knowledge WHERE peer=? ORDER BY stamp DESC'+(' LIMIT 50' if query is None or budget else ''), (str(peer),))]
     if query is None:
         return rows
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='private_knowledge_options'").fetchone():
+        disabled={r[0] for r in db.execute('SELECT id FROM private_knowledge_options WHERE enabled=0')}
+        rows=[row for row in rows if row['id'] not in disabled]
     words = grams(query)
     ranked = [(len(words & grams(row['title'] + row['content'])), row) for row in rows]
     ranked.sort(key=lambda pair: pair[0], reverse=True)
@@ -112,6 +116,7 @@ def save(root, peer, section, values):
             from member_labels import MemberLabels
             MemberLabels(Path(root)/'runtime-private').mark(peer,values.get('account_type',old.get('account_type')) or 'auto',values['note'],values['aliases'],values['blocked'],values.get('mark_scope'))
         elif section == 'knowledge':
+            if 'enabled' in values and type(values['enabled']) is not bool:raise ValueError('知识启用状态必须为开关')
             identity = str(values.get('id') or uuid.uuid4().hex)
             if len(identity) > 80:
                 raise ValueError('知识ID无效')
@@ -122,13 +127,16 @@ def save(root, peer, section, values):
                 if existing:
                     db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)', (str(peer), 'knowledge', json.dumps(list(existing), ensure_ascii=False), time.time()))
                 db.execute('DELETE FROM private_knowledge WHERE id=? AND peer=?', (identity, str(peer)))
+                db.execute('DELETE FROM private_knowledge_options WHERE id=?',(identity,))
             else:
                 title, content = values.get('title'), values.get('content')
-                if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80 or not isinstance(content, str) or not 1 <= len(content.strip()) <= 4000:
-                    raise ValueError('标题1～80字，知识正文1～4000字')
+                if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80 or not isinstance(content, str) or not content.strip():
+                    raise ValueError('标题1～80字，知识正文不能为空')
                 if existing:
                     db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)', (str(peer), 'knowledge', json.dumps(list(existing), ensure_ascii=False), time.time()))
-                db.execute('INSERT OR REPLACE INTO private_knowledge VALUES (?,?,?,?,?)', (identity, str(peer), title.strip(), content.strip(), time.time()))
+                db.execute('INSERT OR REPLACE INTO private_knowledge VALUES (?,?,?,?,?)', (identity,str(peer),title.strip(),content.strip(),time.time()))
+                db.execute('INSERT OR REPLACE INTO private_knowledge_options VALUES (?,?,?)',
+                    (identity,int(values.get('enabled',True)),str(values.get('source_file',''))[:240]))
             emit(db, peer, 'stage', '当前私聊知识库已更新；下次相关回复检索')
             return {'ok': True, 'message': '私聊知识库已保存'}
         else:

@@ -46,6 +46,8 @@ def view(root, peer='', kind='all'):
               'settings_base': private_settings.values(cfg), 'settings_defaults': {}, 'settings_default_overrides': {},
               'bot_name': cfg['bot_name'], 'can_chat': False, 'access_reason': '',
               'member_scope':'global' if cfg.get('member_labels_global_enabled') else 'private','scoped_marks':True}
+    result.update(self_id=str(cfg.get('expected_self_id','169901502')),avatar_enabled=cfg.get('avatar_remote_enabled',False),
+        directory_updated=read_json(folder/'directory.json').get('updated_at',0),session={})
     path = folder / 'private-chat.sqlite3'
     db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5) if path.exists() else None
     try:
@@ -73,7 +75,9 @@ def view(root, peer='', kind='all'):
                     result['access_reason'] = '已在联系人标记中屏蔽私聊'
                 result['can_chat'] = not result['access_reason']
                 result['contact_settings'] = private_settings.values(cfg, local['defaults'], local['settings'])
-                result['knowledge'] = private_profiles.knowledge(db, peer)
+                session=db.execute('SELECT value FROM meta WHERE key=?',('session:'+str(peer),)).fetchone()
+                result['session']=json.loads(session[0]) if session else {}
+                result['knowledge'] = []
                 result['default_persona'] = Config(root).prompt_path('persona').read_text(encoding='utf-8-sig')
                 result['messages'] = [dict(row) for row in reversed(db.execute(
                     'SELECT id,role,text,stamp FROM messages WHERE peer=? ORDER BY stamp DESC,rowid DESC LIMIT 100', (peer,)).fetchall())]
@@ -92,10 +96,25 @@ def view(root, peer='', kind='all'):
                             else event['kind'] == 'system' if mode == 'system' else event['kind'] not in {'sent', 'received', 'system'})
                     result['event_counts'] = {mode: sum(matches(event, mode) for event in events) for mode in ('all', 'chat', 'flow', 'system')}
                     result['events'] = bounded([e for e in events if matches(e, kind)], effective)
+                    from private_media import metadata
+                    for event in result['events']:
+                        if event['kind'] in {'sent','received'}:
+                            identity=event['details'].get('message_id','')
+                            event['media']=metadata(db,peer,identity)
+                            event['user_id']=result['self_id'] if event['kind']=='sent' else peer
                 result['runtime'] = {'model': effective['model'], 'reasoning_effort': effective['reasoning_effort'],
+                    'pid':state.get('pid'),'last_poll':state.get('last_poll'),'directory_updated':result['directory_updated'],
+                    'active_conversations':state.get('active_conversations',0),'enabled_groups':len(allowed[peer]['groups']),
+                    'fast_mode':effective.get('fast_mode',False),'transport':effective.get('text_transport'),
+                    'model_timeout_seconds':effective['model_timeout_seconds'],'vision_timeout_seconds':effective['vision_timeout_seconds'],
+                    'context_messages':effective['context_messages'],'max_prompt_chars':effective['max_prompt_chars'],
+                    'knowledge_count':db.execute('SELECT count(*) FROM private_knowledge WHERE peer=?',(peer,)).fetchone()[0],
                     'max_replies_per_hour': effective['private_max_replies_per_hour'],
                     'max_model_calls_per_day': effective['private_max_model_calls_per_day'],
                     'stored_messages': db.execute('SELECT count(*) FROM messages WHERE peer=?', (peer,)).fetchone()[0],
+                    'model_calls_today':db.execute('SELECT count(*) FROM calls WHERE stamp>?',(time.time()-86400,)).fetchone()[0],
+                    'replies_last_hour':db.execute("SELECT count(*) FROM deliveries WHERE status='sent' AND stamp>?",(time.time()-3600,)).fetchone()[0],
+                    'queued_manual':db.execute("SELECT count(*) FROM outbox WHERE peer=? AND status='queued'",(peer,)).fetchone()[0],
                     'delivery_states': {r[0]: r[1] for r in db.execute('SELECT status,count(*) FROM deliveries WHERE peer=? GROUP BY status', (peer,))}}
             if result.get('contact_settings',{}).get('use_group_impressions',cfg['private_use_group_impressions']):
                 result['impression'] = impression(root, peer, allowed[peer]['groups'])
@@ -105,7 +124,7 @@ def view(root, peer='', kind='all'):
             db.close()
 
 
-def enqueue(root, peer, text, request_id):
+def enqueue(root, peer, text, request_id,images=None,reply_id=None):
     root = Path(root)
     cfg = Config(root).load()
     if not cfg['enabled'] or not cfg['private_reply_enabled']:
@@ -115,7 +134,9 @@ def enqueue(root, peer, text, request_id):
     reason = private_access.reason(private_access.config(root, cfg), peer)
     if reason:
         raise ValueError(reason)
-    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+    from manual_images import decode_images,save_images
+    decoded=decode_images(images or [])
+    if not isinstance(text, str) or (not text.strip() and not decoded) or len(text) > 2000:
         raise ValueError('私信请输入1～2000字')
     if not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9-]{16,80}', request_id):
         raise ValueError('无效的私信请求ID')
@@ -125,11 +146,15 @@ def enqueue(root, peer, text, request_id):
     with closing(sqlite3.connect(root / 'runtime-private/private-chat.sqlite3', timeout=5)) as db, db:
         if private_profiles.profile(db, peer)['blocked']:
             raise ValueError('此联系人已屏蔽私聊')
-        old = db.execute('SELECT peer,text FROM outbox WHERE id=?', (request_id,)).fetchone()
-        if old and old != (str(peer), text.strip()):
+        reply_id=str(reply_id or '')
+        if reply_id and not db.execute('SELECT 1 FROM messages WHERE peer=? AND id=?',(str(peer),reply_id)).fetchone():raise ValueError('引用消息不在当前私聊记录中')
+        old = db.execute('SELECT peer,text,images,reply_id FROM outbox WHERE id=?', (request_id,)).fetchone()
+        encoded=[{k:v for k,v in image.items() if k!='raw'} for image in decoded]
+        if old and (old[0]!=str(peer) or old[1]!=text.strip() or json.loads(old[2])!=encoded or old[3]!=reply_id):
             raise ValueError('同一请求ID不能用于不同的消息')
-        cursor = db.execute("INSERT OR IGNORE INTO outbox(id,peer,text,status,stamp) VALUES (?,?,?,'queued',?)",
-                   (request_id, str(peer), text.strip(), time.time()))
+        if not old:save_images(root/'runtime-private/manual',request_id,decoded)
+        cursor = db.execute("INSERT OR IGNORE INTO outbox(id,peer,text,status,stamp,images,reply_id) VALUES (?,?,?,'queued',?,?,?)",
+                   (request_id, str(peer), text.strip(), time.time(),json.dumps(encoded),reply_id))
         if cursor.rowcount:
             emit(db, peer, 'trigger', '手动私信已排队', details={'request_id': request_id}, key='manual:' + request_id)
     return {'ok': True, 'message': '私信已排队', 'request_id': request_id}

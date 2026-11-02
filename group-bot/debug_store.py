@@ -25,20 +25,20 @@ def group_folder(root,group):
 
 
 @contextmanager
-def connection(root,group):
-    path=group_folder(root,group)/'group-memory.sqlite3'
+def connection(root,group,folder=None):
+    path=(Path(folder) if folder is not None else group_folder(root,group))/'group-memory.sqlite3'
     if not path.is_file():raise ValueError('该群尚未建立记忆数据库')
     db=sqlite3.connect(path,timeout=5);db.row_factory=sqlite3.Row
     try:yield db
     finally:db.close()
 
 
-def database_view(root,group,table='notes',query='',offset=0):
+def database_view(root,group,table='notes',query='',offset=0,folder=None):
     if table not in TABLES:raise ValueError('未知数据表')
     offset=max(0,min(100000,int(offset)));query=str(query)[:200]
-    path=group_folder(root,group)/'group-memory.sqlite3'
+    path=(Path(folder) if folder is not None else group_folder(root,group))/'group-memory.sqlite3'
     if not path.exists():return {'tables':TABLES,'table':table,'columns':[],'rows':[],'total':0,'offset':offset,'limit':50,'revision':'missing'}
-    with connection(root,group) as db:
+    with connection(root,group,folder) as db:
         columns=[dict(row) for row in db.execute('PRAGMA table_info("'+table+'")')]
         names=[row['name'] for row in columns]
         if not names:return {'tables':TABLES,'table':table,'columns':[],'rows':[],'total':0,'offset':0,'limit':50,'revision':'missing-table'}
@@ -77,10 +77,10 @@ def validate_values(table,values,columns):
     return values
 
 
-def database_mutate(root,group,table,mode,values=None,row_id=None,expected=None):
+def database_mutate(root,group,table,mode,values=None,row_id=None,expected=None,folder=None):
     if table not in TABLES or mode not in {'create','update','delete'}:raise ValueError('未知数据库操作')
-    folder=group_folder(root,group)
-    with connection(root,group) as db:
+    folder=Path(folder) if folder is not None else group_folder(root,group)
+    with connection(root,group,folder) as db:
         columns={row['name']:dict(row) for row in db.execute('PRAGMA table_info("'+table+'")')}
         values=dict(values or {})
         if mode=='create' and 'id' in columns and columns['id']['pk'] and (values.get('id') is None or isinstance(values.get('id'),str) and not values['id'].strip()):
@@ -143,6 +143,11 @@ def database_mutate(root,group,table,mode,values=None,row_id=None,expected=None)
                     db.execute('DELETE FROM note_metadata WHERE note_id=?',(note['id'],))
                     db.execute('DELETE FROM supersessions WHERE old_id=? OR new_id=?',(note['id'],note['id']))
             if mode=='update':db.execute('UPDATE sources SET learned=0 WHERE rowid=?',(int(row_id),))
+        if table=='notes':
+            db.execute('CREATE TABLE IF NOT EXISTS note_origins(note_id TEXT PRIMARY KEY,origin TEXT)')
+            identity=values['id'] if mode=='create' else existing['id']
+            if mode=='delete':db.execute('DELETE FROM note_origins WHERE note_id=?',(identity,))
+            else:db.execute("INSERT OR REPLACE INTO note_origins VALUES (?,'operator')",(identity,))
         db.commit()
     return {'ok':True,'message':'数据库已保存，修改前快照已备份'}
 

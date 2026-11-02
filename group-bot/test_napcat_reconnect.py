@@ -36,6 +36,14 @@ class ReconnectTests(unittest.TestCase):
         sup.children[100]=process
         sup.sync();self.assertNotIn(100,sup.paused);self.assertNotIn(100,sup.children)
         self.assertGreater(sup.retry_after[100],time.monotonic());sup.sync();self.assertNotIn(100,sup.children)
+    def test_private_reconnect_never_restarts_group_workers(self):
+        self.ui.config.set('private_reply_enabled','true')
+        with patch.object(self.ui.supervisor.private,'stop') as stop,patch.object(self.ui.supervisor.private,'sync') as sync,patch.object(self.ui.supervisor,'stop_group') as group:
+            self.assertTrue(self.ui.web_action({'action':'private_reconnect','mode':'napcat'})['ok'])
+            stop.assert_called_once();sync.assert_called_once();group.assert_not_called()
+        with patch('napcat_reconnect.probe_mcp',new=AsyncMock(return_value=True)) as probe:
+            self.assertTrue(self.ui.web_action({'action':'private_reconnect','mode':'mcp'})['ok'])
+            probe.assert_awaited_once_with(self.root,0,private=True)
     def test_existing_waiting_worker_is_not_duplicated(self):
         atomic(self.root/'settings.json',{**bot.settings(),'group_id':100,'chat_group_whitelist':[100],'enabled':True})
         folder=runtime(self.root,100);folder.mkdir(exist_ok=True)
