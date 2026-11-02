@@ -11,13 +11,13 @@ import unicodedata
 def validate(cfg):
     prefix = cfg['owner_command_prefix']; aliases = cfg['owner_command_aliases']
     if not isinstance(prefix, str) or not 1 <= len(prefix) <= 12 or any(c.isspace() or ord(c) < 32 for c in prefix):
-        raise ValueError('主人指令前缀须为1～12字且不含空白')
+        raise ValueError('bot指令前缀须为1～12字且不含空白')
     if not isinstance(aliases, dict) or len(aliases) > 100:
-        raise ValueError('主人指令别名须为最多100项的JSON对象')
+        raise ValueError('bot指令别名须为最多100项的JSON对象')
     from console_help import COMMANDS
     for name, command in aliases.items():
         if not isinstance(name, str) or not re.fullmatch(r'[^\s/]{1,40}', name) or not isinstance(command, str) or not 1 <= len(command) <= 300:
-            raise ValueError('主人指令别名格式：{"清空":"session clear","概率":"config local set passive_probability"}')
+            raise ValueError('bot指令别名格式：{"清空":"session clear","概率":"config local set passive_probability"}')
         words=command.lstrip('/').split()
         if not words or words[0] not in COMMANDS or '\n' in command or '\r' in command:
             raise ValueError('别名只能映射到现有CLI命令')
@@ -27,6 +27,7 @@ def db_open(root):
     path = Path(root) / 'runtime/owner-commands.sqlite3'; path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=5)
     db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,actor TEXT,scope TEXT,command TEXT,status TEXT,stamp REAL,result TEXT)')
+    db.execute('CREATE TABLE IF NOT EXISTS replies(id TEXT PRIMARY KEY,text TEXT,status TEXT,stamp REAL,sent_ids TEXT,error TEXT)')
     return db
 
 
@@ -72,7 +73,7 @@ def handle(root, actor, text, message_id, scope):
     identity = str(scope) + ':' + str(actor) + ':' + str(message_id)
     with closing(db_open(root)) as db, db:
         db.execute("INSERT OR IGNORE INTO commands VALUES (?,?,?,?,'queued',?,'')", (identity, str(actor), str(scope), command, time.time()))
-    return '已接收主人指令，交由CLI执行'
+    return '已接收bot指令，交由CLI执行，完成后回传结果'
 
 
 def drain(console):
@@ -105,7 +106,8 @@ def drain(console):
     finally:
         console.group, console.config, console.panel = original, config, panel
         if original not in console.groups(): console.group = console.groups()[0]
-    # Results remain in the authenticated console, never echo keys/personas into QQ.
     with closing(db_open(console.root)) as db, db:
         db.execute('UPDATE commands SET status=?,result=? WHERE id=?', (status, result, identity))
-    console.notice = '主人指令 ' + command.split()[0] + (' 已执行\n' if status == 'done' else ' 执行失败\n') + result
+    console.notice = 'bot指令 ' + command.split()[0] + (' 已执行\n' if status == 'done' else ' 执行失败\n') + result
+    from owner_reply_delivery import enqueue
+    enqueue(console.root,identity,console.notice,cfg)

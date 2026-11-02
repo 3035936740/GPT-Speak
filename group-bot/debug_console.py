@@ -604,6 +604,8 @@ class Console:
                 if time.time()>=refresh_at:
                     from owner_commands import drain as drain_owner_commands
                     drain_owner_commands(self)
+                    from owner_reply_delivery import dispatch as dispatch_bot_results
+                    dispatch_bot_results(self)
                     if not self.running:break
                     self.supervisor.sync();self.refresh();refresh_at=time.time()+1
                 if msvcrt.kbhit():
@@ -612,6 +614,8 @@ class Console:
                     else:self.key(char)
                 self.draw();time.sleep(.08)
         finally:
+            from owner_reply_delivery import finish as finish_bot_results
+            finish_bot_results(self)
             restore_terminal()
             while True:
                 try:future,_=self.web_requests.get_nowait()

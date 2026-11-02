@@ -14,7 +14,7 @@ def status(ui):
         'QQ连接     '+('在线' if state.get('online') else '等待连接 / 已停止')+'   PID '+str(state.get('pid','—')),
         '最近轮询   '+str(state.get('last_poll','—')),
         '接话状态   '+('仅接收消息' if cfg.get('receive_only') else '会话已暂停（/session resume恢复）' if read_json(folder/'session-control.json').get('paused') else '正常接话'),
-        '主人指令   '+('开启，前缀 '+cfg['owner_command_prefix'] if cfg.get('owner_commands_enabled') else '关闭')+'；全局标记 '+('开启' if cfg.get('member_labels_global_enabled') else '关闭'),
+        'bot指令   '+('开启，前缀 '+cfg['owner_command_prefix'] if cfg.get('owner_commands_enabled') else '关闭')+'；全局标记 '+('开启' if cfg.get('member_labels_global_enabled') else '关闭'),
         '好友私聊   '+('开启' if cfg.get('private_reply_enabled') else '关闭')+'；本人群聊印象 '+('开启' if cfg.get('private_use_group_impressions') else '关闭'),
         '模型       '+cfg['model']+' · '+cfg['reasoning_effort']+' · fast='+str(cfg['fast_mode']),
         '超时       聊天 '+str(cfg['model_timeout_seconds'])+'s / 识图 '+str(cfg['vision_timeout_seconds'])+'s / 绘图 '+str(cfg['image_timeout_seconds'])+'s',

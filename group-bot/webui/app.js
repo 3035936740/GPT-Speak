@@ -15,7 +15,7 @@ const categories=[
   ['forwards','聊天记录卡片','转发历史文本和图片读取',key=>/^forward_/.test(key)],
   ['member-scope','群友标记范围','按QQ号跨群与私聊共享',key=>key==='member_labels_global_enabled'],
   ['connection','NapCat连接','HTTP / WebSocket 与 MCP',key=>/^napcat_/.test(key)],
-  ['owner-control','主人指令','在聊天中执行CLI命令',key=>/^owner_/.test(key)],
+  ['owner-control','bot指令','在聊天中执行CLI命令',key=>/^owner_/.test(key)],
   ['private','私信','私聊自动回复与群友印象，全局设置',key=>/^private_/.test(key)],
   ['knowledge','知识库','检索当前群和共享资料，按需提供给模型',key=>/^knowledge_/.test(key)],
   ['identity','身份与开关','Bot 叫什么、是否启用、在哪些群工作',key=>['enabled','receive_only','bot_name','bot_aliases','chat_group_whitelist'].includes(key)],
