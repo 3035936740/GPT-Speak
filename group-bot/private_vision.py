@@ -29,13 +29,15 @@ async def prepare(rows, cfg, folder, event, client=None, avatars=()):
         yield [], context
         return
     from bot import download_image
-    limit = min(4, max(1, int(cfg.get('max_images_per_call', 2))))
+    from model_attachments import limits,notice
+    limit = min(limits(cfg)[0], max(1, int(cfg.get('max_images_per_call', 2))))
     owned_client = client is None
     client = client or httpx.AsyncClient(trust_env=False, timeout=15)
     try:
         with tempfile.TemporaryDirectory(prefix='vision-', dir=folder) as temporary:
             paths = []
-            for picture in pictures[-limit:]:
+            context['omitted_images']=max(0,len(pictures)-limit)
+            for picture in pictures[:limit]:
                 path = Path(temporary) / (str(len(paths) + 1) + '.jpg')
                 try:
                     validate_source(picture['url'],allow_avatar=picture.get('avatar',False))
@@ -44,6 +46,7 @@ async def prepare(rows, cfg, folder, event, client=None, avatars=()):
                     context['attached_images'].append({'image_index': len(paths), 'message_id': picture['message_id'], 'segment': picture['position'],
                         **({'avatar_qq_id':picture['qq_id'],'label':picture['label']} if picture.get('avatar') else {})})
                 except (OSError, ValueError, httpx.HTTPError, Image.DecompressionBombError, Image.DecompressionBombWarning, TimeoutError) as error:
+                    if getattr(error,'code',None)=='model_file_too_large':context.setdefault('rejected_files',[]).append(notice(picture['position'],cfg))
                     event('stage', '私聊图片读取失败；' + failure_details(error, picture['url']), level='WARNING')
             context['unread_images'] -= len(paths)
             event('stage', '私聊识图：已附带 ' + str(len(paths)) + ' 张，未读取 ' + str(context['unread_images']) + ' 张',

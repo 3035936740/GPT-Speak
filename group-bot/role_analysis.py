@@ -77,6 +77,7 @@ def evidence(context, target, cfg=None):
         'reference_context':reference_evidence(cfg or {},target),
         'shorthand_context':language_context(cfg or {},target),
         'public_profile_results':target.get('_profile_context',[]),
+        **({'file_attachments':target['_attachment_status']} if target.get('_attachment_status') else {}),
         'conversation_batch':target.get('_conversation_batch',{}),
         'context_selection':{'reason':reason,'protected_ids':[str(row.get('_id')) for row in thread]},
         'recent_chat':[item(message) for message in recent],
@@ -187,6 +188,9 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
             instructions=INSTRUCTIONS[role].replace('yonagi',cfg.get('bot_name','yonagi'))
             from message_time import INSTRUCTION as time_instruction
             instructions+=time_instruction
+            if data.get('file_attachments'):
+                from file_messages import INSTRUCTION as file_instruction
+                instructions+=file_instruction
             if data.get('reference_context'):
                 from mention_context import INSTRUCTION as reference_instruction
                 instructions+=reference_instruction if data['reference_context'].get('matched_names') else '\n@按reference_context.at_sensitivity和原话判断，高值通常回应、低值要求明确依据，名单或转述可silent，不强制聊天，不随机抽签。'

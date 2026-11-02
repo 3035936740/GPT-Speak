@@ -63,6 +63,10 @@ ALIASES = {'key':'webui_key','name':'bot_name','aliases':'bot_aliases','rate':'p
 PROTECTED = {'group_id','mcp_env_file','codex_exe'}
 from napcat_connection import DEFAULTS as CONNECTION_DEFAULTS
 DEFAULTS.update(CONNECTION_DEFAULTS)
+from model_attachments import DEFAULTS as ATTACHMENT_DEFAULTS
+DEFAULTS.update(ATTACHMENT_DEFAULTS)
+from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
+DEFAULTS.update(LARGE_TASK_DEFAULTS)
 GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
@@ -193,7 +197,7 @@ class Config:
         if not isinstance(cfg['webui_key'],str) or len(cfg['webui_key'])>256 or any(ord(c)<33 or ord(c)>126 for c in cfg['webui_key']):raise ValueError('WebUI key须为空或最多256个可打印ASCII字符，不含空格')
         for key in ('member_model_block_rules','member_prompt_owner','member_prompt_human','member_prompt_AI','member_prompt_bot'):
             if not isinstance(cfg[key],str) or len(cfg[key])>1000:raise ValueError(key+' 最多1000字')
-        for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds'):
+        for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds','large_task_timeout_seconds'):
             if not 1<=cfg[key]<=7200:raise ValueError(key+' 范围1～7200秒')
         if not 100<=cfg['console_max_records']<=100000:raise ValueError('控制台记录条数范围100~100000')
         if not 500<=cfg['console_max_text_chars']<=1000000:raise ValueError('控制台文本字符上限范围500~1000000')

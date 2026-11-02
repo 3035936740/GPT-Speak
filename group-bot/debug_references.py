@@ -6,6 +6,9 @@ from pathlib import Path
 def message_metadata(item, history=()):
     data={'user_id':str(item.get('_uid','')), 'at_ids':list(item.get('_at_ids',[]))[:8]}
     if item.get('_forward'):data['forward']=item['_forward']
+    if item.get('_files'):
+        from file_messages import public_metadata
+        data['files']=public_metadata(item['_files'])
     if item.get('_bot_command'):data['bot_command']=item['_bot_command']
     count=item.get('_image_count',len(item.get('_images',[])))
     count=min(2,count) if isinstance(count,int) and not isinstance(count,bool) else 0

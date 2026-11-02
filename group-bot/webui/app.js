@@ -28,7 +28,8 @@ const categories=[
   ['participation','参与群聊的节奏','多久说一次话、什么时候接话、怎么回复',key=>/^passive_|^proactive_|^(adaptive_participation_enabled|social_planner_enabled|conversation_state_ttl_seconds|mention_cooldown_seconds|poll_seconds|peer_reply_enabled|high_eq_enabled|at_reply_probability|quote_reply_probability|burst_reply_probability|friendly_tease_probability)$/.test(key)],
   ['sticker','表情','发表情的偏好与共享表情库的收录规则',key=>/sticker/.test(key)],
   ['cleanup','生成图片的清理','Bot 生成的图片保留多久、怎么清理',key=>/^generated_image_/.test(key)],
-  ['image','识图与绘图','读取群友图片、复读识别和绘图',key=>/^image_|^vision_|^max_images?_|background_image_reading_enabled/.test(key)],
+  ['image','识图与绘图','读取群友图片、参考附件和绘图',key=>/^image_|^vision_|^max_images?_|^model_max_file|group_file_read_enabled|background_image_reading_enabled/.test(key)],
+  ['large','大任务（实验性）','生成文件并上传群文件；默认关闭',key=>/^large_task/.test(key)],
   ['memory','记忆与学习','群聊记忆、表达学习和近期聊天存档',key=>/memory|learning|^style_|^semantic_|^recent_chat_journal/.test(key)],
   ['limits','额度与上下文','每小时/每天的上限，以及传给模型的上下文长度',key=>/^max_|^context_/.test(key)],
   ['debug','界面与容错','WebUI监听地址、聊天显示、记录容量和失败处理',key=>/^webui_|^console_|^reply_failure|^chat_image_display$/.test(key)],
@@ -349,7 +350,7 @@ function eventSummary(row){let text=row.text||'';if(row.kind==='decision'){try{c
 function levelClass(row){return ['ERROR','CRITICAL'].includes(row.level)?'bad':row.level==='WARNING'?'warn':row.kind;}
 const recordViews=new Map();let recordViewScope='';
 function recordSignature(row){return JSON.stringify(['received','sent'].includes(row.kind)?
-  [row.text,row.sender,row.user_id,row.quote,row.blocked,row.bot_command,row.manual,row.historical,row.level,row.forward,(row.image_info||[]).map(image=>image.key),row.kind==='sent'?snapshot.status.name:'']:[row,snapshot.features]);}
+  [row.text,row.sender,row.user_id,row.quote,row.blocked,row.bot_command,row.manual,row.historical,row.level,row.forward,row.files,(row.image_info||[]).map(image=>image.key),row.kind==='sent'?snapshot.status.name:'']:[row,snapshot.features]);}
 function renderRecords(){
   const level=$('level-filter').value,rows=snapshot.events.filter(row=>level==='all'||(level==='WARNING'?['WARNING','ERROR','CRITICAL'].includes(row.level):['ERROR','CRITICAL'].includes(row.level)));
   const scope=selected+':'+(snapshot.status.chat_image_display||'image'),fingerprint=scope+level+snapshot.status.name+JSON.stringify(rows);
@@ -413,6 +414,11 @@ async function renderForwardDetail(row){
     if(group===selected&&identity===selectedEvent)$('detail-content').textContent=text;
   }catch(error){if(group===selected&&identity===selectedEvent)$('detail-content').textContent=(row.text||'[聊天记录]')+'\n（'+error.message+'）';}
 }
+function fileCard(file){
+  const card=node('div',undefined,'qq-file-card'),icon=node('span','▤','qq-file-icon'),info=node('div',undefined,'qq-file-info');
+  const size=Number(file.size)||0;info.append(node('strong',file.name||'未命名文件'),node('small',size?(size<1024?size+' B':size<1048576?(size/1024).toFixed(1)+' KB':(size/1048576).toFixed(2)+' MB'):'文件大小未知'));
+  card.append(icon,info);return card;
+}
 function messageRow(row){
   const group=selected,sent=row.kind==='sent',name=sent?(snapshot.status.name||'Bot'):(row.sender||'群友');let pictures=row.image_info||[];
   const item=node('div',undefined,'msg '+row.kind);item.title=eventSummary(row);
@@ -421,7 +427,8 @@ function messageRow(row){
   const render=()=>{
     releaseChatImageLoads(bubble);bubble.replaceChildren();if(row.quote)bubble.append(node('span',quoteSummary(row),'bubble-quote'));
     const imageMode=pictures.length&&chatMode(group,row)==='image';bubble.classList.toggle('image-bubble',Boolean(imageMode));
-    if(row.forward){bubble.classList.add('forward-bubble');bubble.append(forwardCard(row));}
+    if(row.files?.length){const words=String(row.text||'').replace(/\[文件：[^\]]*\]/g,'').trim();if(words)bubble.append(node('span',words));for(const file of row.files)bubble.append(fileCard(file));if(imageMode){const gallery=node('div',undefined,'chat-image-gallery');pictures.forEach((image,index)=>gallery.append(renderChatImage(row,image,index,group)));bubble.append(gallery);}}
+    else if(row.forward){bubble.classList.add('forward-bubble');bubble.append(forwardCard(row));}
     else if(imageMode){const words=chatImageText(row.text);if(words)bubble.append(node('span',words));const gallery=node('div',undefined,'chat-image-gallery');pictures.forEach((image,index)=>gallery.append(renderChatImage(row,image,index,group)));bubble.append(gallery);}
     else bubble.append(document.createTextNode(row.text||'[空消息]'));
     if(toggle){toggle.textContent=imageMode?'显示文字':'显示图片';toggle.setAttribute('aria-label',(imageMode?'显示文字摘要':'显示图片')+'，消息 '+row.message_id);}

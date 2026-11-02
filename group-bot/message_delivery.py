@@ -48,6 +48,11 @@ def delivery_plan(segments, group_id):
             raise ValueError('Invalid at target')
         if segment['type'] == '_message_break':
             flush()
+        elif segment['type']=='_generated_group_file':
+            flush()
+            data=dict(segment.get('data',{}))
+            if data.get('group_id')!=group_id or not str(data.get('file','')).startswith('base64://'):raise ValueError('Invalid generated group file')
+            plan.append({'action':'upload_group_file','params':data,'_large_task':True})
         elif segment['type'] == '_native_market_face':
             source = str(segment.get('data', {}).get('message_id', ''))
             if not re.fullmatch(r'-?\d+', source):
@@ -72,17 +77,21 @@ def delivery_plan(segments, group_id):
 async def deliver_one(api, client, env, plan):
     """Pop a part only after success, so a later failure cannot resend earlier text."""
     part = plan[0]
-    if (part['action'] not in {'send_group_msg', 'forward_group_single_msg'}
+    if (part['action'] not in {'send_group_msg', 'forward_group_single_msg','upload_group_file'}
             or part['params'].get('group_id') not in authorized_groups()):
         raise ValueError('Invalid delivery action')
+    if part['action']=='upload_group_file' and not part.get('_large_task'):raise ValueError('Invalid file delivery')
+    if part['action']=='upload_group_file' and part.get('_attempts',0):raise DeliveryAborted('Previous group file upload result uncertain; do not resend automatically')
     while True:
         if part.get('_attempts', 0) >= MAX_DELIVERY_ATTEMPTS:
             raise DeliveryAborted(f"Delivery retry limit reached; action={part['action']}; attempts={part['_attempts']}")
         part['_attempts'] = part.get('_attempts', 0) + 1
         try:
             result = await api(client, env, part['action'], part['params'])
+            if part['action']=='upload_group_file' and not (result and (result.get('file_id') or result.get('message_id'))):raise DeliveryAborted('Group file upload result not confirmed; do not resend automatically')
             break
         except NapCatAPIError as exc:
+            if part['action']=='upload_group_file':raise DeliveryAborted('Group file upload failed; do not resend automatically') from exc
             packet = market_face_packet(part.get('_market_face'))
             if exc.missing_forward_source and packet:
                 # This rejection occurs before QQ forwards anything. Switching is safe;
@@ -99,10 +108,14 @@ async def deliver_one(api, client, env, plan):
                 httpx.RemoteProtocolError) as exc:
             raise DeliveryAborted(f'Delivery result uncertain; do not resend automatically; {type(exc).__name__}') from exc
         except (httpx.HTTPError, OSError) as exc:
+            if part['action']=='upload_group_file':raise DeliveryAborted('Group file upload result uncertain; do not resend automatically') from exc
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
                 raise DeliveryAborted(f'Delivery HTTP rejection; status={exc.response.status_code}') from exc
             if part['_attempts'] >= MAX_DELIVERY_ATTEMPTS:
                 raise DeliveryAborted(f'Delivery retry limit reached; {type(exc).__name__}') from exc
+            raise
+        except Exception as exc:
+            if part['action']=='upload_group_file':raise DeliveryAborted('Group file upload failed or uncertain; do not resend automatically') from exc
             raise
     plan.pop(0)
     return result or {}

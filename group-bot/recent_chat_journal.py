@@ -6,7 +6,7 @@ import time
 
 
 FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical', '_record_only',
-    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text','_time_source')
+    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text','_time_source','_files','_attachment_order')
 
 
 def compact(item):
@@ -39,6 +39,8 @@ def compact(item):
             from message_time import epoch
             if epoch(source.get('_time')) is not None:saved['_quoted_message']['_time']=epoch(source['_time'])
             if 'is_bot' in source:saved['_quoted_message']['is_bot']=bool(source['is_bot'])
+            if source.get('_files'):saved['_quoted_message']['_files']=source['_files']
+            if source.get('_image_count') or source.get('_images'):saved['_quoted_message']['_image_count']=source.get('_image_count',len(source.get('_images',[])))
         else:saved.pop('_quoted_message')
     if '_sticker_ids' in saved:
         saved['_sticker_ids']=[str(value)[:80] for value in saved['_sticker_ids'][:5]]

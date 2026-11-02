@@ -6,6 +6,11 @@
 .avatar{position:relative}
 .group-avatar .dot{z-index:2}
 .member-avatar-button{cursor:pointer;flex-shrink:0}
+.qq-file-card{display:flex;align-items:center;gap:12px;width:280px;max-width:100%;padding:10px 2px}
+.qq-file-icon{display:grid;place-items:center;flex:0 0 42px;height:48px;border-radius:6px;background:var(--hover);color:var(--ink-2);font-size:26px}
+.qq-file-info{display:flex;flex-direction:column;gap:3px;min-width:0}
+.qq-file-info strong{font-weight:500;overflow-wrap:anywhere}
+.qq-file-info small{color:var(--ink-3);font-variant-numeric:tabular-nums}
 .member-avatar-button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .member-person{display:flex;gap:12px;align-items:center;min-width:180px}
 #member-dialog-person{margin:18px 0 24px}
