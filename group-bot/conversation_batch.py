@@ -11,6 +11,7 @@ def attach(target, rows, cfg):
     ordered=sorted(unique.values(),key=lambda row:row.get('_time',0))
     if len(ordered)<2:return target
     messages=[{'id':str(row['_id']),'qq_id':str(row.get('_uid','')),'sender':str(row.get('sender',''))[:60],
+        'sent_at':__import__('message_time').formatted(row.get('_time')),
         'time':row.get('_time',0),'text':str(row.get('text',''))[:1000],
         'at_bot':bool(row.get('at_bot')),'reply_to':row.get('_reply_id')} for row in ordered]
     budget=max(600,min(4000,cfg.get('max_prompt_chars',12800)//4))

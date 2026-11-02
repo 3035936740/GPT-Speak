@@ -78,6 +78,7 @@ async def answer(cfg, target, pages, image_paths, generate_json, runtime):
             'items':{'type':'string','minLength':1,'maxLength':part_limit}}},
         'required':['reply_to','parts'],'additionalProperties':False}
     payload={'request':target.get('text','')[:600], 'source_pages':available,
+        'sent_at':__import__('message_time').formatted(target.get('_time')),'generation_clock':__import__('message_time').clock(),
         'image_count':len(image_paths), 'reply_to':str(target.get('_id','target'))}
     style={'group_language_observations':target.get('_learned_style',{}),
         'expression_habits':target.get('_expressions',[])[:3],

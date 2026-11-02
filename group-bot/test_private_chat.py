@@ -136,6 +136,16 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         prompt=self.service.prompt('11111',profile)
         self.assertNotIn('shorthand_context',prompt);self.assertNotIn('拼音缩写：',prompt)
 
+    async def test_private_message_times_and_ephemeral_clock(self):
+        self.service.store.add_message('11111','one','user','第一条',self.now-10)
+        self.service.store.add_message('11111','sent','assistant','好的',self.now-5)
+        with patch('message_time.clock',return_value='Mon Nov  2 12:33:37 PM CST 2026'):
+            prompt=self.service.prompt('11111',{'observations':[]})
+        self.assertIn('sent_at',prompt);self.assertIn('12:33:37',prompt)
+        rows=self.service.store.history('11111');self.assertNotIn('generation_clock',str(rows))
+        self.service.store.confirm_times('11111',[{'user_id':int(self.service.self_id),'message_id':'sent','time':self.now-6}],self.service.self_id)
+        self.assertEqual(self.service.store.history('11111')[-1]['stamp'],self.now-6)
+
     async def test_video_is_recorded_without_a_model_call_or_reply(self):
         row=message('video',stamp=self.now-1)
         row['message']=[{'type':'video','data':{'url':'https://invalid.test/video.mp4'}}]

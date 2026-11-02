@@ -98,6 +98,7 @@ async def respond(cfg, context, target, kind, error, generate_json, root):
             raise ReplyFailure('model_budget')
         def compact(item):
             return {'speaker': str(item.get('sender', ''))[:24],
+                'sent_at':__import__('message_time').formatted(item.get('_time')),
                 'text': str(item.get('text', ''))[:120], 'is_bot': bool(item.get('is_bot'))}
         visuals = target.get('_cached_vision', []) or ([target['_role_analysis']['vision']]
             if target.get('_role_analysis', {}).get('vision') else [])
@@ -105,6 +106,7 @@ async def respond(cfg, context, target, kind, error, generate_json, root):
             for item in visuals[:2] if item.get('description') or item.get('visible_text')]
         if not image_description_requested(target):visuals=[]
         payload = {'failure_fact': REASONS[reason], 'task': kind,
+            'generation_clock':__import__('message_time').clock(),
             'source_fact': ('本轮网页正文已经读取成功；只有回答生成/表达处理未完成，'
                 '不准声称没读到、看不了、打不开或没有网页内容' if read_source_available(target)
                 else '没有额外的成功读取状态，不臆测具体原因'),

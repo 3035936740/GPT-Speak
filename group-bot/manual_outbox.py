@@ -101,7 +101,8 @@ class ManualOutbox:
                 except Exception as error:
                     row.update(status='uncertain',error='发送失败或结果未知，请核对QQ：'+type(error).__name__)
                     self.write(row);continue
-                row.update(status='delivered',message_id=identity,sent_at=time.time());self.write(row)
+                from message_time import sent_timestamp
+                row.update(status='delivered',message_id=identity,sent_at=sent_timestamp(response,time.time()));self.write(row)
             try:
                 if row.get('images'):
                     row['image_hashes']=archive_images(self.folder,row)

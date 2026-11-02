@@ -136,6 +136,14 @@ class PrivateStore:
         private_events.emit(self.db, peer, kind, text, **data)
         self.db.commit()
 
+    def confirm_times(self,peer,rows,self_id):
+        from message_time import epoch
+        for row in rows:
+            stamp=epoch(row.get('time'))
+            if stamp is not None and str(row.get('user_id'))==str(self_id):
+                self.db.execute("UPDATE messages SET stamp=? WHERE peer=? AND id=? AND role='assistant'",(stamp,str(peer),message_key(row)))
+        self.db.commit()
+
     def history(self, peer, limit=24):
         rows = self.db.execute('SELECT role,text,stamp FROM messages WHERE peer=? '
             'ORDER BY stamp DESC,rowid DESC LIMIT ?', (str(peer), max(1, min(100, limit)))).fetchall()
@@ -289,9 +297,13 @@ class PrivateChat:
             {key: value for key, value in row.items() if key != 'source_group'}
             for row in profile.get('observations', [])]}
         history = self.store.history(peer, cfg['context_messages'] if cfg['_private_memory_enabled'] else 1)
+        from message_time import formatted,clock,INSTRUCTION as time_instruction
+        history=[{**entry,'sent_at':formatted(entry.get('stamp'))} for entry in history]
+        rules+=time_instruction
         for entry in history[:-1]:
             entry['text'] = entry['text'][:cfg['context_message_chars']]
         payload = {'contact': {'user_id': peer}, 'group_impression': model_profile,
+                   'generation_clock':clock(),
                    'private_conversation': history,
                    'private_images': image_context or {'enabled': cfg['private_vision_enabled'], 'attached_images': [], 'unread_images': 0}}
         from chat_language import context as language_context,INSTRUCTION as language_instruction
@@ -343,6 +355,7 @@ class PrivateChat:
                 raise ValueError('Private prompt exceeds character budget')
 
     async def handle(self, peer, rows, marker):
+        self.store.confirm_times(peer,rows,self.self_id)
         with private_events.trace(self.store, peer):
             await self._handle(peer, rows, marker)
 
@@ -482,7 +495,8 @@ class PrivateChat:
                 self.store.delivery(peer, incoming, 'uncertain', error='missing_message_id')
                 return
             self.store.delivery(peer, incoming, 'sent', sent_id=identity)
-            self.store.add_message(peer, identity, 'assistant', text, self.clock())
+            from message_time import sent_timestamp
+            self.store.add_message(peer, identity, 'assistant', text, sent_timestamp(result,self.clock()))
             self.errors.pop(peer, None)
         except asyncio.CancelledError:
             self.store.delivery(peer, incoming, 'cancelled')
@@ -559,7 +573,8 @@ class PrivateChat:
                 if not identity:
                     raise ValueError('Missing message ID')
                 self.store.db.execute("UPDATE outbox SET status='sent',sent_id=? WHERE id=?", (identity, request['id']))
-                self.store.add_message(peer, identity, 'assistant', request['text'], self.clock())
+                from message_time import sent_timestamp
+                self.store.add_message(peer, identity, 'assistant', request['text'], sent_timestamp(response,self.clock()))
                 self.store.event(peer, 'stage', '手动私信发送成功', details={'message_id': identity})
             except Exception as exc:
                 self.store.db.execute("UPDATE outbox SET status='uncertain',error=? WHERE id=?", (type(exc).__name__, request['id']))

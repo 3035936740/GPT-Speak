@@ -192,7 +192,7 @@ class SocialChainTests(unittest.TestCase):
                 self.assertLessEqual(len(prompt),6000)
                 return {'reply_to':'q','should_reply':True,'conversation':'direct','text':'你不是偏爱轻音乐嘛，先挑点钢琴曲（','media_kind':'none'}
             with patch.object(bot,'generate_json',model),patch.object(bot.EmojiLibrary,'contact_sheet',return_value=False):
-                reply=await bot.generate_for_message(None,{**bot.settings(),'_reserve_extra_call':lambda:True},[], '被@',target)
+                reply=await bot.generate_for_message(None,{**bot.settings(),'max_prompt_chars':6000,'_reserve_extra_call':lambda:True},[], '被@',target)
                 self.assertIn('轻音乐',str(reply));self.assertEqual(calls[-1],'reply');self.assertCountEqual(calls[:-1],['emotion','context'])
             self.assertEqual(target['_selected_expression_ids'],['e'])
         asyncio.run(run())
@@ -270,7 +270,7 @@ class SocialChainTests(unittest.TestCase):
             '_cached_vision':[VISION],'_conversation_state':{'active_topic':{'text':'配置页面'}},
             '_person_profile':{'facts':[{'content':'喜欢音游'}]},
             '_selected_expression_ids':['e'],'_expressions':[{'situation':'自然答疑','pattern':'直接说人话','example':'就是这个（'}]}
-        prompt=bot.build_prompt(bot.settings(),[],'被@',target)
+        prompt=bot.build_prompt({**bot.settings(),'max_prompt_chars':6000},[],'被@',target)
         self.assertIn('GPT 6 Luna',prompt)
         self.assertIn('成年女性的成熟心智',prompt)
         self.assertIn('白色大肥龙',prompt)

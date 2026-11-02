@@ -6,7 +6,7 @@ import time
 
 
 FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical', '_record_only',
-    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text')
+    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text','_time_source')
 
 
 def compact(item):
@@ -34,7 +34,11 @@ def compact(item):
         saved['_at_ids'] = [str(value)[:40] for value in saved['_at_ids'][:8]]
     if '_quoted_message' in saved:
         source=saved['_quoted_message']
-        if isinstance(source,dict):saved['_quoted_message']={key:str(source.get(key,''))[:180 if key=='text' else 80] for key in ('sender','text')}
+        if isinstance(source,dict):
+            saved['_quoted_message']={key:str(source.get(key,''))[:180 if key=='text' else 80] for key in ('sender','text','_id','_uid')}
+            from message_time import epoch
+            if epoch(source.get('_time')) is not None:saved['_quoted_message']['_time']=epoch(source['_time'])
+            if 'is_bot' in source:saved['_quoted_message']['is_bot']=bool(source['is_bot'])
         else:saved.pop('_quoted_message')
     if '_sticker_ids' in saved:
         saved['_sticker_ids']=[str(value)[:80] for value in saved['_sticker_ids'][:5]]
@@ -88,6 +92,14 @@ class RecentChatJournal:
         if len(self.records) > self.max_messages:
             self.checkpoint(self.records)
         return True
+
+    def confirm_time(self,identity,stamp):
+        from message_time import epoch
+        stamp=epoch(stamp)
+        if stamp is None:return False
+        row=next((row for row in self.records if str(row.get('_id'))==str(identity)),None)
+        if row is None or (row.get('_time')==stamp and row.get('_time_source')=='napcat'):return False
+        row.update(_time=stamp,_time_source='napcat');self.checkpoint();return True
 
     def checkpoint(self, items=None):
         records = self._bounded(self.records if items is None else items)
