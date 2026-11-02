@@ -5,6 +5,8 @@
   ],
   "enabled": false,
   "stickers_enabled": true,
+  "name_match_sensitivity": 0.5,
+  "at_context_sensitivity": 0.95,
   "pinyin_abbreviation_guess_enabled": true,
   "model_avatar_query_enabled": true,
   "model_profile_query_enabled": true,

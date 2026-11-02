@@ -111,7 +111,7 @@ class FollowupTests(unittest.TestCase):
             raise AssertionError(action)
         async def fake_generate(client, cfg, context, trigger, target, as_image=False):
             self.assertEqual(target['_audience'], expected_audience)
-            self.assertEqual(target['at_bot'],expected_audience=='direct')
+            self.assertFalse(target['at_bot']) # A lexical name never fabricates a native QQ @.
             return ReplyText('用这个命令（', route='direct')
         async def tick(seconds):
             await originals[-1](0)
@@ -126,7 +126,7 @@ class FollowupTests(unittest.TestCase):
                     'passive_min_messages': 999, 'passive_cooldown_seconds': 100000,
                     'mention_cooldown_seconds': 100000, 'memory_enabled': False, 'expected_self_id': 'bot'}
                 bot.api, bot.generate_for_message, bot.asyncio.sleep = fake_api, fake_generate, tick
-                await bot.run()
+                await asyncio.wait_for(bot.run(),10)
                 self.assertEqual(len(sent), 1)
                 self.assertIn('用这个命令', sent[0][0]['data']['text'])
                 state = json.loads((bot.RUNTIME / 'state.json').read_text(encoding='utf-8'))

@@ -101,6 +101,9 @@ def gender_question(target):
 
 
 def quality_issue(text,target):
+    from mention_context import quality_issue as reference_issue
+    issue=reference_issue(text,target)
+    if issue:return issue
     from chat_language import quality_issue as shorthand_issue
     issue=shorthand_issue(text,target)
     if issue:return issue

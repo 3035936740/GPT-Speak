@@ -26,6 +26,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
     'knowledge_enabled':True,'knowledge_max_chars':0,
     'high_eq_enabled':True,
+    'name_match_sensitivity':.5,'at_context_sensitivity':.95,
     'pinyin_abbreviation_guess_enabled':True,
     'member_auto_bot_marking_enabled':True,'member_auto_bot_min_observations':10,
     'member_auto_bot_window_messages':200,'member_auto_bot_command_prefixes':['/','!','！','.','。','#','y'],
@@ -179,6 +180,8 @@ class Config:
                 if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key=='knowledge_max_chars' and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>1000):raise ValueError(key+' 必须为短文本')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
+        for key in ('name_match_sensitivity','at_context_sensitivity'):
+            if not 0<=cfg[key]<=1:raise ValueError(key+' 范围0～1，表示匹配敏感度，不是随机回复概率')
         if not 1<=cfg['tool_workflow_max_steps']<=6:raise ValueError('工具流程步骤上限范围1～6')
         if not 0<=cfg['profile_query_cache_seconds']<=3600:raise ValueError('公开简介缓存时间范围0～3600秒，0为不缓存')
         if not 20<=cfg['web_answer_max_chars']<=2000:raise ValueError('联网回答字数上限范围20～2000')

@@ -30,24 +30,30 @@ def question_or_request(text):
     return bool(re.search(r'是谁|哪位|怎么|咋|为什么|为啥|如何|什么意思|多少|哪[个张里]|有没有|能不能|可不可以|帮我|给我|看看|试试|[吗呢?？][（()）\s]*$', text))
 
 
-def audience(item, history, self_id):
+def audience(item, history, self_id, cfg=None):
     if item.get('at_bot'):
         return 'direct'
-    if account_mentioned(item.get('text',''),self_id):
+    from mention_context import plain,evidence
+    if account_mentioned(plain(item),self_id):
         item['_named_bot']=True
         item['_identity_mention']='qq_id'
         return 'direct'
-    text = re.sub(r'@\d+|\[[^\]]*\]', '', item.get('text', '')).strip()
+    text = re.sub(r'@\d+|\[[^\]]*\]', '', plain(item)).strip()
     configured_names=item.get('_unique_bot_names',[])+item.get('_ambiguous_bot_names',[])
     called=(any(name_mentioned(text,name) for name in configured_names) if configured_names else bot_name_mentioned(text))
     if called or any(name_mentioned(text,name) for name in item.get('_self_names',[])):
+        packet=evidence(cfg or Config(Path(__file__).parent).load(),item)
+        item['_reference_context']=packet
         item['_named_bot'] = True
         item['_identity_mention']='name'
         if (any(name_mentioned(text,name) for name in item.get('_ambiguous_bot_names',[]))
                 and not any(name_mentioned(text,name) for name in item.get('_unique_bot_names',[]))):
             item['_name_collision']=True
             return 'possibly_direct'
-        return 'direct'
+        if (not packet.get('product_usage_hint') or packet.get('vocative_hint')) and packet.get('name_match_score',0)>=packet.get('name_match_threshold',.55):
+            return 'direct' if packet.get('vocative_hint') or packet.get('name_match_score',0)>=.65 else 'possibly_direct'
+        # A product mention supplies no direct-call evidence. Still allow a
+        # real quote or same-person conversational followup to identify the recipient.
     ats = {str(value) for value in item.get('_at_ids', [])}
     if ats - {str(self_id), 'all'}:
         return 'others'
