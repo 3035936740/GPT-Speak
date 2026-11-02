@@ -32,12 +32,14 @@ def delivery_plan(segments, group_id):
     if group_id not in authorized_groups():
         raise ValueError('Unauthorized destination')
     plan, regular, media_ids = [], [], []
+    generated_file=False
 
     def flush():
         if any(s['type'] != 'reply' for s in regular):
             plan.append({'action': 'send_group_msg', 'params': {
                 'group_id': group_id, 'message': list(regular)}})
             if media_ids:plan[-1]['_media_ids']=list(media_ids)
+            if generated_file:plan[-1]['_large_task_completed']=True
         regular.clear()
         media_ids.clear()
 
@@ -53,6 +55,7 @@ def delivery_plan(segments, group_id):
             data=dict(segment.get('data',{}))
             if data.get('group_id')!=group_id or not str(data.get('file','')).startswith('base64://'):raise ValueError('Invalid generated group file')
             plan.append({'action':'upload_group_file','params':data,'_large_task':True})
+            generated_file=True
         elif segment['type'] == '_native_market_face':
             source = str(segment.get('data', {}).get('message_id', ''))
             if not re.fullmatch(r'-?\d+', source):
@@ -91,7 +94,9 @@ async def deliver_one(api, client, env, plan):
             if part['action']=='upload_group_file' and not (result and (result.get('file_id') or result.get('message_id'))):raise DeliveryAborted('Group file upload result not confirmed; do not resend automatically')
             break
         except NapCatAPIError as exc:
-            if part['action']=='upload_group_file':raise DeliveryAborted('Group file upload failed; do not resend automatically') from exc
+            if part['action']=='upload_group_file':
+                detail=re.sub(r'base64://[A-Za-z0-9+/=]+','base64://[hidden]',exc.detail)
+                raise DeliveryAborted('Group file upload rejected; retcode='+str(exc.retcode)+'; '+detail+'; do not resend automatically') from exc
             packet = market_face_packet(part.get('_market_face'))
             if exc.missing_forward_source and packet:
                 # This rejection occurs before QQ forwards anything. Switching is safe;

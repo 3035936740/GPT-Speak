@@ -37,7 +37,24 @@ def targets(target,context=()):
         if any(isinstance(name,str) and len(name)>=2 and name_mentioned(text,name) for name in names):
             uid=str(person.get('qq_id',''))
             if uid.isdigit():found.add(uid)
-    return list(found) if len(found)==1 else []
+    if len(found)==1:return list(found)
+    if not found and re.search(r'(?:给我|帮我|为我).{0,10}(?:用户|个人|人物)画像|(?:我的|对我).{0,8}(?:画像|印象)',text):return [sender] if sender.isdigit() else []
+    return []
+
+
+def person_request(target,context=()):
+    text=str(target.get('text',''))
+    people=[str(uid) for uid in target.get('_at_ids',[]) if str(uid)!=str(target.get('_self_id',''))]
+    explicit=bool(re.search(r'印象|画像|性格|人设|个人风格|这个人|这位群友|聊天记录|发言记录|聊天内容|互动记录',text))
+    short=re.sub(r'@\d+|\[[^\]]*\]|[，,\s]','',text)
+    if not explicit and not (people and re.fullmatch(r'(?:帮我|请|你)?(?:看看|看一下|介绍一下|评价一下)(?:他|她|这个人|这位)?[？?]?|(?:他|她)(?:怎么样|是什么样的人)[？?]?',short)):return False
+    if not re.search(r'根据|按照|参考|以|看|查|读|介绍|评价|分析|怎么样|做|写|制作|生成',text):return False
+    return bool(people or targets(target,context))
+
+
+def query_intent(target,context=()):
+    avatar,profile=intent(target.get('text',''))
+    return avatar,profile or person_request(target,context)
 
 
 ACCESS_FLAGS=('model_avatar_query_enabled','model_profile_query_enabled')
@@ -49,13 +66,13 @@ def same_access(before,after):
 
 def request_target(target,context):
     """Only inherit the kind of a recent, same-person explicit profile question."""
-    if any(intent(target.get('text',''))):return target
+    if any(query_intent(target,context)):return target
     if not re.fullmatch(r'\s*(?:那|那么)?(?:他|她|这个人|这位)的?(?:呢|怎么样|也看看|也看一下)[？?]?\s*',str(target.get('text',''))):return target
     previous=next((row for row in reversed(context) if not row.get('is_bot') and not row.get('_historical')
         and row.get('_uid')==target.get('_uid') and 0<=target.get('_time',0)-row.get('_time',0)<=120
-        and any(intent(row.get('text','')))),None)
+        and any(query_intent(row,context))),None)
     if previous:
-        avatar,profile=intent(previous['text'])
+        avatar,profile=query_intent(previous,context)
         return {**target,'text':target['text']+(' 头像' if avatar else '')+(' 个人简介' if profile else '')}
     return target
 
@@ -70,7 +87,7 @@ def public_fields(row):
 
 async def lookup(cfg,target,context,call,*,scope,permitted,active=lambda:True):
     target=request_target(target,context)
-    want_avatar,want_profile=intent(target.get('text',''))
+    want_avatar,want_profile=query_intent(target,context)
     if not want_avatar and not want_profile:return [],[]
     accounts=targets(target,context)
     text=str(target.get('text',''))

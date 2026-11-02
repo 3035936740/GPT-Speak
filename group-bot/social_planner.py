@@ -4,7 +4,7 @@ from emoji_library import ReplyText
 from reply_behavior import reaction_only
 
 PLAN_FIELDS = {
-    'action':{'type':'string','enum':['reply','wait','silent','search','sticker','draw','inspect_image']},
+    'action':{'type':'string','enum':['reply','wait','silent','search','sticker','draw','inspect_image','create_file']},
     'topic':{'type':'string','maxLength':60},
     'expects_response':{'type':'boolean'},
     'wait_seconds':{'type':'integer','minimum':0,'maximum':20},
@@ -43,6 +43,7 @@ def apply_plan(cfg, target, context_result):
     if any(key not in expressions for key in plan['expression_ids']) or any(key not in memories for key in plan['memory_ids']):
         return None
     plan = dict(plan)
+    if plan['action']=='create_file' and not cfg.get('large_tasks_enabled'):plan['action']='reply'
     media_only=reaction_only(target)
     if (plan['action']=='reply' and media_only
             and target.get('_reply_style',{}).get('allow_no_words_reaction') and target.get('_media_choices')):

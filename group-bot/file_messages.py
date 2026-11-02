@@ -69,13 +69,21 @@ async def prepare(rows,cfg,api,client,group_id,source_id):
                     response.raise_for_status()
                     return await read_bytes(response,cfg)
             raw=await asyncio.wait_for(download(),20)
-            text=text_content(raw)
-            results.append({**base,'size':len(raw),'status':'read','characters':len(text)})
+            extra={}
+            if raw.lstrip().startswith(b'%PDF-') or str(base['name']).lower().endswith('.pdf'):
+                from pdf_text import extract
+                extracted=await extract(raw);text=extracted.pop('text');extra=extracted
+            else:text=text_content(raw)
+            results.append({**base,'size':len(raw),'status':'read','characters':len(text),**extra})
             pages.append({'source_type':'file','source_message_id':str(source_id),'file_index':index,
-                'status':'read','title':base['name'],'body':text[:12000],'truncated':len(text)>12000})
+                'status':'read','title':base['name'],'body':text[:12000],'truncated':len(text)>12000,**extra})
         except Exception as error:
             if getattr(error,'code',None)=='model_file_too_large':result=notice(index,cfg)
-            else:result={'status':'unsupported' if str(error)=='unsupported' else 'unavailable',
-                'reason':'暂不支持此文件格式，未读取' if str(error)=='unsupported' else 'QQ文件暂时无法读取'}
+            else:
+                reasons={'unsupported':'暂不支持此文件格式，未读取','pdf_no_text':'PDF没有提取到可读文字，可能是扫描件；未识别题目，不可假装已读',
+                    'pdf_encrypted':'PDF需要密码，未读取正文','pdf_unreadable':'PDF解析失败，未读取正文',
+                    'pdf_dependency_missing':'PDF解析依赖未安装，未读取正文'}
+                result={'status':'unsupported' if str(error) in reasons else 'unavailable',
+                    'reason':reasons.get(str(error),'QQ文件暂时无法读取')}
             results.append({**base,**result})
     return results,pages

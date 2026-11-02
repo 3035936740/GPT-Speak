@@ -59,6 +59,7 @@ def evidence(context, target, cfg=None):
             'qq_id':qq_id(message.get('_uid')), 'qq_nickname':str(message.get('_nickname',''))[:80], 'group_card':str(message.get('_card',''))[:80],
             'text':spoken_text(message.get('text',''))[:180], 'is_bot':bool(message.get('is_bot')),
             'image_facts':visual_facts(message.get('text',''))[:2],
+            **({'file_delivered':True} if (cfg or {}).get('large_tasks_enabled') and message.get('_large_task_completed') else {}),
             'sent_at':__import__('message_time').formatted(message.get('_time')),
             'same_speaker_as_target':message.get('_uid')==target.get('_uid'),
             'bot_was_answering_target_speaker':bool(message.get('is_bot')
@@ -77,6 +78,7 @@ def evidence(context, target, cfg=None):
         'reference_context':reference_evidence(cfg or {},target),
         'shorthand_context':language_context(cfg or {},target),
         'public_profile_results':target.get('_profile_context',[]),
+        **({'person_references':__import__('person_context').fit(target['_person_context'],1400)} if target.get('_person_context') else {}),
         **({'file_attachments':target['_attachment_status']} if target.get('_attachment_status') else {}),
         'conversation_batch':target.get('_conversation_batch',{}),
         'context_selection':{'reason':reason,'protected_ids':[str(row.get('_id')) for row in thread]},
@@ -158,7 +160,9 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
             path=Path(folder)/(role+'.schema.json')
             from member_model import update_schema,instruction,consume_updates
             profile_schema=update_schema(cfg,target,context) if role=='context' else None
-            spec=schema(role)
+            spec=deepcopy(schema(role))
+            if role=='context' and not cfg.get('large_tasks_enabled'):
+                spec['properties']['plan']['properties']['action']['enum'].remove('create_file')
             if role=='context' and data.get('shorthand_context'):
                 from chat_language import READING_SCHEMA
                 spec['properties']={**spec['properties'],'shorthand_reading':READING_SCHEMA}
@@ -188,6 +192,8 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
             instructions=INSTRUCTIONS[role].replace('yonagi',cfg.get('bot_name','yonagi'))
             from message_time import INSTRUCTION as time_instruction
             instructions+=time_instruction
+            if role=='context' and cfg.get('large_tasks_enabled'):
+                instructions+='任务已开启。明确要求制作可交付的HTML、网页、代码、报告或文件，或继续同一群友尚未交付的制作请求时，plan.action=create_file，由程序实际生成上传。主题未指定或让你随便做时自行决定，不用承诺或无必要追问代替执行；闲聊、能力询问、取消和已交付任务不选create_file。'
             if data.get('file_attachments'):
                 from file_messages import INSTRUCTION as file_instruction
                 instructions+=file_instruction
@@ -276,6 +282,7 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                 concise+='\nsent_at带时分秒和时区；generation_clock是设备本地date本轮参考，不是实际发送时间。'
                 if role=='context':
                     concise+='按当前问题和引用判断动作；明确提问应回应，别名/@按语境判断，无关则silent；纯图分享选sticker/silent，不描述画面。knowledge_references足够覆盖已收录事实就reply且needs_web_search=false；需最新信息、明确联网或事实不足才搜索，不把已读网页说成不可访问。plan按schema表达，表达/记忆只选相关候选。'
+                    if cfg.get('large_tasks_enabled'):concise+='任务开启：制作文件或同一人未交付任务的接续选create_file，由程序执行；主题随意则自选，不只承诺。'
                 if profile_schema:concise+=instruction(cfg,target,context)
                 if data.get('shorthand_context'):
                     concise+='\n缩写先看引用和语气，展开只作猜测；不确定不硬夸、不强行解码，不凭猜测标记或屏蔽。'

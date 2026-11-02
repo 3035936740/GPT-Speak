@@ -6,7 +6,7 @@ import time
 
 
 FIELDS = ('sender', 'text', 'at_bot', 'is_bot', '_time', '_uid', '_id', '_historical', '_record_only',
-    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text','_time_source','_files','_attachment_order')
+    '_at_ids', '_reply_id', '_audience', '_reply_to_uid', '_media_sent', '_group_id', '_nickname', '_card', '_image_hashes','_manual','_manual_request_id','_image_count','_sticker_ids','_quoted_message','_bot_command','_forward','_forward_outer_text','_time_source','_files','_attachment_order','_large_task_completed')
 
 
 def compact(item):
@@ -102,6 +102,11 @@ class RecentChatJournal:
         row=next((row for row in self.records if str(row.get('_id'))==str(identity)),None)
         if row is None or (row.get('_time')==stamp and row.get('_time_source')=='napcat'):return False
         row.update(_time=stamp,_time_source='napcat');self.checkpoint();return True
+
+    def mark_file_completed(self,identity):
+        row=next((row for row in self.records if str(row.get('_id'))==str(identity)),None)
+        if row is None or row.get('_large_task_completed'):return False
+        row['_large_task_completed']=True;self.checkpoint();return True
 
     def checkpoint(self, items=None):
         records = self._bounded(self.records if items is None else items)

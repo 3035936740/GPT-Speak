@@ -67,7 +67,7 @@ from model_attachments import DEFAULTS as ATTACHMENT_DEFAULTS
 DEFAULTS.update(ATTACHMENT_DEFAULTS)
 from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
 DEFAULTS.update(LARGE_TASK_DEFAULTS)
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','large_task_max_concurrent'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
 def pid_alive(pid):
@@ -239,6 +239,10 @@ class Config:
         catalog_path=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))/'models_cache.json'
         catalog=read_json(catalog_path)
         validate_model(catalog,cfg['model'],cfg['reasoning_effort'],cfg['fast_mode'])
+        if cfg.get('large_tasks_enabled') or any(cfg[key]!=current[key] for key in ('large_task_model','large_task_reasoning_effort','large_task_fast_mode')):
+            validate_model(catalog,cfg['large_task_model'],cfg['large_task_reasoning_effort'],cfg['large_task_fast_mode'])
+        if not 1<=cfg['large_task_max_concurrent']<=32:raise ValueError('任务全局接收上限范围1～32，不设等待位')
+        if not 1<=cfg['large_task_max_steps']<=12:raise ValueError('任务生成调用上限范围1～12')
         if not isinstance(cfg['role_models'],dict):raise ValueError('role_models 必须是JSON对象')
         if cfg.get('role_models'):
             for role,model in cfg['role_models'].items():

@@ -60,7 +60,7 @@ class ReplyText(str):
         return obj
 
     def __bool__(self):
-        return bool(str(self)) or bool(self.segments) or self.action == 'generate_image'
+        return bool(str(self)) or bool(self.segments) or self.action in {'generate_image','generate_file'}
 
 
 def selected_media(result, choices, limit=3, track=False):

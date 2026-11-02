@@ -312,6 +312,14 @@ class GroupMemory:
             if len(json.dumps(result+[entry],ensure_ascii=False))<=limit:result.append(entry)
         return {'facts':result,'identity_scope':'当前发言者在本群有来源的事实和偏好，不是现实身份推测'} if result else {}
 
+    def person_sources(self,account,limit=5):
+        who=self.digest(account)
+        if who in self.blocked:return []
+        rows=self.db.execute('SELECT id,speaker,text,stamp FROM sources WHERE speaker=? ORDER BY stamp DESC LIMIT ?',(who,max(1,min(8,limit)))).fetchall()
+        from message_time import formatted
+        return [{'source_id':row['id'],'text':row['text'][:240],'sent_at':formatted(row['stamp']),
+            'historical':True,'speaker':'subject'} for row in rows if self.allowed(row)]
+
     def expression_used(self, identities):
         for identity in identities[:3]:
             if self.db.execute("SELECT 1 FROM notes WHERE id=? AND kind='expression'",(identity,)).fetchone():
