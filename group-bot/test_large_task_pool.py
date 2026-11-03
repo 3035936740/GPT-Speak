@@ -8,6 +8,23 @@ from large_task_pool import LargeTaskPool
 
 
 class PoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_daily_limit_is_global_durable_and_reset_by_date(self):
+        with tempfile.TemporaryDirectory() as folder:
+            a=LargeTaskPool(folder,Path(folder)/'a',1);b=LargeTaskPool(folder,Path(folder)/'b',2)
+            cfg={'large_tasks_enabled':True,'large_task_daily_limit':1}
+            token,status=a.claim('1',cfg);self.assertEqual(status,'accepted')
+            self.assertEqual(a.claim('1',cfg)[1],'duplicate');a.release(token)
+            self.assertEqual(b.claim('2',cfg)[1],'daily_limit')
+            with closing(sqlite3.connect(a.path)) as db,db:db.execute("UPDATE admissions SET day='2000-01-01'")
+            token,status=b.claim('2',cfg);self.assertEqual(status,'accepted');b.release(token)
+
+    async def test_zero_daily_limit_is_unlimited(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pool=LargeTaskPool(folder,Path(folder)/'a',1)
+            for i in range(6):
+                token,status=pool.claim(str(i),{'large_task_daily_limit':0});self.assertEqual(status,'accepted');pool.release(token)
+            with closing(sqlite3.connect(pool.path)) as db:self.assertEqual(db.execute('SELECT count(*) FROM admissions').fetchone()[0],6)
+
     async def test_global_three_slots_no_waiting_and_ordinary_work_remains_responsive(self):
         with tempfile.TemporaryDirectory() as folder:
             a=LargeTaskPool(folder,Path(folder)/'a',1);b=LargeTaskPool(folder,Path(folder)/'b',2)

@@ -67,7 +67,7 @@ from model_attachments import DEFAULTS as ATTACHMENT_DEFAULTS
 DEFAULTS.update(ATTACHMENT_DEFAULTS)
 from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
 DEFAULTS.update(LARGE_TASK_DEFAULTS)
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','large_task_max_concurrent'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
 def pid_alive(pid):
@@ -242,6 +242,8 @@ class Config:
         if cfg.get('large_tasks_enabled') or any(cfg[key]!=current[key] for key in ('large_task_model','large_task_reasoning_effort','large_task_fast_mode')):
             validate_model(catalog,cfg['large_task_model'],cfg['large_task_reasoning_effort'],cfg['large_task_fast_mode'])
         if not 1<=cfg['large_task_max_concurrent']<=32:raise ValueError('任务全局接收上限范围1～32，不设等待位')
+        if not 0<=cfg['large_task_daily_limit']<=1000000:raise ValueError('Daily task limit: 0~1000000')
+        if not 0<=cfg['large_task_retention_hours']<=87600:raise ValueError('Task retention hours: 0~87600')
         if not 1<=cfg['large_task_max_steps']<=12:raise ValueError('任务生成调用上限范围1～12')
         if not isinstance(cfg['role_models'],dict):raise ValueError('role_models 必须是JSON对象')
         if cfg.get('role_models'):

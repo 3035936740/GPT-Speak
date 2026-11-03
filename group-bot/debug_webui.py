@@ -89,6 +89,9 @@ class DebugWebUI:
                         store,group=checked(owner.root,query.get('group',['0'])[0])
                         return self.reply(200,store.view(group,query.get('q',[''])[0],query.get('offset',['0'])[0],
                             query.get('scope',['all'])[0],query.get('id',[''])[0]))
+                    if parsed.path=='/api/tasks':
+                        from task_history import view
+                        return self.reply(200,view(owner.root,query.get('group',['0'])[0],query.get('id',[''])[0],query.get('scope',['group'])[0]))
                     if parsed.path=='/api/usage':
                         from account_usage import snapshot,format_text
                         group=int(query.get('group',['0'])[0])
@@ -239,7 +242,7 @@ class DebugWebUI:
             or (kind=='system' and row['kind']=='system'))
             and term in (' '.join(str(row.get(key,'')) for key in ('text','message_id','reply_id','sender','context_id','trace_id','request_id','role','kind','level'))+' '+json.dumps(row.get('quote',{}),ensure_ascii=False)).lower()]
         return {'ui_revision':2,'features':['avatars','system_interventions','manual_send','manual_images','manual_targets','intervention_delete','image_management','sticker_ai_prefill'],'groups':groups,'selected':selected,'events':filtered,'status':{
-            'enabled':bool(cfg['enabled']),
+            'tasks_current_enabled':bool(cfg.get('large_tasks_enabled')),'tasks_enabled':any(Config(self.root,g).load().get('large_tasks_enabled') for g in self.config.load()['chat_group_whitelist']),'enabled':bool(cfg['enabled']),
             'manual_send_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid'),
             'manual_images_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid') and read_json(folder/'manual-worker.json').get('version',1)>=2,
             'manual_targets_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid') and read_json(folder/'manual-worker.json').get('version',1)>=3,

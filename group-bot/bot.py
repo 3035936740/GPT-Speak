@@ -582,7 +582,7 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
                 # Signed URLs and image content must never enter logs.
                 log.warning('Image preparation failed; %s', image_failure_details(exc, url))
         adjusted = dict(target)
-        if file_route:adjusted['_file_task_request']=file_route['request']
+        if file_route:adjusted.update(_file_task_request=file_route['request'],_file_task_repair=file_route.get('repair',False))
         if attachment_status:adjusted['_attachment_status']=attachment_status
         if file_pages:adjusted['_reference_pages']=file_pages
         if target.get('_profile_context'):
@@ -2044,7 +2044,7 @@ async def _run(smoke=False):
             return True
         from large_task_pool import LargeTaskPool
         file_pool=LargeTaskPool(ROOT,RUNTIME,cfg['group_id'])
-        async def dispatch_large_task(file_target,file_cfg,work):
+        async def dispatch_large_task(file_target,file_cfg,work,report=None):
             from large_task_notices import write as task_notice
             def active():
                 current=settings()
@@ -2061,7 +2061,9 @@ async def _run(smoke=False):
                         file_target.get('_id'),type(error).__name__,debug_events.safe_log(str(error))[:200])
                     if not active():return
                     result=await task_notice(file_cfg,file_target,'failed',{},generate_json,ROOT)
-                if not result or not active():return
+                if not result or not active():
+                    if getattr(result,'task_view_id',None):__import__('task_history').update(RUNTIME,result.task_view_id,status='cancelled',error='Session or permissions changed before upload')
+                    return
                 files=[segment for segment in getattr(result,'segments',[]) if segment['type']=='_generated_group_file']
                 details=({'name':files[0]['data']['name'],
                     'summary':''.join(segment.get('data',{}).get('text','') for segment in result.segments if segment['type']=='text')[:300]}
@@ -2076,6 +2078,8 @@ async def _run(smoke=False):
                     from message_time import sent_timestamp
                     last_send=sent_timestamp(sent,time.time());reply_times.append(last_send)
                     if part['action']=='upload_group_file':
+                        if getattr(result,'task_view_id',None):
+                            __import__('task_history').update(RUNTIME,result.task_view_id,status='uploaded')
                         for row in history:
                             if str(row.get('_id')) in {str(file_target.get('_id')),str(file_target.get('_large_task_origin_id'))}:row['_large_task_completed']=True
                         journal.mark_file_completed(file_target.get('_id'))
@@ -2095,7 +2099,11 @@ async def _run(smoke=False):
                     save_state({'pid':os.getpid(),'online':True,'group_id':file_cfg['group_id'],'day':day,
                         'model_calls_today':daily_calls,'reply_times':list(reply_times),'last_poll':datetime.now().isoformat(),
                         'recent_bot_replies':list(own_replies),'image_attempt_times':list(image_attempt_times)})
-                await deliver_burst(api,client,env,plan,allowed,recorded)
+                trace=getattr(result,'task_view_id',None)
+                if trace:__import__('task_history').update(RUNTIME,trace,status='uploading')
+                try:await deliver_burst(api,client,env,plan,allowed,recorded)
+                finally:
+                    if trace and plan:__import__('task_history').update(RUNTIME,trace,status='upload_uncertain',error='Upload not confirmed; not retried')
                 if files and not plan and allowed():
                     notice=await task_notice(file_cfg,file_target,'uploaded',details,generate_json,ROOT)
                     if notice and allowed():
@@ -2104,6 +2112,8 @@ async def _run(smoke=False):
                         await deliver_burst(api,client,env,completion,allowed,recorded)
             status=file_pool.submit(file_target.get('_large_task_origin_id') or file_target.get('_id'),file_cfg,process,active)
             debug_events.emit('stage',text='任务接收：'+status+'；全局上限='+str(file_cfg.get('large_task_max_concurrent',3)),context_id=file_target.get('_id'))
+            if callable(report):
+                report(status);return ReplyText('',route='background')
             result=await task_notice(file_cfg,file_target,status,{},generate_json,ROOT)
             result.reserved_reply_unused=status!='accepted' and not getattr(result,'model_called',False)
             return result
@@ -2301,6 +2311,7 @@ async def _run(smoke=False):
         known_excluded=blocked_accounts(RUNTIME)
         while not (RUNTIME / 'STOP').exists():
             cfg = settings()
+            __import__('task_history').cleanup(RUNTIME,cfg)
             excluded=blocked_accounts(RUNTIME)
             if excluded-known_excluded:
                 cancelled=[job['task'] for job in active_jobs.values()]
@@ -2350,6 +2361,14 @@ async def _run(smoke=False):
             current_day = datetime.now().date().isoformat()
             if current_day != day:
                 day, daily_calls = current_day, 0
+            from manual_task_requests import claim as claim_manual_task,finish as finish_manual_task
+            manual_task=claim_manual_task(RUNTIME)
+            if manual_task:
+                async def manual_work(item=manual_task,config=dict(cfg)):
+                    if not reserve_extra_call():raise ValueError('Model call budget exhausted')
+                    config.pop('_dispatch_large_task',None);config['_reserve_extra_call']=reserve_extra_call
+                    return await generate_for_message(client,config,list(history),'WebUI manual task',item)
+                await dispatch_large_task(manual_task,cfg,manual_work,lambda status:finish_manual_task(RUNTIME,manual_task,status))
             poll_succeeded = False
             try:
                 if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)

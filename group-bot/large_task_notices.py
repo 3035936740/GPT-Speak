@@ -9,6 +9,7 @@ from emoji_library import ReplyText
 
 log=logging.getLogger('qq-group-bot')
 FACTS={
+    'daily_limit':'今天的任务接收数量已达到配置上限，这次没有接收，也没有排队；可以明天再试或由后台调整上限，不承诺自动处理',
     'full':'当前同时制作的任务已满，这次没有接收，也没有进入等待队列；可以建议稍后再试，不承诺自动处理',
     'uploaded':'文件制作完成，且QQ已确认本次群文件上传成功；只需向请求者自然接话，不必列举功能或播报流程',
     'failed':'这次文件制作未完成，已停止，没有上传文件；不编造具体原因，不承诺自动重试或稍后补发',
@@ -31,7 +32,7 @@ async def write(cfg,target,status,details,model,root):
             '只输出自然聊天内容，不输出流程、原始错误、路径、工具参数或CQ码。\n'
             +json.dumps(payload,ensure_ascii=False,separators=(',',':')))
         if len(prompt)>cfg.get('max_prompt_chars',12800):return reply
-        if status!='full':
+        if status not in {'full','daily_limit'}:
             reserve=cfg.get('_reserve_extra_call')
             if not callable(reserve) or not reserve():return reply
         timeout=min(float(cfg.get('model_timeout_seconds',30)),30)

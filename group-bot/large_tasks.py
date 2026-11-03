@@ -8,7 +8,7 @@ import time
 import uuid
 
 DEFAULTS={'large_tasks_enabled':False,'large_task_max_file_bytes':20*1024*1024,'large_task_timeout_seconds':600,
-    'large_task_model':'gpt-6.1-sol','large_task_reasoning_effort':'high','large_task_fast_mode':False,'large_task_max_concurrent':3,'large_task_max_steps':4}
+    'large_task_model':'gpt-6.1-sol','large_task_reasoning_effort':'high','large_task_fast_mode':False,'large_task_max_concurrent':3,'large_task_max_steps':4,'large_task_retention_hours':2,'large_task_daily_limit':0}
 EXTENSIONS={'.html','.htm','.css','.js','.ts','.py','.sh','.ps1','.json','.yaml','.yml','.ini','.toml','.xml','.md','.txt','.csv','.log','.svg'}
 INSTRUCTION=('任务已开启。明确要求制作可交付的网页、HTML、代码、报告或文件时选择generate_file，'
     '由程序实际生成并上传，不先发“我来做/稍等”代替执行。未指定主题、说随便做或自由发挥时自行选择合理主题。'
@@ -52,6 +52,14 @@ def resolve_request(target,context):
     """Caller gates this by the opt-in; no cross-user or completed-task inference."""
     text=plain(target.get('text',''))
     if cancelled(text):return None
+    quote=target.get('_quoted_message') or next((r for r in context if str(r.get('_id'))==str(target.get('_reply_id'))),{})
+    files=quote.get('_files',[])
+    artifact=bool(files or re.search(r'\[文件[：:]|\.(?:html|svg|py|js|css|md|txt)\b',str(quote.get('text','')),re.I))
+    correction=bool(re.search(r'修复|修正|修一下|修改|改一下|改成|改为|重做|重新做|重新生成|bug|报错|不工作|无法运行',text,re.I)
+        or re.search(r'没有|没做|缺少|缺了|不对|不正确|错了',text) and re.search(r'镜像|翻转|方向|逆行|动画|按钮|点击|布局|颜色|内容|显示|代码|功能',text))
+    if target.get('_force_file_task') or artifact and correction and not re.search(r'不用改|不要改|别改|不需要修|不用修',text):
+        request='执行本次任务并交付完整文件；存在引用文件时根据原文件修订，不只解释或承诺。\n'+target.get('text','')
+        return {'request':request,'anchor':target,'repair':artifact}
     if requested(text):return {'request':target.get('text',''),'anchor':target}
     if not followup_only(text):return None
     for row in reversed(scoped_context(target,context)):
@@ -120,9 +128,11 @@ def validate_upload(params,cfg):
     return raw
 
 
-async def generate(cfg,target,pages,api,model,runtime,context=()):
+async def _generate(cfg,target,pages,api,model,runtime,context=()):
     if not cfg.get('large_tasks_enabled'):return None,{'allowed':False,'status':'disabled','reason':'任务文件生成与上传（实验性）未开启'}
     request=target.get('_file_task_request') or target.get('text','')
+    if target.get('_file_task_repair') and not any(p.get('source_type')=='file' and p.get('body') for p in pages):
+        return None,{'allowed':False,'status':'missing_source','reason':'未读取到引用文件的正文，无法据此修订；请重新提供原文件'}
     reason=size_rejection(request,cfg)
     status={'allowed':False,'status':'rejected','reason':reason} if reason else await permission(api,cfg['group_id'],target.get('_self_id') or cfg.get('expected_self_id'))
     if not status['allowed']:return None,status
@@ -161,7 +171,9 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
         for p in pages if p.get('source_type')=='file']
     def bounded_prompt(data):return render(cfg,instructions,data,sources)
     prompt=bounded_prompt(data)
-    directory=Path(runtime)/'generated-files'/uuid.uuid4().hex;directory.mkdir(parents=True,exist_ok=False)
+    from task_history import update
+    public=json.loads(prompt);update(runtime,target['_task_trace_id'],person_references=public.get('person_references',[]),source_files=public.get('source_files',[]),request=public['request'],status='generating')
+    directory=Path(runtime)/'generated-files'/target['_task_trace_id'];directory.mkdir(parents=True,exist_ok=False)
     schema_path=directory/'result.schema.json';schema_path.write_text(json.dumps(schema),encoding='utf-8')
     chunks=[];filename='';deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600)
     from artifact_integrity import problem
@@ -172,17 +184,32 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
                 if callable(reserve) and not reserve():raise ValueError('Large task continuation budget exhausted; not uploaded')
             remaining=deadline-time.monotonic()
             if remaining<=0:raise TimeoutError('Large task generation timed out; not uploaded')
+            update(runtime,target['_task_trace_id'],status='generating' if step==0 else 'continuing',step=step+1)
             result=await asyncio.wait_for(model({**cfg,'model':cfg.get('large_task_model','gpt-6.1-sol'),
                 'reasoning_effort':cfg.get('large_task_reasoning_effort','high'),'fast_mode':cfg.get('large_task_fast_mode',False),
                 '_developer_instructions':instructions,'_task_instruction_chars':len(instructions),
                 'model_timeout_seconds':remaining,'_request_timeout_seconds':remaining,'_web_search_mode':'disabled'},prompt,schema_path),remaining)
             piece=result.get('content','')
-            if not isinstance(piece,str) or not piece or len(piece)>20000 or type(result.get('complete')) is not bool:raise ValueError('Invalid or incomplete artifact response; not uploaded')
+            invalid=('content_not_text' if not isinstance(piece,str) else 'content_too_long' if len(piece)>20000 else 'missing_completion_flag' if type(result.get('complete')) is not bool else 'empty_content' if not piece else '')
+            if invalid:
+                update(runtime,target['_task_trace_id'],validation={'issue':invalid,'content_chars':len(piece) if isinstance(piece,str) else None,'complete':result.get('complete'),'step':step+1})
+                if invalid=='empty_content' and result.get('complete') is True and chunks and not problem(filename,''.join(chunks)):break
+                if isinstance(piece,str) and piece:
+                    draft=''.join(chunks)+piece
+                    if len(draft.encode('utf-8'))<=cfg.get('large_task_max_file_bytes',20*1024*1024):
+                        from storage_io import atomic_write_text
+                        atomic_write_text(directory/'draft.txt',draft)
+                        update(runtime,target['_task_trace_id'],characters=len(draft),filename=str(result.get('filename') or filename)[:100])
+                raise ValueError('Invalid artifact response; issue='+invalid+'; step='+str(step+1)+'; not uploaded')
             if filename and filename!=result.get('filename'):raise ValueError('Continuation changed filename; not uploaded')
             filename=result.get('filename','');chunks.append(piece);content=''.join(chunks)
             packet={'group_id':cfg['group_id'],'name':filename,'file':'base64://'+base64.b64encode(content.encode('utf-8')).decode('ascii')}
             validate_upload(packet,cfg)
+            from storage_io import atomic_write_text
+            atomic_write_text(directory/'draft.txt',content)
+            update(runtime,target['_task_trace_id'],filename=filename,characters=len(content),bytes=len(content.encode('utf-8')))
             issue=problem(filename,content) if result['complete'] else 'model_reports_unfinished'
+            update(runtime,target['_task_trace_id'],validation={'issue':issue or 'complete','step':step+1})
             if not issue:break
             if issue in {'empty_content','meaningless_repetition'}:raise ValueError(issue+'; not uploaded')
             continuation={**data,'continuation':{'filename':filename,'written_chars':len(content),'tail':content[-min(3000,cfg.get('max_prompt_chars',12800)//4):],'reason':issue}}
@@ -196,4 +223,19 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
     reply=ReplyText('',segments=[
         {'type':'_generated_group_file','data':packet},
         {'type':'text','data':{'text':str(result.get('summary') or '')[:200]}}])
+    reply.task_view_id=target['_task_trace_id']
     return reply,{'allowed':True,'status':'ready','name':packet['name'],'size':len(raw)}
+
+
+async def generate(cfg,target,pages,api,model,runtime,context=()):
+    if not cfg.get('large_tasks_enabled'):return await _generate(cfg,target,pages,api,model,runtime,context)
+    from task_history import begin,update,cleanup
+    from debug_events import safe_log
+    cleanup(runtime,cfg);identity=begin(runtime,target,cfg)
+    try:
+        result,status=await _generate(cfg,{**target,'_task_trace_id':identity},pages,api,model,runtime,context)
+        update(runtime,identity,status='ready' if result else 'rejected',error=status.get('reason',''))
+        return result,status
+    except BaseException as error:
+        update(runtime,identity,status='cancelled' if isinstance(error,asyncio.CancelledError) else 'failed',error=safe_log(str(error))[:500])
+        raise

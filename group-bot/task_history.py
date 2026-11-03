@@ -1,0 +1,63 @@
+"""Local task progress and partial artifacts; never execute generated files."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import time
+import uuid
+from console_config import atomic,read_json,pid_alive
+
+TERMINAL={'uploaded','failed','cancelled','rejected','upload_uncertain','interrupted'}
+
+def update(runtime,identity,**values):
+    if not re.fullmatch(r'[a-f0-9]{32}',str(identity)):raise ValueError('无效任务编号')
+    path=Path(runtime)/'task-history'/(identity+'.json');path.parent.mkdir(parents=True,exist_ok=True)
+    row=read_json(path,{})
+    row.update(values,id=identity,updated=time.time())
+    if row.get('status') in TERMINAL:row.setdefault('finished',time.time())
+    atomic(path,row);return row
+
+def begin(runtime,target,cfg):
+    identity=uuid.uuid4().hex
+    update(runtime,identity,status='preparing',pid=os.getpid(),created=time.time(),message_id=str(target.get('_id','')),
+        sender=str(target.get('sender',''))[:80],request=target.get('_file_task_request') or target.get('text',''),
+        model=cfg.get('large_task_model'),step=0,characters=0)
+    return identity
+
+def cleanup(runtime,cfg):
+    runtime=Path(runtime);hours=cfg.get('large_task_retention_hours',2)
+    for path in (runtime/'task-history').glob('*.json'):
+        row=read_json(path,{})
+        if not row or not re.fullmatch(r'[a-f0-9]{32}',path.stem):continue
+        if row.get('status') not in TERMINAL and not pid_alive(row.get('pid')):
+            row=update(runtime,path.stem,status='interrupted',error='任务进程已退出，未自动重放')
+        if hours and row.get('status') in TERMINAL and time.time()-row.get('finished',row['updated'])>=hours*3600:
+            folder=(runtime/'generated-files'/path.stem).resolve();base=(runtime/'generated-files').resolve()
+            if folder.parent==base and folder.is_dir():shutil.rmtree(folder)
+            path.unlink(missing_ok=True)
+
+def view(root,group,identity='',scope='group'):
+    from console_config import Config,runtime
+    cfg=Config(root,int(group)).load()
+    if scope not in {'group','all'}:raise ValueError('Invalid task scope')
+    if scope=='all':
+        if identity:raise ValueError('Task detail requires its source group')
+        data={'enabled':False,'rows':[],'daily_used':__import__('large_task_pool').daily_usage(root),'daily_limit':cfg.get('large_task_daily_limit',0)}
+        for gid in Config(root).load()['chat_group_whitelist']:
+            result=view(root,gid)
+            data['enabled']=data['enabled'] or result['enabled'];data['rows'].extend(result['rows'])
+        data['rows'].sort(key=lambda r:r.get('created',0),reverse=True);return data
+    if identity and not re.fullmatch(r'[a-f0-9]{32}',identity):raise ValueError('无效任务编号')
+    if not cfg.get('large_tasks_enabled'):return {'enabled':False,'rows':[]}
+    folder=runtime(root,int(group));cleanup(folder,cfg)
+    rows=[read_json(p,{}) for p in (folder/'task-history').glob('*.json')]
+    name=read_json(folder/'debug-group.json',{}).get('name',str(group))
+    rows=sorted(({**r,'group_id':int(group),'group_name':name} for r in rows if r),key=lambda r:r.get('created',0),reverse=True)
+    if not identity:
+        from large_task_pool import daily_usage
+        return {'enabled':True,'daily_used':daily_usage(root),'daily_limit':cfg.get('large_task_daily_limit',0),'rows':[{k:v for k,v in r.items() if k not in {'person_references','source_files','artifact','request'}} for r in rows]}
+    row=next((r for r in rows if r['id']==identity),None)
+    if row is None:raise ValueError('任务不存在或已过保存期限')
+    artifact=folder/'generated-files'/identity/'draft.txt'
+    return {**row,'artifact':artifact.read_text(encoding='utf-8') if artifact.exists() else ''}

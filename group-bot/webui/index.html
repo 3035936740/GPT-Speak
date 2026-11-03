@@ -35,7 +35,7 @@
     <section id="private-knowledge-pane" class="private-pane" data-private-pane="knowledge" hidden></section>
     <section id="private-member-pane" class="private-pane" data-private-pane="member" hidden></section>
   </section>
-  <nav id="group-tabs" class="tabs" data-context-tabs aria-label="当前群页面"><button data-tab="logs" class="active" type="button">聊天记录<span id="trace-count" class="count">0</span></button><button data-tab="status" type="button">运行状态</button><button data-tab="settings" type="button">行为设置</button><button data-tab="persona" type="button">人设与规则</button><button data-tab="database" type="button">群记忆</button><button data-tab="knowledge" type="button">知识库</button><button data-tab="members" type="button">群友标记</button></nav>
+  <nav id="group-tabs" class="tabs" data-context-tabs aria-label="当前群页面"><button data-tab="logs" class="active" type="button">聊天记录<span id="trace-count" class="count">0</span></button><button data-tab="status" type="button">运行状态</button><button data-tab="settings" type="button">行为设置</button><button data-tab="persona" type="button">人设与规则</button><button data-tab="database" type="button">群记忆</button><button data-tab="knowledge" type="button">知识库</button><button data-tab="tasks" id="task-tab-button" type="button" hidden>任务</button><button data-tab="members" type="button">群友标记</button></nav>
 
   <section id="tab-logs" class="tab active">
     <div class="toolbar">
@@ -74,7 +74,7 @@
           <div id="detail-images" class="detail-block" hidden></div>
           <dl id="detail-properties" class="detail-props"></dl>
           <details class="raw-event"><summary>原始数据</summary><pre id="detail-json"></pre></details>
-          <div class="detail-actions"><button id="detail-reply" type="button">回复此消息</button><button id="detail-mention" type="button">@ 发送者</button><button id="copy-id" type="button">复制 ID</button><button id="delete-event" type="button" class="danger-text">删除这条本地记录</button></div>
+          <div class="detail-actions"><button id="detail-task" type="button" hidden>作为任务处理</button><button id="detail-reply" type="button">回复此消息</button><button id="detail-mention" type="button">@ 发送者</button><button id="copy-id" type="button">复制 ID</button><button id="delete-event" type="button" class="danger-text">删除这条本地记录</button></div>
           <p class="hint">删除只清掉本地记录和 Bot 的上下文，不会撤回 QQ 里的消息。</p>
         </div>
       </aside>
@@ -82,6 +82,7 @@
   </section>
 
   <section id="tab-status" class="tab"><div class="page"><div id="status" class="status-page"></div></div></section>
+  <section id="tab-tasks" class="tab"><div class="toolbar"><strong>任务执行列表</strong><div class="segmented" id="tasks-scope" role="group" aria-label="任务范围"><button data-task-scope="group" class="active" type="button">当前群</button><button data-task-scope="all" type="button">所有群</button></div><span id="tasks-quota" class="hint"></span><span class="spacer"></span><button id="tasks-refresh" type="button">刷新</button></div><div class="task-layout"><div id="task-list"></div><div id="task-detail" class="task-detail"></div></div></section>
   <section id="tab-members" class="tab">
     <div class="page-bar"><input id="member-search" type="search" placeholder="搜索群友昵称、QQ号或标记" aria-label="搜索群友标记"><span class="spacer"></span><button id="member-refresh" type="button">刷新</button></div>
     <p class="page-note">标记只保存在当前群后台。手动标记优先；自动 bot 标记需要多次指令响应证据，不根据聊天文风猜测 AI 或真人。</p>

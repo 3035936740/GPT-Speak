@@ -6,6 +6,7 @@ import os
 import sqlite3
 import time
 import uuid
+from datetime import datetime
 from contextlib import closing
 from console_config import pid_alive,atomic
 
@@ -20,6 +21,7 @@ class LargeTaskPool:
         self.folder.mkdir(parents=True,exist_ok=True)
         with closing(self.connect()) as db,db:
             db.execute('CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY, scope TEXT, message_id TEXT, pid INTEGER, stamp REAL, ttl REAL, UNIQUE(scope,message_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS admissions(id TEXT PRIMARY KEY,day TEXT,stamp REAL)')
 
     def connect(self):return sqlite3.connect(self.path,timeout=5)
 
@@ -31,8 +33,13 @@ class LargeTaskPool:
                 if now-stamp>ttl or not pid_alive(pid):db.execute('DELETE FROM jobs WHERE id=?',(key,))
             if db.execute('SELECT 1 FROM jobs WHERE scope=? AND message_id=?',(self.group,str(identity))).fetchone():return None,'duplicate'
             if db.execute('SELECT count(*) FROM jobs').fetchone()[0]>=cfg.get('large_task_max_concurrent',3):return None,'full'
+            day=datetime.now().strftime('%Y-%m-%d');limit=cfg.get('large_task_daily_limit',0)
+            used=db.execute('SELECT count(*) FROM admissions WHERE day=?',(day,)).fetchone()[0]
+            if limit and used>=limit:return None,'daily_limit'
             db.execute('INSERT INTO jobs VALUES (?,?,?,?,?,?)',(token,self.group,str(identity),os.getpid(),now,
                 max(120,cfg.get('large_task_timeout_seconds',600)+2*cfg.get('napcat_timeout_seconds',30)+120)))
+            db.execute('INSERT INTO admissions VALUES (?,?,?)',(token,day,now))
+            db.execute('DELETE FROM admissions WHERE stamp<?',(now-32*86400,))
         return token,'accepted'
 
     def release(self,token):
@@ -77,3 +84,11 @@ class LargeTaskPool:
 
     async def close(self):
         self.closed=True;await self.cancel()
+
+
+def daily_usage(root):
+    path=Path(root)/'runtime-large-tasks.sqlite3'
+    if not path.exists():return 0
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='admissions'").fetchone():return 0
+        return db.execute('SELECT count(*) FROM admissions WHERE day=?',(datetime.now().strftime('%Y-%m-%d'),)).fetchone()[0]

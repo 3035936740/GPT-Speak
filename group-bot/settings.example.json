@@ -148,5 +148,7 @@
   "napcat_token": "",
   "napcat_timeout_seconds": 30,
   "napcat_mcp_url": "",
-  "napcat_mcp_token": ""
+  "napcat_mcp_token": "",
+  "large_task_retention_hours": 2,
+  "large_task_daily_limit": 0
 }
