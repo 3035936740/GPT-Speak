@@ -58,6 +58,23 @@ class DebugImageTests(unittest.TestCase):
         for group,mid,key in [(999,'123',self.key),(200,'123',self.key),(100,'999',self.key),(100,'123',self.other),(100,'123','../secret')]:
             with self.subTest(group=group,mid=mid,key=key),self.assertRaises(ValueError):image_bytes(self.root,group,mid,key)
 
+    def test_snapshot_repeated_summaries_count_final_text_without_losing_original_images(self):
+        Config(self.root,100).set('image_summary_level','balanced')
+        cfg=Config(self.root,100).load();self.memory.configure(cfg)
+        summary={**FACTS,'description':'重复图片描述'*10,'visible_text':'可见正文\n'*40}
+        records=[]
+        for n in range(4):
+            mid=str(123+n);self.memory.observe(mid,[self.key]);self.memory.store(self.key,self.digest,summary)
+            records.append({**self.row,'message_id':mid,'time':time.time()-4+n,'group_id':100})
+        (self.folder/'debug-events.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records),encoding='utf-8')
+        server=DebugWebUI(self.root,lambda _:None)
+        data=server.snapshot({'group':['100'],'kind':['chat']})
+        self.assertEqual(len(data['events']),4)
+        self.assertEqual(sum('[图片摘要：' in r['text'] for r in data['events']),1)
+        self.assertEqual(data['status']['chat_text_chars'],sum(len(r['text']) for r in data['events']))
+        self.assertTrue(all(r['image_info'][0]['summary_available'] for r in data['events']))
+        self.assertNotIn('_image_full_text',json.dumps(data))
+
     def test_summary_edit_survives_live_auto_write_and_restart_without_renewing_cache_ttl(self):
         seen=self.memory.data['entries'][self.digest]['last_seen'];sequence=self.memory.data['sequence']
         result=mutate(self.root,100,'summary','123',self.key,{'summary':EDIT,'expected_revision':''})

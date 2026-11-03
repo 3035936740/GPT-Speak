@@ -69,6 +69,16 @@ async def prepare(rows,cfg,api,client,group_id,source_id):
                     response.raise_for_status()
                     return await read_bytes(response,cfg)
             raw=await asyncio.wait_for(download(),20)
+            task_input=None
+            if cfg.get('large_tasks_enabled') and cfg.get('large_task_executor','text') in {'docker','podman','host'}:
+                import base64
+                try:text_content(raw);binary=False
+                except ValueError:binary=True
+                task_input={'name':base['name'],'data':base64.b64encode(raw).decode(),'binary':binary}
+                if binary:
+                    results.append({**base,'size':len(raw),'status':'sandbox_pending','reason':'二进制文件，仅在任务沙箱读取，尚未解析'})
+                    pages.append({'source_type':'file','title':base['name'],'body':'','status':'sandbox_pending','_task_input':task_input})
+                    continue
             extra={}
             if raw.lstrip().startswith(b'%PDF-') or str(base['name']).lower().endswith('.pdf'):
                 from pdf_text import extract
@@ -77,6 +87,7 @@ async def prepare(rows,cfg,api,client,group_id,source_id):
             results.append({**base,'size':len(raw),'status':'read','characters':len(text),**extra})
             pages.append({'source_type':'file','source_message_id':str(source_id),'file_index':index,
                 'status':'read','title':base['name'],'body':text[:12000],'truncated':len(text)>12000,**extra})
+            if task_input:pages[-1]['_task_input']=task_input
         except Exception as error:
             if getattr(error,'code',None)=='model_file_too_large':result=notice(index,cfg)
             else:

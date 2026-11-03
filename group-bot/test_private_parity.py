@@ -28,6 +28,18 @@ class PrivateParityTests(unittest.IsolatedAsyncioTestCase):
     def png(self):
         out=io.BytesIO();Image.new('RGB',(20,20),'#aabbcc').save(out,format='PNG');return out.getvalue()
 
+    async def test_private_image_summary_depth_reaches_prompt_and_disabled_vision_stays_off(self):
+        from console_config import Config
+        profile={'observations':[]}
+        Config(self.root).set('image_summary_level','balanced')
+        prompt=self.service.prompt('11111',profile)
+        self.assertIn('图片理解等级：平衡',prompt)
+        self.assertIn('完整识别可见文字',prompt)
+        Config(self.root).set('image_summary_level','detailed')
+        self.assertIn('必须标为推测',self.service.prompt('11111',profile))
+        Config(self.root).set('private_vision_enabled','false')
+        self.assertNotIn('图片理解等级',self.service.prompt('11111',profile))
+
     async def test_memory_has_same_crud_backup_conflict_detection_and_contact_isolation_as_groups(self):
         private_memory.mutate(self.root,'11111','notes','create',{'kind':'preference','content':'喜欢蓝莓蛋糕','keywords':['蓝莓'],'evidence':[]})
         listing=private_memory.view(self.root,'11111');row=listing['rows'][0]

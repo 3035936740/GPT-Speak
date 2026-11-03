@@ -75,6 +75,7 @@ class DebugEvents:
         updated = False
         for row in self.rows:
             if row.get('kind') in {'received', 'sent'} and str(row.get('message_id')) == str(message_id):
+                row.pop('_image_full_text',None)
                 row.update(text=clean(text), **data)
                 updated = True
         if updated:
@@ -82,7 +83,7 @@ class DebugEvents:
         return updated
 
     def _save(self, cfg):
-        self.rows=deque(bounded(self.rows,cfg))
+        self.rows=deque(bounded(self.rows,cfg,self.runtime))
         temp=self.path.with_suffix('.tmp')
         try:
             temp.write_text(''.join(json.dumps(item,ensure_ascii=False,separators=(',',':'))+'\n'

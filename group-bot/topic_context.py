@@ -44,4 +44,11 @@ def select(context, target, cfg=None):
     required=[row for row in rows if str(row.get('_id')) in protected]
     recent=[row for row in rows if not row.get('_historical') and stamp-row.get('_time',0)<=180
         and str(row.get('_id')) not in protected][-max(1,cfg.get('context_messages',24)):]
+    from image_context import compress
+    # Only selected turns participate: do not refer to an image outside this view.
+    selected=sorted(required+recent,key=lambda row:row.get('_time',0))
+    selected=compress(selected,cfg.get('_image_context_runtime'))
+    by_id={str(row.get('_id')):row for row in selected}
+    required=[by_id[str(row.get('_id'))] for row in required]
+    recent=[by_id[str(row.get('_id'))] for row in recent]
     return required,recent,reason

@@ -103,12 +103,13 @@ class SummaryOverrides:
         rows = read(self.path)
         return rows.get(digest) or rows.get(key)
 
-    def set(self, key, digest, summary, expected=None):
+    def set(self, key, digest, summary, expected=None, depth='brief'):
         from role_analysis import checked
         hash_id(key)
         if digest: hash_id(digest)
-        if not checked('vision', summary, set()) or not (summary['description'].strip() or summary['visible_text'].strip()):
-            raise ValueError('摘要需填写图片内容或可见文字，描述≤120字、文字≤140字、不确定说明≤70字')
+        from image_summary import LIMITS
+        if not checked('vision', summary, set(),vision_level=depth) or not (summary['description'].strip() or summary['visible_text'].strip()):
+            raise ValueError('摘要需填写图片内容或可见文字，各字段上限：'+str(LIMITS[depth]))
         with locked(self.path.with_suffix('.lock')):
             data = read(self.path); old = data.get(digest) or data.get(key)
             if expected is not None and expected != (old or {}).get('revision', ''):
@@ -116,18 +117,19 @@ class SummaryOverrides:
             backup = self.path.parent / 'image-edit-backups'; backup.mkdir(exist_ok=True)
             revision = str(time.time_ns())
             atomic_write_text(backup / (revision + '.json'), json.dumps({'key': key, 'digest': digest, 'previous': old}, ensure_ascii=False))
-            entry = {'summary': dict(summary), 'revision': revision, 'edited_at': time.time(), 'origin': 'operator'}
+            entry = {'summary': dict(summary), 'summary_level':depth, 'revision': revision, 'edited_at': time.time(), 'origin': 'operator'}
             data[key] = entry
             if digest: data[digest] = entry
             atomic_write_text(self.path, json.dumps(data, ensure_ascii=False))
         return entry
 
 
-def replace_summaries(text, summaries):
+def replace_summaries(text, summaries, depth='brief'):
     values = iter(summaries)
     def replace(match):
         summary = next(values, None)
         if not summary: return match.group(0)
-        detail = (summary.get('description') or summary.get('visible_text') or '').replace(']', '］')
+        from image_summary import text as summary_text
+        detail = summary_text(summary,depth)
         return '[图片摘要：' + detail + ']'
     return re.sub(r'\[图片(?:，(?:未读取内容|读取中|读取失败)|摘要[:：][^\]]*)\]', replace, text)

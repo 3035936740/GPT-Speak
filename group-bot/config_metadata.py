@@ -153,6 +153,7 @@ FIELDS = {
     'chat_group_whitelist': ('群聊白名单', '点击编辑，逐项添加或删除群号；1～30 个不重复的正整数。保存后新增群启动后台、移除群停止后台，bot 必须已加入该 QQ 群'),
     'console_max_records': ('每类调试记录条数上限（条）', '聊天和执行日志分别限制条数，互不挤占；范围100～100000，与各自文本窗口同时生效，逐条淘汰最旧记录'),
     'console_max_text_chars': ('对话／执行窗口各自上限（字符）', '默认12800，范围500～1000000。聊天窗口和执行日志分别计数，超出时逐条移除该类最旧记录，日志不会挤掉聊天；不是清空全部，也不删除记忆数据库或近期存档'),
+    'image_summary_level': ('图片摘要等级', '默认简略，保持短摘要；平衡补充画面细节并尽量完整识别可见文字；详细另列可能意图，明确标注为推测。长文字仍受模型输入与对话窗口限制。升级等级后同图再次读取时补充识别，不批量重读历史图片；人工摘要优先'),
     'image_summary_window_messages': ('图片摘要滑动有效期（条消息）', '同 hash 图片在多少条群消息内复用摘要；每次再次出现都重置有效期，过期后摘要清除，必须大于 0'),
     'image_repeat_window_messages': ('同图复读观察窗口（条消息）', '在最近多少条消息内统计相同图片；范围 2～100，与复读候选次数和连续次数一起使用'),
     'image_repeat_min_count': ('同图复读候选次数（次）', '观察窗口内同一张图至少出现多少次才判为复读候选；范围 2～窗口条数，连续性越强置信度越高'),
@@ -165,7 +166,21 @@ FIELDS = {
 
 
 HIDDEN_FIELDS={'generated_image_cleanup_interval_hours'}
+HIDDEN_FIELDS.add('large_task_host_acknowledged')
+FIELDS.update({
+    'large_task_executor':('任务执行环境','默认兼容单文本文件输出；Docker或Podman在无网络、无宿主目录挂载的Python3容器内处理二进制与多文件。连接失败退回单文本模式，二进制不在宿主执行'),
+    'large_task_sandbox_image':('任务容器镜像','可自定义镜像，默认gpt-speak-task:1（Python3）。精简镜像可选择基础Shell执行方式；需预装所选解释器，任务不自动拉取镜像或联网安装依赖'),
+    'large_task_sandbox_runtime':('容器执行方式','Python用于Python3镜像，基础Shell用于只有/bin/sh的精简镜像。没有任何解释器的scratch镜像不能执行任务'),
+    'large_task_container_name':('容器名称前缀','默认gpt-speak-container。共享模式直接使用此名称；独立模式使用此名称加连字符和任务UUID'),
+    'large_task_container_mode':('容器使用模式','共享模式在一个容器中分目录；独立模式每个任务创建名称前缀+UUID的新容器，成功、失败或取消后删除。文件副本仍按任务临时保存时间清理'),
+    'large_task_dockerfile':('自定义 Dockerfile','默认Python3和清华pip源。保存后需手动构建镜像；构建只上传此Dockerfile，不包含本机文件。构建可联网运行指令，仅填写可信内容；实际任务仍断网隔离。精简镜像须提供Python或/bin/sh'),
+    'large_task_docker_wsl':('容器所在WSL发行版','Windows调用WSL内Docker/Podman可填写Ubuntu-22.04；留空调用当前系统的容器命令。与NapCat连接独立'),
+})
 OPTIONS={'generated_image_cleanup_mode':{'interval':'分钟间隔','daily':'每日定时','expiry':'每张图片到期','windows':'Windows任务计划程序'},
+    'large_task_executor':{'text':'单文本文件（兼容模式）','docker':'Docker沙箱','podman':'Podman沙箱','host':'本机Python（危险，无容器隔离）'},
+    'large_task_sandbox_runtime':{'python':'Python','shell':'基础 Shell（/bin/sh）'},
+    'large_task_container_mode':{'shared':'共享容器 · 独立任务目录','per_task':'独立容器 · 每任务创建并删除'},
+    'image_summary_level':{'brief':'简略','balanced':'平衡','detailed':'详细'},
     'chat_image_display':{'text':'文字摘要','image':'图片 / 表情包'},
     'passive_trigger_mode':{'frequency':'消息阈值＋空窗补偿','dynamic':'动态参与评分'},
     'generated_image_windows_schedule':{'daily':'每日定时','interval':'分钟间隔'}}

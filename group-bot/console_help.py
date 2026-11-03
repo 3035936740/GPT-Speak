@@ -1,5 +1,6 @@
 """Shared command inventory and complete help for CLI and WebUI command output."""
 HELP = {
+    'sandbox':('/sandbox status|health|build|reinstall|enable-host CONFIRM','status检测连接，health检查隔离与解释器。build以已保存的可信Dockerfile构建镜像，可联网且不上传本机文件；reinstall重建共享容器或验证独立新容器。独立模式每任务创建并删除容器，名称为前缀+UUID。enable-host CONFIRM接受本机执行风险。启用bot指令后按既有权限从QQ调用。'),
     'avatar':('/avatar refresh','刷新当前群的群头像和机器人头像，并通知已打开的WebUI刷新可见头像。其他群不受影响；须已允许头像联网。'),
     'receive':('/receive on|off','当前群仅接收模式：on继续保存聊天但停止全部AI处理和发送，off恢复并只处理新消息。不移出白名单，设置重启保留。'),
     'session':('/session stop|resume|clear','stop终止当前群当前任务并持续暂停接话；resume恢复并只处理新消息；clear取消当前任务并清空当前群短期上下文，保持当前暂停状态。保留聊天存档、群记忆和知识库，其他群不受影响。'),
@@ -63,7 +64,7 @@ def help_text(topic=''):
         return '命令帮助 · /'+name+'\n\n'+usage+'\n'+detail+'\n\n/help 返回完整帮助；Esc返回聊天。'
     groups=[('面板与帮助',['help','status','usage','knowledge','config','webui']),
         ('群友资料与消息',['member','say','system','session','receive']),('群与记录',['groups','group','whitelist','search','view','delete']),
-        ('后台与退出',['avatar','reconnect','restart','stop','exit','quit'])]
+        ('后台与退出',['sandbox','avatar','reconnect','restart','stop','exit','quit'])]
     lines=['命令帮助  /help','CLI与WebUI共用此命令清单；只操作当前群的命令以当前选中群为准。',
         '详细用法：/help config  /help member  /help system','']
     for title,names in groups:

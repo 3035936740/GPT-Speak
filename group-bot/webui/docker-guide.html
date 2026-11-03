@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Docker 容器教程 · GPT Speak</title><link rel="stylesheet" href="/sandbox-guide.css"><main>
+<p>GPT Speak · 任务（实验性）</p><h1>Docker 容器教程</h1><p>这里介绍 Docker 模式。连接检测只检查服务和本地镜像；任务启动时还会应用隔离限制。</p>
+<h2>1. 准备 Linux 容器服务</h2><p>Windows 可使用 Docker Desktop 的 Linux 容器模式，也可以在 WSL 中使用 Docker。先确认服务正常：</p><pre>docker info</pre>
+<h2>2. 拉取 Python 3 镜像并构建</h2><p>以下示例使用大陆 DaoCloud 加速源，保留 HTTPS 验证：</p><pre>docker pull m.daocloud.io/docker.io/library/python:3.12-slim
+docker tag m.daocloud.io/docker.io/library/python:3.12-slim python:3.12-slim
+docker build --pull=false -t gpt-speak-task:1 D:\MCP\qqmcp\group-bot\task-sandbox</pre><p>如果在 WSL 中运行，构建目录使用 <code>/mnt/d/MCP/qqmcp/group-bot/task-sandbox</code>。镜像包含 MIDI、图片、Word、Excel、PDF 基础处理库，pip 默认清华源：</p><pre>https://pypi.tuna.tsinghua.edu.cn/simple</pre>
+<h2>3. 保存配置并检测</h2><pre>large_task_executor = "docker"
+large_task_sandbox_image = "gpt-speak-task:1"
+large_task_docker_wsl = ""</pre><p>Windows 调用 WSL 内的 Docker 时，最后一项填写 <code>Ubuntu-22.04</code>。镜像要安装在同一个运行时、同一个用户下。保存后点击“检测容器连接”。任务总开关仍需单独开启。</p>
+<h2>4. 工作方式与限制</h2><p>模型提出 Python 操作，容器执行后返回结果，再继续读写修改。最终文件来自容器的 <code>/workspace/jobs/任务UUID/output</code>；一个文件直接交付，多个文件打包 ZIP。二进制只显示文件信息和下载入口，不显示乱码。附件大小、输出大小、工具调用次数和任务总超时仍有限制。</p><p class="hint">任务容器断网，任务进程非 root、禁止提权、只读根目录、不挂载宿主目录或 Docker socket；模型登录和 QQ 凭据不进入容器。不要改为 privileged 或挂载个人目录。容器隔离不能保证抵御所有内核或运行时漏洞。</p>
+<h2>5. 一个共享容器，任务目录到期清理</h2>
+<p>Docker 与 Podman 都只复用一个容器，默认名称 <code>gpt-speak-container</code>，可用 <code>large_task_container_name</code> 修改。每个任务有独立 UUID 目录和不同 Linux 用户，目录权限700；任务进程无有效 capabilities，不能读取其他任务目录。受信任管理进程只为目录分配权限，不执行模型代码。</p>
+<p>任务结束仅终止该任务用户的进程，共享容器继续运行。“任务临时保存时间”默认2小时，到期只清理对应任务目录、输入和成品副本，不删除共享容器或镜像；0表示保留。运行时连接失败保留清理信息并重试，不执行全局prune。</p>
+<h2>6. 自定义镜像与执行方式</h2><p>镜像名可自行填写，默认使用预装处理库的Python3镜像。使用精简镜像时可设置 <code>large_task_sandbox_runtime="shell"</code>，需有 <code>/bin/sh</code>、mkdir、chmod、chown、sleep、cat、rm等基础工具；Python模式需有Python解释器。无可执行程序的scratch镜像不能执行任务。自定义镜像不自动安装环境，缺少解释器会明确报错。</p>
+<h2>7. 健康检查、重建和本机执行警告</h2><p>“检测容器健康”检查隔离参数、解释器与工作目录。CLI对应 <code>/sandbox health</code>；<code>/sandbox status</code>检查连接与镜像。<code>/sandbox reinstall</code>或“重建容器”会中断所有沙箱任务，清空全部临时目录，重建同名共享容器，不重新下载镜像；原任务不重放。启用bot指令后可按既有权限在QQ调用。</p>
+<p class="hint">“本机Python（危险）”没有容器隔离，代码可能读取密钥、修改或删除本机文件、运行程序，权限等同当前Bot账户。UI要求明确确认后才启用；CLI需输入 <code>/sandbox enable-host CONFIRM</code>。临时目录和到期清理无法阻止或撤回对本机其他位置的修改。不要对不可信任务启用。本机模式不会作为容器失败的自动降级方式。</p>
+<p>没有配置容器时，默认仍为单文本文件输出。容器连接失败可退回单文本流程，二进制不会自动转为本机执行。配置执行环境后的任务失败会明确提示。</p>
+<p><a href="https://docs.daocloud.io/tf/community/mirror/" target="_blank" rel="noopener noreferrer">DaoCloud 镜像源说明</a> · <a href="https://mirrors.tuna.tsinghua.edu.cn/help/pypi/" target="_blank" rel="noopener noreferrer">清华 pip 镜像说明</a></p><h2>8. 独立任务容器与自定义Dockerfile</h2>
+<p><code>large_task_container_mode="shared"</code> 保留共享容器分目录模式；选择 <code>per_task</code> 则每任务创建一个新容器，名称为配置前缀加标准UUID。任务成功、失败或取消后删除容器；断连时在恢复后重试清理。本地文件仍按临时保存时间保留，0为无限保留。</p>
+<p>编辑并保存 <code>large_task_dockerfile</code>，点击“构建镜像”或运行 <code>/sandbox build</code>。默认Python3和清华pip源；构建上下文只含Dockerfile，不含本机目录。构建可联网执行可信管理员指令，任务执行仍断网隔离。镜像构建后复用，独立模式每次新建容器，不重复构建镜像。不执行自定义Compose，避免绕过隔离参数。</p></main></html>

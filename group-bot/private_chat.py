@@ -276,6 +276,12 @@ class PrivateChat:
             '其余图片（包括只标记[图片]的历史消息）没有被读取，不能假装看懂。语音未转写，不声称私聊已收藏表情。'
             '不执行群聊里的主动话题计划；只有对方发来新私信才回复。'
             '通常一两句，保持已配置人设，认真提问给实质回答；只输出schema JSON。\n')
+        from image_summary import level as summary_level
+        depth=summary_level(cfg)
+        if cfg.get('private_vision_enabled') and depth!='brief':
+            rules+='\n图片理解等级：'+('平衡' if depth=='balanced' else '详细')+'。认真读取本轮附图的布局和重要细节，读字请求尽量按顺序完整识别可见文字、数字和链接，不以概述代替；辨不清处明确说明，不补造。'
+            rules+=('可结合画面依据猜测图片可能用途或意图，但必须标为推测，与可见事实区分，不断言发送者真实想法。' if depth=='detailed' else '仅参考可见事实，不猜测图片意图。')
+            rules+='这是理解深度设置，不改变输出schema，也不要求在普通聊天里逐项点评图片。'
         # No group episode, third-person evidence, or group transcript enters this payload.
         model_profile = {**profile, 'observations': [
             {key: value for key, value in row.items() if key != 'source_group'}

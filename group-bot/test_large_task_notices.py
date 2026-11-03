@@ -31,6 +31,7 @@ class NoticeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result,'做好啦，看看合不合胃口');self.assertTrue(result.model_called)
         used,prompt,schema=model.call_args.args
         self.assertEqual(used['model'],'chat-model');self.assertEqual(used['_web_search_mode'],'disabled')
+        self.assertEqual(used['_usage_category'],'task')
         self.assertIn('当前群专属龙娘设定',prompt);self.assertIn('本群回复规则：自然随意',prompt)
         self.assertNotIn('全局龙娘设定',prompt);self.assertIn('QQ已确认',prompt)
         cfg['_reserve_extra_call'].assert_called_once()

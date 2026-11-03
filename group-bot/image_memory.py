@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 from role_analysis import checked
 from image_archive import SummaryOverrides, read as read_image_data, replace_summaries
+from image_summary import level, LEVELS, project
 
 
 def source_key(data):
@@ -32,11 +33,13 @@ class ImageMemory:
                 recovered.setdefault(key,[]).append(start+offset)
         for key,source in self.data['sources'].items():
             source.setdefault('occurrences',recovered.get(key,[]))
+        self.summary_level='brief'
         self.repeat_window=10;self.repeat_min_count=3;self.pair_confidence=.5;self.full_streak=3
         self.prune()
 
     def configure(self, cfg):
         self.window=int(cfg.get('image_summary_window_messages',2000))
+        self.summary_level=level(cfg)
         self.repeat_window=int(cfg.get('image_repeat_window_messages',10))
         self.repeat_min_count=int(cfg.get('image_repeat_min_count',3))
         self.pair_confidence=float(cfg.get('image_repeat_pair_confidence',.5))
@@ -143,10 +146,13 @@ class ImageMemory:
         digest = digest or self.data['sources'].get(key, {}).get('digest')
         override = SummaryOverrides(self.path.parent).get(key, digest)
         if override and (key in self.data['sources'] or digest in self.data['entries']):
-            if checked('vision', override.get('summary'), set()): return dict(override['summary'])
+            depth=level({'image_summary_level':override.get('summary_level','brief')})
+            if checked('vision', override.get('summary'), set(),vision_level=depth): return dict(override['summary'])
         entry = self.data['entries'].get(digest)
-        if entry and checked('vision', entry.get('summary'), set()):
-            return dict(entry['summary'])
+        depth=level({'image_summary_level':(entry or {}).get('summary_level','brief')})
+        if (entry and LEVELS.index(depth)>=LEVELS.index(self.summary_level)
+                and checked('vision', entry.get('summary'), set(),vision_level=depth)):
+            return project(entry['summary'], self.summary_level)
         return None
 
     def for_message(self, message_id, keys=()):
@@ -166,16 +172,17 @@ class ImageMemory:
         for message in messages:
             keys = message.get('_image_hashes', []) or list(message.get('_image_keys', {}).values())
             if not any(key in overrides or self.data['sources'].get(key, {}).get('digest') in overrides for key in keys): continue
-            text = replace_summaries(message.get('text', ''), [self.lookup(key=key) for key in keys[:2]])
+            text = replace_summaries(message.get('text', ''), [self.lookup(key=key) for key in keys[:2]],self.summary_level)
             if text != message.get('text', ''):
                 message['text'] = text; changed.append(message)
         return changed
 
-    def store(self, key, digest, summary):
-        if not checked('vision', summary, set()) or summary['confidence'] < .6:
+    def store(self, key, digest, summary, depth=None):
+        depth=depth or self.summary_level
+        if not checked('vision', summary, set(),vision_level=depth) or summary['confidence'] < .6:
             return False
         self.bind(key, digest)
         self.data['entries'][digest] = {'last_seen': self.data['sources'][key]['last_seen'],
-            'summary': dict(summary)}
+            'summary': dict(summary),'summary_level':depth}
         self.save()
         return True

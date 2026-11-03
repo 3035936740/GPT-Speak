@@ -90,9 +90,12 @@ def enrich_images(records, runtime, shared_root, cfg):
                 accepted=bool(sticker.get('kind')=='market_face' or (approved(sticker) and asset_path(sticker,'path',shared_root).is_file()))
                 refusal=rejected.get(sticker_id,{})
                 override=overrides.get(key,digest);summary=(override or {}).get('summary') or cache.lookup(key=key)
+                from image_summary import level,LEVELS,LIMITS
+                depth=max(level(cfg),level({'image_summary_level':(override or {}).get('summary_level','brief')}),key=LEVELS.index)
                 summaries.append(summary)
                 pictures.append({'key':key,'hash':digest or key,**cache.frequency(key=key),
                     'summary_available':bool(summary),'summary':summary,
+                    'summary_level':depth,'summary_limits':LIMITS[depth],
                     'summary_revision':(override or {}).get('revision',''),'summary_origin':'operator' if override else 'model',
                     'original_cached':bool(digest and any((archive.root/(digest+'.'+ext)).is_file() for ext in ('gif','png','jpeg','webp'))),
                     'sticker_state':'approved' if accepted else 'rejected' if refusal else 'not_collected',
@@ -101,6 +104,7 @@ def enrich_images(records, runtime, shared_root, cfg):
                     'emotion':sticker.get('emotion','') if accepted else '',
                     'use_when':sticker.get('use_when','') if accepted else ''})
             row['image_info']=pictures
-            row['text']=replace_summaries(row.get('text',''),summaries)
+            row['text']=replace_summaries(row.pop('_image_full_text',row.get('text','')),summaries,cache.summary_level)
         result.append(row)
-    return result
+    from image_context import compress
+    return compress(result,runtime)

@@ -101,6 +101,13 @@
   "chat_image_display": "image",
   "console_max_text_chars": 12800,
   "image_summary_window_messages": 2000,
+  "image_summary_level": "brief",
+  "large_task_executor": "text",
+  "large_task_sandbox_image": "gpt-speak-task:1",
+  "large_task_docker_wsl": "",
+  "large_task_sandbox_runtime": "python",
+  "large_task_container_name": "gpt-speak-container",
+  "large_task_host_acknowledged": false,
   "image_repeat_window_messages": 10,
   "image_repeat_min_count": 3,
   "image_repeat_pair_confidence": 0.5,
@@ -150,5 +157,7 @@
   "napcat_mcp_url": "",
   "napcat_mcp_token": "",
   "large_task_retention_hours": 2,
-  "large_task_daily_limit": 0
+  "large_task_daily_limit": 0,
+  "large_task_container_mode": "shared",
+  "large_task_dockerfile": "FROM python:3.12-slim\nENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple\nRUN printf '[global]\\nindex-url = https://pypi.tuna.tsinghua.edu.cn/simple\\n' > /etc/pip.conf\nRUN pip install --no-cache-dir mido==1.3.3 pillow==11.3.0 python-docx==1.2.0 openpyxl==3.1.5 pypdf==6.2.0\nUSER 65534:65534\nWORKDIR /workspace"
 }

@@ -8,6 +8,12 @@ import time
 import uuid
 
 DEFAULTS={'large_tasks_enabled':False,'large_task_max_file_bytes':20*1024*1024,'large_task_timeout_seconds':600,
+    'large_task_executor':'text','large_task_sandbox_image':'gpt-speak-task:1','large_task_docker_wsl':'',
+    'large_task_sandbox_runtime':'python',
+    'large_task_container_name':'gpt-speak-container',
+    'large_task_container_mode':'shared',
+    'large_task_dockerfile':(Path(__file__).parent/'task-sandbox/Dockerfile').read_text(encoding='utf-8').strip(),
+    'large_task_host_acknowledged':False,
     'large_task_model':'gpt-6.1-sol','large_task_reasoning_effort':'high','large_task_fast_mode':False,'large_task_max_concurrent':3,'large_task_max_steps':4,'large_task_retention_hours':2,'large_task_daily_limit':0}
 EXTENSIONS={'.html','.htm','.css','.js','.ts','.py','.sh','.ps1','.json','.yaml','.yml','.ini','.toml','.xml','.md','.txt','.csv','.log','.svg'}
 INSTRUCTION=('任务已开启。明确要求制作可交付的网页、HTML、代码、报告或文件时选择generate_file，'
@@ -27,10 +33,11 @@ def cancelled(text):
 def requested(text):
     text=plain(text)
     if re.search(r'^(?:怎么|如何|怎样|为什么|什么是)|(?:有多难|有啥区别|有什么区别|是什么意思)[吗?？]*$',text):return False
+    if not cancelled(text) and re.search(r'(?:编排|编曲|修改|转换|制作|导出|生成).{0,180}(?:midi|\bmid\b|zip|docx|xlsx)',text,re.I):return True
     prefix=r'^(?:你)?(?:(?:请(?:你)?|麻烦(?:你)?|能不能|可不可以|可以|帮我|给我|帮忙|随便|随意|直接|随手|现在|就|先|再|也|那|自由发挥)[，,\s]*)*'
     delivery=re.search(r'^(?:你\s*)?(?:算了[，,]?\s*|那[，,]?\s*|请\s*)?(?:把|将|帮我|给我|做完|解答|解完|算|完成|分析|整理|总结|根据).{0,240}(?:给我|发给我|交给我|导出|输出|写成|整理成|保存成).{0,50}(?:文件|文档|报告|html|csv|json|markdown)',text,re.I)
     return bool((delivery or re.search(prefix+r'(?:(?:根据|按照|基于|参考|用|以).{0,200}?)?(?:写|生成|制作|开发|实现|做|编写|输出|导出)',text)) and
-        re.search(r'html|前端|网页|脚本|代码|文档|文件|报告|用户画像|人物画像|个人画像|长篇|策划案|csv|json|markdown',text,re.I) and
+        re.search(r'html|前端|网页|脚本|代码|文档|文件|报告|用户画像|人物画像|个人画像|长篇|策划案|csv|json|markdown|midi|编曲|曲子|音乐',text,re.I) and
         not cancelled(text))
 
 
@@ -119,7 +126,8 @@ async def permission(api,group,self_id):
 def validate_upload(params,cfg):
     if not cfg.get('large_tasks_enabled'):raise ValueError('Experimental large tasks disabled')
     name=params.get('name','');data=params.get('file','')
-    if not isinstance(name,str) or not 1<=len(name)<=100 or name in {'.','..'} or re.search(r'[\\/:\x00-\x1f]',name) or Path(name).suffix.lower() not in EXTENSIONS:raise ValueError('Invalid generated filename')
+    extensions=EXTENSIONS|({'.mid','.midi','.zip','.pdf','.docx','.xlsx','.png','.jpg','.webp','.wav','.mp3'} if cfg.get('large_task_executor') in {'docker','podman','host'} else set())
+    if not isinstance(name,str) or not 1<=len(name)<=100 or name in {'.','..'} or re.search(r'[\\/:\x00-\x1f]',name) or Path(name).suffix.lower() not in extensions:raise ValueError('Invalid generated filename')
     if name.endswith((' ','.')) or re.match(r'(?i)^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)',name):raise ValueError('Invalid generated filename')
     if not isinstance(data,str) or not data.startswith('base64://') or len(data)>((cfg.get('large_task_max_file_bytes',20*1024*1024)+2)//3)*4+9:raise ValueError('Generated file exceeds upload limit')
     try:raw=base64.b64decode(data[9:],validate=True)
@@ -129,13 +137,30 @@ def validate_upload(params,cfg):
 
 
 async def _generate(cfg,target,pages,api,model,runtime,context=()):
+    cfg={**cfg,'_image_context_runtime':runtime}
     if not cfg.get('large_tasks_enabled'):return None,{'allowed':False,'status':'disabled','reason':'任务文件生成与上传（实验性）未开启'}
     request=target.get('_file_task_request') or target.get('text','')
-    if target.get('_file_task_repair') and not any(p.get('source_type')=='file' and p.get('body') for p in pages):
+    if target.get('_file_task_repair') and not target.get('_task_inputs') and not any(p.get('source_type')=='file' and p.get('body') for p in pages):
         return None,{'allowed':False,'status':'missing_source','reason':'未读取到引用文件的正文，无法据此修订；请重新提供原文件'}
     reason=size_rejection(request,cfg)
     status={'allowed':False,'status':'rejected','reason':reason} if reason else await permission(api,cfg['group_id'],target.get('_self_id') or cfg.get('expected_self_id'))
     if not status['allowed']:return None,status
+    if any(row.get('status') in {'blocked','ambiguous_subject','insufficient'} for row in target.get('_person_context',[])):
+        return None,{'status':'missing_person_evidence','reason':'指定群友缺少可用证据，不生成虚构人物文件'}
+    if cfg.get('large_task_executor','text') in {'docker','podman','host'}:
+        if any(row.get('status') in {'too_large','disabled','unavailable','unsupported'} for row in target.get('_attachment_status',[])):
+            return None,{'allowed':False,'status':'missing_source','reason':'附件没有成功读取，不能假装根据文件生成'}
+        from sandbox_task import generate as sandbox_generate
+        try:result,state=await sandbox_generate(cfg,target,pages,model,runtime,context)
+        except (FileNotFoundError,ValueError) as error:
+            if not isinstance(error,FileNotFoundError) and '未安装' not in str(error):raise
+            result,state=None,{'status':'sandbox_unavailable','reason':'容器程序未安装'}
+        if state.get('status')!='sandbox_unavailable':return result,state
+        from task_history import update
+        update(runtime,target['_task_trace_id'],stage='容器不可用，使用单文本文件兼容模式',sandbox_warning=state.get('reason'))
+        target['_sandbox_fallback']=True
+        if any(row.get('binary') for row in target.get('_task_inputs',[])):
+            raise ValueError('任务隔离失败：二进制任务需要可用容器，未在宿主执行')
     people=target.get('_person_context',[])
     if people and any(row.get('status') in {'blocked','ambiguous_subject','insufficient'} for row in people):
         return None,{'status':'missing_person_evidence','reason':'指定群友未确认、被屏蔽或缺少可用资料/聊天依据，不能忽略对象另做通用主题，也不能编造人物事实'}
@@ -188,6 +213,7 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
             result=await asyncio.wait_for(model({**cfg,'model':cfg.get('large_task_model','gpt-6.1-sol'),
                 'reasoning_effort':cfg.get('large_task_reasoning_effort','high'),'fast_mode':cfg.get('large_task_fast_mode',False),
                 '_developer_instructions':instructions,'_task_instruction_chars':len(instructions),
+                '_usage_category':'task',
                 'model_timeout_seconds':remaining,'_request_timeout_seconds':remaining,'_web_search_mode':'disabled'},prompt,schema_path),remaining)
             piece=result.get('content','')
             invalid=('content_not_text' if not isinstance(piece,str) else 'content_too_long' if len(piece)>20000 else 'missing_completion_flag' if type(result.get('complete')) is not bool else 'empty_content' if not piece else '')
@@ -224,6 +250,7 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
         {'type':'_generated_group_file','data':packet},
         {'type':'text','data':{'text':str(result.get('summary') or '')[:200]}}])
     reply.task_view_id=target['_task_trace_id']
+    if target.get('_sandbox_fallback'):reply.task_sandbox_warning='容器连接失败，本次已降级为单文本文件输出'
     return reply,{'allowed':True,'status':'ready','name':packet['name'],'size':len(raw)}
 
 
@@ -231,7 +258,7 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
     if not cfg.get('large_tasks_enabled'):return await _generate(cfg,target,pages,api,model,runtime,context)
     from task_history import begin,update,cleanup
     from debug_events import safe_log
-    cleanup(runtime,cfg);identity=begin(runtime,target,cfg)
+    await asyncio.to_thread(cleanup,runtime,cfg);identity=begin(runtime,target,cfg)
     try:
         result,status=await _generate(cfg,{**target,'_task_trace_id':identity},pages,api,model,runtime,context)
         update(runtime,identity,status='ready' if result else 'rejected',error=status.get('reason',''))

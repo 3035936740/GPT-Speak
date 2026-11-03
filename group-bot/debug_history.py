@@ -6,7 +6,9 @@ from recent_chat_journal import RecentChatJournal
 def lane(row):return 'chat' if row.get('kind') in {'sent','received'} else 'flow'
 
 
-def bounded(records,cfg):
+def bounded(records,cfg,runtime=None):
+    from image_context import compress
+    records=compress(records,runtime)
     totals={'chat':0,'flow':0};counts={'chat':0,'flow':0};closed=set();kept=[]
     limit=cfg['console_max_text_chars'];capacity=cfg['console_max_records']
     for original in reversed(list(records)):
@@ -43,4 +45,4 @@ def recover_chat(records,folder,cfg,hidden=(),group_id=None):
             'group_id':group_id if group_id is not None else cfg['group_id'],'historical':True,'manual':bool(item.get('_manual')),
             'image_hashes':item.get('_image_hashes',[]),**message_metadata(item,journal)})
         seen.add(key)
-    return bounded(sorted(result,key=lambda row:row.get('time',0)),cfg)
+    return bounded(sorted(result,key=lambda row:row.get('time',0)),cfg,folder)

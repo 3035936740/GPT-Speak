@@ -41,7 +41,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'chat_image_display':'image',
     'webui_host':'127.0.0.1','webui_port':0,'webui_key':'',
     'max_reply_parts':6,'max_stickers_per_reply':3,
-    'max_prompt_chars':12800,'console_max_records':6000, 'console_max_text_chars':12800, 'image_summary_window_messages':2000,
+    'max_prompt_chars':12800,'console_max_records':6000, 'console_max_text_chars':12800, 'image_summary_window_messages':2000, 'image_summary_level':'brief',
     'image_repeat_window_messages':10, 'image_repeat_min_count':3,
     'image_repeat_pair_confidence':.5, 'image_repeat_full_streak':3, 'role_models':{},
     'proactive_topic_probability':.15, 'background_image_reading_enabled':True,
@@ -182,7 +182,7 @@ class Config:
                 if ('probability' in key or 'confidence' in key) and not 0<=value<=1:raise ValueError(key+' 范围为 0~1')
                 if value<0:raise ValueError(key+' 不能为负数')
                 if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key=='knowledge_max_chars' and value==0):raise ValueError(key+' 必须大于0')
-            elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>1000):raise ValueError(key+' 必须为短文本')
+            elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>(20000 if key=='large_task_dockerfile' else 1000)):raise ValueError(key+' 文本过长或类型无效')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
         for key in ('name_match_sensitivity','at_context_sensitivity'):
             if not 0<=cfg[key]<=1:raise ValueError(key+' 范围0～1，表示匹配敏感度，不是随机回复概率')
@@ -219,6 +219,16 @@ class Config:
         if cfg['generated_image_windows_schedule'] not in {'interval','daily'}:raise ValueError('Windows任务可选分钟间隔或每日定时')
         if cfg['passive_trigger_mode'] not in {'frequency','dynamic'}:raise ValueError('水群触发方式为frequency或dynamic')
         if cfg['chat_image_display'] not in {'text','image'}:raise ValueError('聊天图片默认显示方式为text或image')
+        from image_summary import LEVELS
+        if cfg['large_task_executor'] not in {'text','docker','podman','host'}:raise ValueError('任务执行器须为text/docker/podman/host')
+        if cfg['large_task_executor']=='host' and not cfg['large_task_host_acknowledged']:raise ValueError('本机执行危险，请在WebUI确认风险或输入 /sandbox enable-host CONFIRM')
+        if cfg['large_task_container_mode'] not in {'shared','per_task'}:raise ValueError('容器模式须为shared或per_task')
+        if not cfg['large_task_dockerfile'].strip() or '\0' in cfg['large_task_dockerfile']:raise ValueError('Dockerfile不能为空或包含空字符')
+        if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}',cfg['large_task_container_name']):raise ValueError('无效共享容器名称')
+        if cfg['large_task_sandbox_runtime'] not in {'python','shell'}:raise ValueError('执行方式须为python或shell')
+        if not re.fullmatch(r'[a-z0-9][a-z0-9./_:@-]{0,199}',cfg['large_task_sandbox_image']):raise ValueError('无效容器镜像名称')
+        if cfg['large_task_docker_wsl'] and not re.fullmatch(r'[A-Za-z0-9_.-]{1,80}',cfg['large_task_docker_wsl']):raise ValueError('无效WSL发行版')
+        if cfg['image_summary_level'] not in LEVELS:raise ValueError('图片摘要等级为brief（简略）、balanced（平衡）或detailed（详细）')
         if not isinstance(cfg['webui_host'],str):raise ValueError('WebUI监听地址必须是IP地址')
         try:ipaddress.ip_address(cfg['webui_host'])
         except ValueError:raise ValueError('WebUI监听地址必须是IPv4或IPv6，例如127.0.0.1、0.0.0.0、::')

@@ -179,6 +179,7 @@ class Console:
         self.draw()
         return url
     def submit_web_action(self,value):
+        if value.get('action')=='task_sandbox_build':return self.web_action(value)
         future=Future();self.web_requests.put((future,value))
         try:return future.result(timeout=None if value.get('action')=='knowledge' else 40)
         except FutureTimeoutError:
@@ -191,6 +192,31 @@ class Console:
             try:future.set_result(self.web_action(value))
             except Exception as exc:future.set_exception(exc)
     def web_action(self,value):
+        if value.get('action')=='task_sandbox_enable_host':
+            if value.get('confirmed') is not True:raise ValueError('尚未确认本机执行风险')
+            group=int(value.get('group',self.group));scope=value.get('scope','group')
+            if scope not in {'global','group'}:raise ValueError('Invalid scope')
+            config=Config(self.root,group if scope=='group' else None)
+            config.set('large_task_host_acknowledged','on');config.set('large_task_sandbox_runtime','python');config.set('large_task_executor','host')
+            return {'ok':True,'message':'已确认危险：本机执行已启用，无容器隔离'}
+        if value.get('action') in {'task_sandbox_health','task_sandbox_reinstall','task_sandbox_build'}:
+            import asyncio
+            from task_sandbox import health,reinstall,build_image
+            cfg=Config(self.root,None if value.get('scope')=='global' else int(value.get('group',self.group))).load()
+            if value['action']=='task_sandbox_build':
+                if value.get('confirmed') is not True:raise ValueError('请先确认可信Dockerfile构建')
+                return asyncio.run(build_image(cfg))
+            if value['action']=='task_sandbox_reinstall':
+                if value.get('confirmed') is not True:raise ValueError('重建容器将中断所有任务并清空目录，请先确认')
+                return asyncio.run(reinstall(cfg))
+            return asyncio.run(health(cfg))
+        if value.get('action')=='task_sandbox_probe':
+            import asyncio
+            from task_sandbox import probe
+            group=int(value.get('group',self.group))
+            cfg=Config(self.root,group).load();result=asyncio.run(probe(cfg))
+            if result['ok']:result['guide']='/'+cfg['large_task_executor']+'-guide.html'
+            return result
         if value.get('action')=='settings_bundle':
             from settings_bundle import preview,apply_bundle
             mode=value.get('mode');bundle=value.get('bundle');connection=value.get('connection',False)
@@ -373,6 +399,7 @@ class Console:
             elif command=='avatar':choices=['refresh']
             elif command=='reconnect':choices=['napcat','mcp']
             elif command=='receive':choices=['on','off']
+            elif command=='sandbox':choices=['status','health','build','reinstall','enable-host','CONFIRM']
             elif command=='help':choices=COMMANDS+['all']
             elif command=='system':choices=['add','list','remove','delete','clear','--scope','group','all','--mode','context','once','timed','persistent','--minutes']
             elif command=='group':choices=[str(group) for group in self.groups()]
@@ -388,6 +415,13 @@ class Console:
         parts=text.lstrip('/').split(maxsplit=1)
         if not parts:return
         command=unique(parts[0],COMMANDS);rest=parts[1] if len(parts)>1 else ''
+        if command=='sandbox':
+            if rest.strip()=='enable-host CONFIRM':result=self.web_action({'action':'task_sandbox_enable_host','scope':'group','confirmed':True})
+            elif rest.strip()=='reinstall':result=self.web_action({'action':'task_sandbox_reinstall','confirmed':True})
+            elif rest.strip()=='build':result=self.web_action({'action':'task_sandbox_build','confirmed':True})
+            elif rest.strip() in {'','status','health'}:result=self.web_action({'action':'task_sandbox_probe' if rest.strip()!='health' else 'task_sandbox_health'})
+            else:raise ValueError('/sandbox status|health|build|reinstall|enable-host CONFIRM')
+            self.notice=result['message'];return
         if command=='avatar':
             if rest.strip()!='refresh':raise ValueError('/avatar refresh')
             from debug_avatars import refresh_group

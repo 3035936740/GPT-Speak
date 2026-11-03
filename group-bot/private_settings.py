@@ -36,6 +36,7 @@ FIELDS = {
     'peer_reply_enabled': field('reply', '自然接话风格', '顺着当前好友的话题自然接话，减少分析玩梗动机。', 'peer_reply_enabled'),
     'friendly_tease_probability': field('reply', '朋友间玩笑偏好', '0关闭主动调侃；其余为模型参考的语气偏好。', 'friendly_tease_probability', 'number', low=0, high=1),
     'vision_enabled': field('image', '私聊识图', '读取此好友新私信中的图片，结合文字回答；关闭时不下载、不附图给模型。', 'private_vision_enabled', default=True),
+    'image_summary_level': field('image', '图片摘要等级', '默认简略；平衡尽量完整识别可见文字和细节；详细另列可能意图，推测与事实分开。只控制图片理解深度，不要求每条回复逐项描述。', 'image_summary_level', 'string', default='brief', options={'brief':'简略','balanced':'平衡','detailed':'详细'}),
     'max_images_per_call': field('image', '单次识图数量上限（张）', '选择本轮最新的图片；动图读取首帧。', 'max_images_per_call', 'integer', low=1, high=4),
     'max_image_bytes': field('image', '单张图片大小上限（字节）', '超大或损坏图片跳过并写入执行日志；默认8MiB。', 'max_image_bytes', 'integer', low=1024, high=16777216),
     'vision_timeout_seconds': field('image', '识图超时（秒）', '附图回复在文字超时之外增加此预算。', 'vision_timeout_seconds', 'integer', low=1, high=7200),

@@ -19,10 +19,12 @@ from manual_outbox import ManualOutbox
 from manual_images import MAX_IMAGES,MAX_IMAGE_BYTES,MAX_TOTAL_BYTES
 from debug_images import image_bytes
 from sticker_prefill import StickerPrefill
-from debug_history import recover_chat,lane
+from debug_history import recover_chat,lane,bounded
 from worker_instance import instance_locked
 
 ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/private-chat-renderer.js':'private-chat-renderer.js','/private-data-panels.js':'private-data-panels.js','/private-panels.js':'private-panels.js','/private-settings.js':'private-settings.js','/private.css':'private.css','/style.css':'style.css','/theme.js':'theme.js'}
+ASSETS.update({'/docker-guide.html':'docker-guide.html','/podman-guide.html':'podman-guide.html'})
+ASSETS['/sandbox-guide.css']='sandbox-guide.css'
 
 
 class DebugWebUI:
@@ -67,7 +69,7 @@ class DebugWebUI:
                 parsed=urlsplit(self.path)
                 if parsed.path in ASSETS:
                     path=Path(__file__).with_name('webui')/ASSETS[parsed.path]
-                    mime='text/html; charset=utf-8' if parsed.path=='/' else 'text/css; charset=utf-8' if parsed.path.endswith('.css') else 'text/javascript; charset=utf-8'
+                    mime='text/html; charset=utf-8' if parsed.path=='/' or parsed.path.endswith('.html') else 'text/css; charset=utf-8' if parsed.path.endswith('.css') else 'text/javascript; charset=utf-8'
                     return self.reply(200,path.read_bytes(),mime)
                 if not self.authorized():return self.reply(401,{'error':'请在CLI输入 /webui 打开授权页面'})
                 try:
@@ -228,12 +230,14 @@ class DebugWebUI:
         records=recover_chat(records,folder,cfg,hidden,selected)
         from member_policy import enrich_records
         records=enrich_records(records,folder)
-        stored_text_chars=sum(text_chars(row) for row in records)
-        chat_text_chars=sum(text_chars(row) for row in records if lane(row)=='chat')
-        flow_text_chars=stored_text_chars-chat_text_chars
         records=enrich_quotes(records,folder,hidden)
         records=enrich_users(records,folder,cfg)
         records=enrich_images(records,folder,self.root/'shared-emoji-library',cfg)
+        records=bounded(records,cfg,folder)
+        stored_text_chars=sum(text_chars(row) for row in records)
+        chat_text_chars=sum(text_chars(row) for row in records if lane(row)=='chat')
+        flow_text_chars=stored_text_chars-chat_text_chars
+        for row in records:row.pop('_image_full_text',None)
         records+=Interventions(self.root,selected).events()
         records.sort(key=lambda row:row.get('time',0))
         kind=query.get('kind',['all'])[0];term=query.get('q',[''])[0].lower()

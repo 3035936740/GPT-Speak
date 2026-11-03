@@ -89,30 +89,34 @@ def record(root,cfg,stdout,identity,stamp=None):
     if cached is not None and cached>counts[0]:return False
     path=db_path(root);path.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(path,timeout=5) as db:
+        db.execute('BEGIN IMMEDIATE')
         db.execute('CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY, stamp REAL, group_id INTEGER, model TEXT, input INTEGER, cached INTEGER, output INTEGER)')
         columns={row[1] for row in db.execute('PRAGMA table_info(calls)')}
         if 'cache_reported' not in columns:
             db.execute('ALTER TABLE calls ADD COLUMN cache_reported INTEGER DEFAULT 0')
             db.execute('UPDATE calls SET cache_reported=1 WHERE cached>0')
-        db.execute('INSERT OR IGNORE INTO calls(id,stamp,group_id,model,input,cached,output,cache_reported) VALUES(?,?,?,?,?,?,?,?)',
-            (identity,time.time() if stamp is None else stamp,cfg.get('group_id',0),cfg.get('model',''),*counts,int(cached is not None)))
+        if 'purpose' not in columns:db.execute("ALTER TABLE calls ADD COLUMN purpose TEXT DEFAULT ''")
+        purpose='task' if cfg.get('_usage_category')=='task' else 'other'
+        db.execute('INSERT OR IGNORE INTO calls(id,stamp,group_id,model,input,cached,output,cache_reported,purpose) VALUES(?,?,?,?,?,?,?,?,?)',
+            (identity,time.time() if stamp is None else stamp,cfg.get('group_id',0),cfg.get('model',''),*counts,int(cached is not None),purpose))
         db.execute('DELETE FROM calls WHERE stamp < ?',(time.time()-32*86400,))
     logging.getLogger('qq-group-bot').info('Model token usage; input=%s; cached=%s; output=%s; cache_reported=%s',
         counts[0],counts[1] if counts[1] is not None else 'unknown',counts[2],cached is not None)
     return True
 
 
-def totals(root,since,group=None,now=None):
+def totals(root,since,group=None,now=None,purpose=None):
     result={'input':0,'cached':None,'output':0,'total':0,'calls':0,'cache_reported_calls':0,'cache_unknown_calls':0,
         'cache_hit_calls':0,'cache_known_input':0,'cache_hit_percent':None,'uncached':None}
     path=db_path(root)
     if not path.exists():return result
     with sqlite3.connect('file:'+path.resolve().as_posix()+'?mode=ro',uri=True,timeout=5) as db:
         columns={row[1] for row in db.execute('PRAGMA table_info(calls)')}
+        if purpose and 'purpose' not in columns:return result
         known='cache_reported=1' if 'cache_reported' in columns else 'cached>0'
         row=db.execute('SELECT COALESCE(SUM(input),0),COALESCE(SUM(CASE WHEN '+known+' THEN cached ELSE 0 END),0),COALESCE(SUM(output),0),COUNT(*),'
-            'SUM(CASE WHEN '+known+' THEN 1 ELSE 0 END),SUM(CASE WHEN '+known+' THEN input ELSE 0 END),SUM(CASE WHEN '+known+' AND cached>0 THEN 1 ELSE 0 END) FROM calls WHERE stamp>=? AND stamp<=?'+(' AND group_id=?' if group is not None else ''),
-            [since,time.time() if now is None else now]+([group] if group is not None else [])).fetchone()
+            'SUM(CASE WHEN '+known+' THEN 1 ELSE 0 END),SUM(CASE WHEN '+known+' THEN input ELSE 0 END),SUM(CASE WHEN '+known+' AND cached>0 THEN 1 ELSE 0 END) FROM calls WHERE stamp>=? AND stamp<=?'+(' AND group_id=?' if group is not None else '')+(' AND purpose=?' if purpose else ''),
+            [since,time.time() if now is None else now]+([group] if group is not None else [])+([purpose] if purpose else [])).fetchone()
     result.update(zip(('input','cached','output','calls','cache_reported_calls','cache_known_input','cache_hit_calls'),row))
     for key in ('cache_reported_calls','cache_known_input','cache_hit_calls'):result[key]=result[key] or 0
     result['total']=result['input']+result['output'];result['cache_unknown_calls']=result['calls']-result['cache_reported_calls']
@@ -140,7 +144,8 @@ def snapshot(root,group=None,refresh=False):
         'stale':bool(cached.get('error')) or now-cached.get('updated',0)>300,
         'scope':'当前群' if group is not None else '全部群',
         'rolling_5h':totals(root,now-5*3600,group,now),'rolling_week':totals(root,now-7*86400,group,now),
-        'note':'账号额度跨Codex客户端共享；token仅统计本项目启用后CLI实际返回的用量。输入含缓存，合计=输入+输出，缓存不重复相加。未返回usage的失败/超时及独立生图调用不计入；剩余token总数未知。'}
+        'task_5h':totals(root,now-5*3600,group,now,'task'),'task_week':totals(root,now-7*86400,group,now,'task'),
+        'note':'账号额度跨Codex客户端共享；token仅统计本项目启用后CLI实际返回的用量，包含任务生成及续写，即使最终交付失败，已报告调用仍计入。输入含缓存，合计=输入+输出，缓存不重复相加。任务用量是项目总量的子集，不额外相加；任务分类自本次更新启用起记录，旧记录只保留在总量。未返回usage的失败/超时及独立生图调用不计入；剩余token总数未知。'}
 
 
 def format_text(data):
@@ -158,4 +163,6 @@ def format_text(data):
         row=data[key];cache='未报告' if row['cached'] is None else str(row['cached'])
         lines.append(data['scope']+' '+label+'：'+str(row['total'])+' token；输入 '+str(row['input'])+'（缓存 '+cache+'），输出 '+str(row['output'])+'；'+str(row['calls'])+' 次已报告调用')
         lines.append('  缓存命中 '+('—' if row['cache_hit_percent'] is None else str(row['cache_hit_percent'])+'%')+'；未缓存输入 '+('—' if row['uncached'] is None else str(row['uncached']))+'；缓存数据覆盖 '+str(row['cache_reported_calls'])+'/'+str(row['calls'])+' 次（部分覆盖时比例仅基于已报告输入）')
+        task=data.get('task_5h' if key=='rolling_5h' else 'task_week',{})
+        if task:lines.append('  其中任务：'+str(task['total'])+' token；输入 '+str(task['input'])+'（缓存 '+('未报告' if task['cached'] is None else str(task['cached']))+'），输出 '+str(task['output'])+'；'+str(task['calls'])+' 次已报告调用，已计入上述合计')
     return '\n'.join(lines+[data['note']])

@@ -32,7 +32,23 @@ def cleanup(runtime,cfg):
         if not row or not re.fullmatch(r'[a-f0-9]{32}',path.stem):continue
         if row.get('status') not in TERMINAL and not pid_alive(row.get('pid')):
             row=update(runtime,path.stem,status='interrupted',error='任务进程已退出，未自动重放')
+        sandbox=row.get('sandbox',{})
+        if sandbox.get('mode')=='per_task' and row.get('status') in TERMINAL and not row.get('container_removed'):
+            from task_sandbox import remove
+            try:
+                remove({'large_task_executor':sandbox['executor'],'large_task_docker_wsl':sandbox.get('wsl',''),
+                    'large_task_sandbox_image':sandbox['image'],'large_task_container_name':sandbox['container'],
+                    'large_task_container_mode':'per_task','large_task_sandbox_runtime':sandbox.get('runtime','python')},path.stem)
+                row=update(runtime,path.stem,container_removed=True)
+            except Exception:continue
         if hours and row.get('status') in TERMINAL and time.time()-row.get('finished',row['updated'])>=hours*3600:
+            if row.get('sandbox') and not row.get('container_removed'):
+                from task_sandbox import remove
+                sandbox=row['sandbox']
+                try:remove({'large_task_executor':sandbox['executor'],'large_task_docker_wsl':sandbox.get('wsl',''),
+                    'large_task_sandbox_image':sandbox['image'],'large_task_container_name':sandbox.get('container','gpt-speak-container'),
+                    'large_task_sandbox_runtime':sandbox.get('runtime','python')},path.stem)
+                except Exception:continue
             folder=(runtime/'generated-files'/path.stem).resolve();base=(runtime/'generated-files').resolve()
             if folder.parent==base and folder.is_dir():shutil.rmtree(folder)
             path.unlink(missing_ok=True)
@@ -60,4 +76,10 @@ def view(root,group,identity='',scope='group'):
     row=next((r for r in rows if r['id']==identity),None)
     if row is None:raise ValueError('任务不存在或已过保存期限')
     artifact=folder/'generated-files'/identity/'draft.txt'
+    if row.get('artifact_file'):
+        from task_sandbox import preview,safe_name
+        artifact=folder/'generated-files'/identity/safe_name(row['artifact_file'])
+        raw=artifact.read_bytes() if artifact.exists() else b''
+        return {**row,'artifact':preview(raw) if not row.get('binary') else '',
+            'artifact_base64':__import__('base64').b64encode(raw).decode()}
     return {**row,'artifact':artifact.read_text(encoding='utf-8') if artifact.exists() else ''}

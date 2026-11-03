@@ -104,7 +104,10 @@ def mutate(root, group, mode, message_id, key, values=None):
     digest = ImageArchive(folder).digest(key, memory.data['sources'].get(key, {}).get('digest'))
     if mode == 'summary':
         summary = values.get('summary')
-        entry = SummaryOverrides(folder).set(key, digest, summary, values.get('expected_revision'))
+        from image_summary import level, LEVELS
+        old=SummaryOverrides(folder).get(key,digest) or {}
+        depth=max(level(cfg),level({'image_summary_level':old.get('summary_level','brief')}),key=LEVELS.index)
+        entry = SummaryOverrides(folder).set(key, digest, summary, values.get('expected_revision'),depth)
         return {'ok': True, 'message': '图片摘要已保存，后续自然回复使用人工摘要', 'revision': entry['revision']}
     if mode == 'collect':
         path = original(root, group, message_id, key)

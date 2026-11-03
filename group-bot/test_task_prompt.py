@@ -9,6 +9,40 @@ from message_time import formatted
 
 
 class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
+    def test_window_metadata_is_counted_before_trimming_at_exact_boundary(self):
+        from knowledge_budget import encoded
+        instructions='trusted rules'
+        data={'conversation':[{'text':'older '*20},{'text':'newer '*20}],
+            'context_window':{'window_messages':2,'chat_char_limit':12800},'request':'KEEP_CURRENT_REQUEST'}
+        old_payload={'conversation':data['conversation'],'context_boundary':{'speaker':'assistant','text':BOUNDARY,'program_inserted':True},
+            'context_window':data['context_window'],'request':data['request']}
+        cap=len(instructions)+160+len(encoded(old_payload))
+        prompt=render({'max_prompt_chars':cap},instructions,data,[]);result=json.loads(prompt)
+        self.assertLessEqual(len(prompt)+len(instructions)+160,cap)
+        self.assertEqual(result['request'],'KEEP_CURRENT_REQUEST')
+        self.assertEqual(len(result['conversation']),1)
+        self.assertEqual(result['context_window']['attached_messages'],1)
+        self.assertTrue(result['context_window']['truncated'])
+        self.assertNotIn('attached_messages',data['context_window'])
+
+    def test_near_boundary_budgets_keep_valid_json_request_and_sources(self):
+        data={'conversation':[{'text':'history '*35} for _ in range(8)],
+            'context_window':{'window_messages':8,'chat_char_limit':12800},'request':'KEEP_REQUEST'}
+        for cap in range(1000,1400,7):
+            prompt=render({'max_prompt_chars':cap},'rules'*10,data,[{'name':'evidence.txt','content':'ORIGINAL_EVIDENCE '*20}])
+            result=json.loads(prompt)
+            self.assertLessEqual(len(prompt)+50+160,cap)
+            self.assertEqual(result['request'],'KEEP_REQUEST');self.assertTrue(result['source_files'])
+            self.assertEqual(result['context_window']['attached_messages'],len(result['conversation']))
+
+    def test_impossible_required_input_reports_sizes_without_exposing_content(self):
+        from task_prompt import TaskPromptBudgetError
+        with self.assertRaises(TaskPromptBudgetError) as error:
+            render({'max_prompt_chars':500},'PERSONA_SECRET'*100,{'request':'REQUEST_SECRET','conversation':[]},[])
+        self.assertEqual(error.exception.budget['cap'],500)
+        self.assertIn('request',error.exception.budget['sections'])
+        self.assertNotIn('PERSONA_SECRET',str(error.exception));self.assertNotIn('REQUEST_SECRET',str(error.exception))
+
     def files(self,folder):
         root=Path(folder);(root/'persona.txt').write_text('全局人设',encoding='utf-8')
         (root/'reply_protocol.txt').write_text('全局规则',encoding='utf-8')

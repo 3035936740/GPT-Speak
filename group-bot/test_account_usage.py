@@ -23,6 +23,34 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(usage.snapshot(self.root)['rolling_week']['total'],240)
         self.assertFalse(usage.record(self.root,{},b'{"type":"turn.failed"}','missing'))
         self.assertFalse(usage.record(self.root,{},b'{"type":"turn.completed","usage":{"input_tokens":true}}','bad'))
+
+    def test_task_batches_are_subset_of_totals_and_cache_is_not_added_twice(self):
+        now=time.time()
+        raw=b'{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":20}}'
+        for identity,cfg in [('chat',{'group_id':100}),('task-1',{'group_id':100,'_usage_category':'task'}),
+                ('task-2',{'group_id':100,'_usage_category':'task'}),('other-group',{'group_id':200,'_usage_category':'task'})]:
+            usage.record(self.root,cfg,raw,identity,now-10)
+        usage.record(self.root,{'group_id':100,'_usage_category':'task'},raw,'task-1',now-10)
+        data=usage.snapshot(self.root,100)
+        self.assertEqual(data['rolling_5h']['total'],360)
+        self.assertEqual(data['task_5h']['total'],240)
+        self.assertEqual(data['task_5h']['calls'],2);self.assertEqual(data['task_5h']['cached'],160)
+        self.assertEqual(data['task_5h']['cache_hit_percent'],80)
+        self.assertEqual(usage.snapshot(self.root)['task_week']['total'],360)
+        self.assertIn('其中任务：240 token',usage.format_text(data))
+
+    def test_task_read_of_old_database_does_not_reclassify_or_duplicate_old_usage(self):
+        path=usage.db_path(self.root);path.parent.mkdir()
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE calls(id TEXT PRIMARY KEY,stamp REAL,group_id INTEGER,model TEXT,input INTEGER,cached INTEGER,output INTEGER)')
+            db.execute('INSERT INTO calls VALUES(?,?,?,?,?,?,?)',('old-task-maybe',time.time(),100,'gpt-6.1-sol',100,50,10))
+        data=usage.snapshot(self.root,100)
+        self.assertEqual(data['task_week']['calls'],0);self.assertEqual(data['rolling_week']['total'],110)
+        raw=b'{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}'
+        usage.record(self.root,{'group_id':100,'_usage_category':'task'},raw,'new-task')
+        data=usage.snapshot(self.root,100)
+        self.assertEqual(data['task_week']['total'],110);self.assertIsNone(data['task_week']['cached'])
+        self.assertEqual(data['rolling_week']['total'],220)
     def test_real_window_selection_cache_stale_error_and_unknown_not_zero(self):
         now=time.time();result={'rateLimitsByLimitId':{'codex':{'primary':{'usedPercent':25,'windowDurationMins':300,'resetsAt':now+600},'secondary':{'usedPercent':60,'windowDurationMins':10080,'resetsAt':now+3600}},'other':{'primary':{'usedPercent':5,'windowDurationMins':1440}}}}
         windows=usage.normalize_limits(result);self.assertEqual([row['label'] for row in windows],['5小时','1周','1440分钟'])

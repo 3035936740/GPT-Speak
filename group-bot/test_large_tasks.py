@@ -190,6 +190,7 @@ class LargeTaskTests(unittest.IsolatedAsyncioTestCase):
     async def test_source_file_contents_reach_generation_and_only_owned_path_is_written(self):
         api=self.api();seen=[]
         async def model(cfg,prompt,schema):
+            self.assertEqual(cfg['_usage_category'],'task')
             seen.append(prompt);self.assertGreater(cfg['model_timeout_seconds'],599);self.assertLessEqual(cfg['model_timeout_seconds'],600);self.assertEqual(cfg['model'],'gpt-6.1-sol');self.assertEqual(cfg['reasoning_effort'],'high');self.assertFalse(cfg['fast_mode'])
             return {'complete':True,'filename':'report.html','content':'<!doctype html><html><title>日志分析</title></html>','summary':'已生成日志页面'}
         with tempfile.TemporaryDirectory() as folder:
