@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import time
 import uuid
+from itertools import count
 
 DEFAULTS={'large_tasks_enabled':False,'large_task_max_file_bytes':20*1024*1024,'large_task_timeout_seconds':600,
     'large_task_executor':'text','large_task_sandbox_image':'gpt-speak-task:1','large_task_docker_wsl':'',
@@ -203,7 +204,8 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
     chunks=[];filename='';deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600)
     from artifact_integrity import problem
     try:
-        for step in range(cfg.get('large_task_max_steps',4)):
+        limit=cfg.get('large_task_max_steps',4)
+        for step in range(limit) if limit else count():
             if step:
                 reserve=cfg.get('_reserve_extra_call')
                 if callable(reserve) and not reserve():raise ValueError('Large task continuation budget exhausted; not uploaded')
@@ -264,5 +266,10 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
         update(runtime,identity,status='ready' if result else 'rejected',error=status.get('reason',''))
         return result,status
     except BaseException as error:
-        update(runtime,identity,status='cancelled' if isinstance(error,asyncio.CancelledError) else 'failed',error=safe_log(str(error))[:500])
+        row=update(runtime,identity,status='cancelled' if isinstance(error,asyncio.CancelledError) else 'failed',error=safe_log(str(error))[:500],stage='任务已停止，未上传')
+        error.task_failure_info={'error_type':type(error).__name__,'reason':safe_log(str(error))[:800],
+            'steps_used':row.get('step',0),'step_limit':cfg.get('large_task_max_steps',4),
+            'input_files':row.get('input_files',[]),'uploaded':False,
+            'last_execution':({'exit_code':row['execution'][-1].get('exit_code'),
+                'output':safe_log(row['execution'][-1].get('output',''))[-800:]} if row.get('execution') else None)}
         raise

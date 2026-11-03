@@ -181,7 +181,7 @@ class Config:
                 if isinstance(current[key],int) and not isinstance(value,int) and key not in {'generated_image_ttl_hours','generated_image_cleanup_interval_hours','generated_image_cleanup_interval_minutes'} and not any(word in key for word in ('probability','confidence','strength')):raise ValueError(key+' 必须为整数')
                 if ('probability' in key or 'confidence' in key) and not 0<=value<=1:raise ValueError(key+' 范围为 0~1')
                 if value<0:raise ValueError(key+' 不能为负数')
-                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key=='knowledge_max_chars' and value==0):raise ValueError(key+' 必须大于0')
+                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key in {'knowledge_max_chars','large_task_max_concurrent','large_task_max_steps'} and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>(20000 if key=='large_task_dockerfile' else 1000)):raise ValueError(key+' 文本过长或类型无效')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
         for key in ('name_match_sensitivity','at_context_sensitivity'):
@@ -251,10 +251,10 @@ class Config:
         validate_model(catalog,cfg['model'],cfg['reasoning_effort'],cfg['fast_mode'])
         if cfg.get('large_tasks_enabled') or any(cfg[key]!=current[key] for key in ('large_task_model','large_task_reasoning_effort','large_task_fast_mode')):
             validate_model(catalog,cfg['large_task_model'],cfg['large_task_reasoning_effort'],cfg['large_task_fast_mode'])
-        if not 1<=cfg['large_task_max_concurrent']<=32:raise ValueError('任务全局接收上限范围1～32，不设等待位')
+        if not 0<=cfg['large_task_max_concurrent']<=2147483647:raise ValueError('任务全局接收上限范围0～2147483647，0表示无限制，不设等待位')
         if not 0<=cfg['large_task_daily_limit']<=1000000:raise ValueError('Daily task limit: 0~1000000')
         if not 0<=cfg['large_task_retention_hours']<=87600:raise ValueError('Task retention hours: 0~87600')
-        if not 1<=cfg['large_task_max_steps']<=12:raise ValueError('任务生成调用上限范围1～12')
+        if not 0<=cfg['large_task_max_steps']<=2147483647:raise ValueError('任务生成调用上限范围0～2147483647，0表示不限次数，仍受总超时和模型额度限制')
         if not isinstance(cfg['role_models'],dict):raise ValueError('role_models 必须是JSON对象')
         if cfg.get('role_models'):
             for role,model in cfg['role_models'].items():

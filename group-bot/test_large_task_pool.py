@@ -8,6 +8,27 @@ from large_task_pool import LargeTaskPool
 
 
 class PoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_zero_concurrent_limit_accepts_more_than_32_and_keeps_duplicate_guard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pool=LargeTaskPool(folder,Path(folder)/'a',1);cfg={'large_task_max_concurrent':0}
+            tokens=[]
+            for i in range(35):
+                token,status=pool.claim(str(i),cfg);self.assertEqual(status,'accepted');tokens.append(token)
+            self.assertEqual(pool.claim('1',cfg)[1],'duplicate')
+            self.assertEqual(pool.claim('extra',{'large_task_max_concurrent':35})[1],'full')
+            for token in tokens:pool.release(token)
+
+    async def test_config_concurrency_range_includes_zero_and_int32_max(self):
+        import bot
+        from console_config import Config,atomic
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);atomic(root/'settings.json',bot.settings())
+            config=Config(root)
+            for value in ('0','33','2147483647'):
+                config.set('large_task_max_concurrent',value)
+                self.assertEqual(config.load()['large_task_max_concurrent'],int(value))
+            for value in ('-1','2147483648','1.5','true'):
+                with self.assertRaises(ValueError):config.set('large_task_max_concurrent',value)
     async def test_daily_limit_is_global_durable_and_reset_by_date(self):
         with tempfile.TemporaryDirectory() as folder:
             a=LargeTaskPool(folder,Path(folder)/'a',1);b=LargeTaskPool(folder,Path(folder)/'b',2)

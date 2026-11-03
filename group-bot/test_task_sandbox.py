@@ -6,6 +6,26 @@ import sandbox_task
 
 
 class SandboxTests(unittest.TestCase):
+    def test_zero_step_limit_runs_past_twelve_and_still_checks_call_budget(self):
+        async def run(root):
+            import bot
+            box=type('Box',(),{'work':'/workspace/jobs/a','image':'python:3','name':'unused',
+                'start':AsyncMock(),'inputs':AsyncMock(),'close':AsyncMock(),
+                'python':AsyncMock(return_value=(0,b'ok')),'outputs':AsyncMock(return_value=[('result.mid',b'MThd\0test')])})()
+            cfg={**bot.settings(),'large_task_executor':'podman','large_task_max_steps':0,'_task_project_root':str(bot.ROOT)}
+            calls=0
+            async def model(cfg,prompt,schema):
+                nonlocal calls
+                calls+=1
+                return {'action':'done' if calls==15 else 'run','code':'print(1)','summary':''}
+            with patch.object(sandbox_task,'Sandbox',return_value=box):
+                _,status=await sandbox_task.generate(cfg,{'_task_trace_id':'c'*32,'text':'make midi'},[],model,root,[])
+                self.assertTrue(status['allowed']);self.assertEqual(calls,15)
+                blocked={**cfg,'_reserve_extra_call':lambda:False}
+                with self.assertRaisesRegex(ValueError,'call budget'):
+                    await sandbox_task.generate(blocked,{'_task_trace_id':'d'*32,'text':'make midi'},[],AsyncMock(return_value={'action':'run','code':'print(1)','summary':''}),root,[])
+            self.assertEqual(box.close.await_count,2)
+        with tempfile.TemporaryDirectory() as folder:asyncio.run(run(folder))
     def test_per_task_name_cleanup_ownership_and_failure(self):
         async def run():
             identity='f55433e660bf400f903f279733c0a759'
@@ -127,6 +147,7 @@ class SandboxTests(unittest.TestCase):
             self.assertEqual((folder/'result.mid').read_bytes(),b'MThd\0test')
             state=json.loads((Path(root)/'task-history'/('a'*32+'.json')).read_text(encoding='utf-8'))
             self.assertTrue(state['binary']);self.assertEqual(state['stage'],'生成完成')
+            self.assertEqual(state['input_files'],[{'name':'source.mid','bytes':5,'status':'staged','binary':True}])
         with tempfile.TemporaryDirectory() as folder:asyncio.run(run(folder))
 
     def test_expiry_cleans_only_its_container_and_workspace_zero_retains(self):

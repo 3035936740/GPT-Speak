@@ -32,7 +32,8 @@ class LargeTaskPool:
             for key,pid,stamp,ttl in db.execute('SELECT id,pid,stamp,ttl FROM jobs').fetchall():
                 if now-stamp>ttl or not pid_alive(pid):db.execute('DELETE FROM jobs WHERE id=?',(key,))
             if db.execute('SELECT 1 FROM jobs WHERE scope=? AND message_id=?',(self.group,str(identity))).fetchone():return None,'duplicate'
-            if db.execute('SELECT count(*) FROM jobs').fetchone()[0]>=cfg.get('large_task_max_concurrent',3):return None,'full'
+            concurrent=cfg.get('large_task_max_concurrent',3)
+            if concurrent and db.execute('SELECT count(*) FROM jobs').fetchone()[0]>=concurrent:return None,'full'
             day=datetime.now().strftime('%Y-%m-%d');limit=cfg.get('large_task_daily_limit',0)
             used=db.execute('SELECT count(*) FROM admissions WHERE day=?',(day,)).fetchone()[0]
             if limit and used>=limit:return None,'daily_limit'

@@ -13,6 +13,25 @@ from message_delivery import delivery_plan,deliver_one,DeliveryAborted
 
 
 class LargeTaskTests(unittest.IsolatedAsyncioTestCase):
+    async def test_zero_step_limit_allows_more_than_twelve_text_calls(self):
+        calls=0
+        async def model(cfg,prompt,schema):
+            nonlocal calls
+            calls+=1
+            return {'filename':'result.txt','content':'part '+str(calls)+'\n','complete':calls==14,'summary':''}
+        with tempfile.TemporaryDirectory() as folder:
+            reply,status=await tasks.generate(self.cfg(large_task_max_steps=0),self.target(),[],self.api(),model,Path(folder))
+            self.assertEqual(calls,14);self.assertTrue(status['allowed'])
+
+    async def test_step_configuration_accepts_64_zero_and_int32_max(self):
+        from console_config import Config,atomic
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);atomic(root/'settings.json',bot.settings());config=Config(root)
+            for value in ('0','64','2147483647'):
+                config.set('large_task_max_steps',value)
+                self.assertEqual(config.load()['large_task_max_steps'],int(value))
+            for value in ('-1','2147483648','1.5','true'):
+                with self.assertRaises(ValueError):config.set('large_task_max_steps',value)
     def cfg(self,**kw):return {**bot.settings(),**tasks.DEFAULTS,'large_tasks_enabled':True,**kw}
     def target(self,**kw):return {'_id':'100','_uid':'11111','_self_id':'169901502','_time':time.time(),'at_bot':True,'text':'写一个好看的html前端发给我',**kw}
     def api(self,role='admin',**extra):

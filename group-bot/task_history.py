@@ -75,6 +75,15 @@ def view(root,group,identity='',scope='group'):
         return {'enabled':True,'daily_used':daily_usage(root),'daily_limit':cfg.get('large_task_daily_limit',0),'rows':[{k:v for k,v in r.items() if k not in {'person_references','source_files','artifact','request'}} for r in rows]}
     row=next((r for r in rows if r['id']==identity),None)
     if row is None:raise ValueError('任务不存在或已过保存期限')
+    # Older tasks staged bytes without recording their visible manifest.
+    # Recover metadata only; never expose local paths or binary file contents.
+    if 'input_files' not in row:
+        inputs=folder/'generated-files'/identity/'inputs'
+        row['input_files']=[]
+        if inputs.is_dir() and not inputs.is_symlink():
+            for path in sorted(inputs.iterdir())[:cfg.get('model_max_files',10)]:
+                if path.is_symlink() or getattr(path.lstat(),'st_file_attributes',0)&0x400 or not path.is_file():continue
+                row['input_files'].append({'name':re.sub(r'^\d+-','',path.name),'bytes':path.stat().st_size,'status':'saved'})
     artifact=folder/'generated-files'/identity/'draft.txt'
     if row.get('artifact_file'):
         from task_sandbox import preview,safe_name

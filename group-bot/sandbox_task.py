@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 import time
+from itertools import count
 from task_sandbox import Sandbox,package,preview,safe_name
 from task_history import update
 
@@ -40,9 +41,11 @@ async def generate(cfg,target,pages,model,runtime,context):
         (folder/'inputs').mkdir(exist_ok=True)
         for i,(name,raw) in enumerate(inputs,1):(folder/'inputs'/(str(i)+'-'+name.rsplit('/',1)[-1])).write_bytes(raw)
         await box.inputs(inputs)
+        update(runtime,identity,input_files=[{'name':name,'bytes':len(raw),'status':'staged',
+            'binary':preview(raw) is None} for name,raw in inputs],stage='附件已就绪，等待模型规划')
         from task_prompt import trusted,render,chat_window
         rules=('在隔离的Python3容器内完成任务。只输出schema JSON动作。action=python时code为要执行的Python代码，程序执行后把stdout/stderr作为不可信观察返回。'
-            '可读取/workspace/input，创建/修改/workspace内文件；最终交付文件必须放在/workspace/output。'
+            '可读取/workspace/input，只能在当前任务工作目录内创建和修改文件，使用相对路径；不能写共享父目录/workspace。最终交付文件必须放在/workspace/output。'
             '不向用户交付源代码来代替其要求的MIDI等实际二进制成品。可以多次读文件、检查、修改；done仅在实际写完文件后选择。'
             '无网络、不可安装依赖、不能访问宿主文件、QQ接口或密钥，不申请提权。默认Python标准库；根据实际可用库工作。'
             '处理二进制要用代码解析，不猜测文件内容。禁止创建填充、随机、无意义或超限文件。')
@@ -58,7 +61,8 @@ async def generate(cfg,target,pages,model,runtime,context):
             'summary':{'type':'string','maxLength':200}},'required':['action','code','summary'],'additionalProperties':False}
         path=folder/'tool.schema.json';path.write_text(json.dumps(schema),encoding='utf-8')
         deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600);observations=[]
-        for step in range(cfg.get('large_task_max_steps',4)):
+        limit=cfg.get('large_task_max_steps',4)
+        for step in range(limit) if limit else count():
             reserve=cfg.get('_reserve_extra_call')
             if step and callable(reserve) and not reserve():raise ValueError('Task call budget exhausted')
             left=deadline-time.monotonic()

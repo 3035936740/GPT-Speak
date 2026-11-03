@@ -12,6 +12,13 @@ from console_config import Config,atomic
 
 
 class TaskHistoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_input_file_manifest_without_reading_binary_into_page(self):
+        identity=history.begin(self.folder,self.target,self.cfg)
+        folder=self.folder/'generated-files'/identity/'inputs';folder.mkdir(parents=True)
+        (folder/'1-happy_music.mid').write_bytes(b'MThd\0binary')
+        row=history.view(self.root,100,identity)
+        self.assertEqual(row['input_files'],[{'name':'happy_music.mid','bytes':11,'status':'saved'}])
+        self.assertNotIn('binary',row['artifact'])
     async def asyncSetUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
         self.cfg={**bot.settings(),'enabled':True,'group_id':100,'chat_group_whitelist':[100,200],

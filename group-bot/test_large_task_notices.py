@@ -6,6 +6,20 @@ from large_task_notices import write
 
 
 class NoticeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failure_explanation_has_persona_and_real_reason_without_timeout_fallback(self):
+        cfg=self.cfg()
+        details={'failure':{'reason':'Task tool step limit reached; no upload','steps_used':4,'step_limit':4,
+            'input_files':[{'name':'happy_music.mid','bytes':1483}],'uploaded':False}}
+        model=AsyncMock(return_value={'text':'旋律已经读到了，但调用次数用完，还没确认完成就停下了'})
+        with tempfile.TemporaryDirectory() as folder:
+            root=self.setup_files(folder)
+            result=await write(cfg,{},'isolation_failed',details,model,root)
+            self.assertTrue(result)
+            prompt=model.call_args.args[1]
+            for text in ('当前群专属龙娘设定','本群回复规则','Task tool step limit reached','happy_music.mid'):
+                self.assertIn(text,prompt)
+            model.side_effect=TimeoutError()
+            self.assertFalse(await write(cfg,{},'isolation_failed',details,model,root))
     def setup_files(self,folder):
         root=Path(folder);(root/'persona.txt').write_text('全局龙娘设定',encoding='utf-8')
         (root/'reply_protocol.txt').write_text('全局简短回复规则',encoding='utf-8')

@@ -2068,8 +2068,8 @@ async def _run(smoke=False):
                         file_target.get('_id'),type(error).__name__,debug_events.safe_log(str(error))[:200])
                     if not active():return
                     sandbox_mode=file_cfg.get('large_task_executor','text') in {'docker','podman','host'}
-                    result=await task_notice(file_cfg,file_target,'isolation_failed' if sandbox_mode else 'failed',{},generate_json,ROOT)
-                    if sandbox_mode and not result:result=ReplyText('任务沙箱处理失败，已停止，未上传文件',route='background')
+                    failure=getattr(error,'task_failure_info',{'error_type':type(error).__name__,'reason':debug_events.safe_log(str(error))[:800],'uploaded':False})
+                    result=await task_notice(file_cfg,file_target,'isolation_failed' if sandbox_mode else 'failed',{'failure':failure},generate_json,ROOT)
                 if not result or not active():
                     if getattr(result,'task_view_id',None):__import__('task_history').update(RUNTIME,result.task_view_id,status='cancelled',error='Session or permissions changed before upload')
                     return
