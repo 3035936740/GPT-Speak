@@ -79,3 +79,39 @@ class PdfTaskTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(requested(text),text)
         for text in ['他把题做完后给我步骤文件了','不用写文件了','这个PDF怎么打开','你能生成文件吗']:
             self.assertFalse(requested(text),text)
+
+    def test_pdf_delivery_word_order_and_other_formats_are_explicit_tasks(self):
+        for text in ['[引用回复]@169901502 做这道题,做完把你的解题pdf发群里',
+                '帮我解这道题，答案做成PDF发到群里','把这个附件整理成docx给我',
+                '分析这个表格，整理成xlsx发群','做一份pdf报告','根据这个日志生成报告pdf']:
+            self.assertTrue(requested(text),text)
+        for text in ['他说做这道题做完把解题pdf发群里','你会做PDF吗','怎么做PDF发群里',
+                '不用做题生成PDF了','这个pdf挺好看的','他昨天把pdf发群里了']:
+            self.assertFalse(requested(text),text)
+
+    async def test_exact_reported_request_stages_binary_pdf_and_bypasses_chat_roles(self):
+        raw=pdf_bytes()+b'\0';now=time.time()
+        for quoted in (True,False):
+            target={'_id':'294754329','_uid':'3035936740','_self_id':'169901502','_time':now,
+                'at_bot':True,'text':'[引用回复]@169901502 做这道题,做完把你的解题pdf发群里'}
+            source={'_id':'993023434','_uid':'3035936740','_time':now-20,
+                'text':'[文件：测试考题.pdf]','_files':[{'id':'file-id','name':'测试考题.pdf','size':len(raw)}]}
+            if quoted:target['_reply_id']=source['_id']
+            else:target['_files']=source['_files']
+            async def api(client,env,action,params):
+                self.assertEqual(action,'get_group_file_url');return {'url':'https://qq.com/test.pdf'}
+            async def execute(cfg,item,pages,api,model,runtime,context=()):
+                import base64
+                from emoji_library import ReplyText
+                self.assertIn('解题pdf发群里',item['_file_task_request'])
+                self.assertEqual(base64.b64decode(item['_task_inputs'][0]['data']),raw)
+                self.assertTrue(item['_task_inputs'][0]['binary'])
+                self.assertEqual(item['_attachment_status'][0]['status'],'sandbox_pending')
+                return ReplyText('task-routed'),{'status':'ready'}
+            async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r:httpx.Response(200,content=raw))) as client:
+                with tempfile.TemporaryDirectory() as folder,patch.object(bot,'RUNTIME',Path(folder)),patch.object(bot,'api',api),\
+                        patch('large_tasks.generate',side_effect=execute) as generate,\
+                        patch.object(bot,'analyze_roles',AsyncMock(side_effect=AssertionError('must not become chat'))),\
+                        patch.object(bot,'generate',AsyncMock(side_effect=AssertionError('must not become chat'))):
+                    reply=await bot.generate_for_message(client,{**bot.settings(),'large_tasks_enabled':True,'large_task_executor':'podman'},[source] if quoted else [],'被@',target)
+                    self.assertEqual(str(reply),'task-routed');generate.assert_awaited_once()

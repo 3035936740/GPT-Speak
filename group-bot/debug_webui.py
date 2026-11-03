@@ -25,6 +25,7 @@ from worker_instance import instance_locked
 ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/private-chat-renderer.js':'private-chat-renderer.js','/private-data-panels.js':'private-data-panels.js','/private-panels.js':'private-panels.js','/private-settings.js':'private-settings.js','/private.css':'private.css','/style.css':'style.css','/theme.js':'theme.js'}
 ASSETS.update({'/docker-guide.html':'docker-guide.html','/podman-guide.html':'podman-guide.html'})
 ASSETS['/sandbox-guide.css']='sandbox-guide.css'
+ASSETS['/gpt-speak-logo.png']='gpt-speak-logo.png'
 
 
 class DebugWebUI:
@@ -69,7 +70,7 @@ class DebugWebUI:
                 parsed=urlsplit(self.path)
                 if parsed.path in ASSETS:
                     path=Path(__file__).with_name('webui')/ASSETS[parsed.path]
-                    mime='text/html; charset=utf-8' if parsed.path=='/' or parsed.path.endswith('.html') else 'text/css; charset=utf-8' if parsed.path.endswith('.css') else 'text/javascript; charset=utf-8'
+                    mime='image/png' if parsed.path.endswith('.png') else 'text/html; charset=utf-8' if parsed.path=='/' or parsed.path.endswith('.html') else 'text/css; charset=utf-8' if parsed.path.endswith('.css') else 'text/javascript; charset=utf-8'
                     return self.reply(200,path.read_bytes(),mime)
                 if not self.authorized():return self.reply(401,{'error':'请在CLI输入 /webui 打开授权页面'})
                 try:

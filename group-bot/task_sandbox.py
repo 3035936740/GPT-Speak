@@ -221,6 +221,35 @@ class Sandbox:
         if status:raise ValueError('Sandbox export failed')
         return unpack(data,self.cap)
 
+    async def snapshot(self):
+        # Call after outputs() has frozen task processes; bounded regular files only.
+        status,data=await self.command('cp',self.name+':'+self.work+'/.','-',limit=self.cap*2+65536)
+        if status:raise ValueError('Sandbox snapshot failed')
+        return unpack(data,self.cap)
+
+    async def inventory(self):
+        if self.runtime!='python':
+            from task_file_metrics import describe
+            status,raw=await self.command('cp',self.name+':'+self.work+'/output/.','-',limit=self.cap*2+65536)
+            if status:raise ValueError('Task output inventory failed')
+            return [describe(n,b,hashed=True) for n,b in unpack(raw,self.cap)]
+        from task_execution_state import PROBE
+        status,raw=await self.python(PROBE.replace('CAP',str(self.cap)),10)
+        if status:raise ValueError('Task output inventory failed')
+        return json.loads(raw)
+
+    async def restore(self,files):
+        import shlex
+        for name,raw in files:
+            safe_name(name)
+            target=self.work+'/'+name
+            if self.runtime=='python':
+                script='import sys;from pathlib import Path;p=Path('+repr(target)+');p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(sys.stdin.buffer.read())'
+                args=['python','-I','-c',script]
+            else:args=['/bin/sh','-c','mkdir -p '+shlex.quote(target.rsplit('/',1)[0])+' && cat > '+shlex.quote(target)]
+            status,_=await self.command('exec','-i',*self.user_args(),self.name,*args,data=raw)
+            if status:raise ValueError('Sandbox restore failed')
+
     async def close(self):
         if self.mode=='per_task':
             await self.destroy()

@@ -6,6 +6,14 @@ from large_task_notices import write
 
 
 class NoticeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_draft_upload_is_explained_by_model_with_current_persona(self):
+        model=AsyncMock(return_value={'text':'次数用完先停了，发你的是未完成草稿，还得接着修'})
+        with tempfile.TemporaryDirectory() as folder:
+            root=self.setup_files(folder)
+            result=await write(self.cfg(),{},'uploaded',{'unfinished':True,'failure':{'reason':'step limit'}},model,root)
+        self.assertTrue(result)
+        prompt=model.call_args.args[1]
+        for text in ('当前群专属龙娘设定','未完成品','step limit'):self.assertIn(text,prompt)
     async def test_failure_explanation_has_persona_and_real_reason_without_timeout_fallback(self):
         cfg=self.cfg()
         details={'failure':{'reason':'Task tool step limit reached; no upload','steps_used':4,'step_limit':4,

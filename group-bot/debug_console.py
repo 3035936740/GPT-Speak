@@ -179,7 +179,7 @@ class Console:
         self.draw()
         return url
     def submit_web_action(self,value):
-        if value.get('action')=='task_sandbox_build':return self.web_action(value)
+        if value.get('action') in {'task_sandbox_build','task_cancel'}:return self.web_action(value)
         future=Future();self.web_requests.put((future,value))
         try:return future.result(timeout=None if value.get('action')=='knowledge' else 40)
         except FutureTimeoutError:
@@ -192,6 +192,20 @@ class Console:
             try:future.set_result(self.web_action(value))
             except Exception as exc:future.set_exception(exc)
     def web_action(self,value):
+        if value.get('action')=='task_cancel':
+            from task_controls import force_cancel
+            return force_cancel(self.root,int(value.get('group',self.group)),value.get('id',''))
+        if value.get('action')=='task_collect':
+            import asyncio
+            from task_controls import checked,recover
+            cfg,folder,row=checked(self.root,int(value.get('group',self.group)),value.get('id',''))
+            if row['status'] not in {'failed','cancelled','interrupted','rejected'}:raise ValueError('仅可读取已停止任务的草稿')
+            asyncio.run(recover(folder,row,cfg))
+            return {'ok':True,'message':'已检查保留的沙箱文件；若有草稿，可在任务页下载'}
+        if value.get('action') in {'task_resume','task_send'}:
+            from task_controls import enqueue_resume,enqueue_send
+            group=int(value.get('group',self.group));identity=value.get('id','')
+            return enqueue_resume(self.root,group,identity) if value['action']=='task_resume' else enqueue_send(self.root,group,identity,value.get('confirmed') is True)
         if value.get('action')=='task_sandbox_enable_host':
             if value.get('confirmed') is not True:raise ValueError('尚未确认本机执行风险')
             group=int(value.get('group',self.group));scope=value.get('scope','group')

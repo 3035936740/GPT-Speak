@@ -481,7 +481,7 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
     file_pages=[]
     if files:
         if not cfg.get('group_file_read_enabled',True):attachment_status.extend({'name':row['name'],'status':'disabled','reason':'群文件读取已关闭'} for row in files)
-        elif addressed and (target.get('_reply_id') or re.search(r'读取|读一下|读读|看看|看下|看一下|分析|总结|文件|日志|附件|文档|根据|参考|按照|基于',target.get('text',''))):
+        elif addressed and (file_route or target.get('_reply_id') or re.search(r'读取|读一下|读读|看看|看下|看一下|分析|总结|文件|日志|附件|文档|根据|参考|按照|基于',target.get('text',''))):
             from file_messages import prepare
             async def file_api(action,params):
                 if suspended(settings()) or not settings().get('group_file_read_enabled',True):raise ValueError('file_read_disabled')
@@ -1827,7 +1827,9 @@ async def generate_json(cfg, prompt, schema, images=None):
         stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode('utf-8')),
             timeout=timeout)
         try:
-            from account_usage import record
+            from account_usage import record,reported_usage
+            sink=cfg.get('_task_usage_sink')
+            if callable(sink):sink(reported_usage(stdout))
             record(ROOT,cfg,stdout,output.stem)
         except (OSError,ValueError,__import__('sqlite3').Error):log.warning('Token usage recording unavailable')
         reconnects = stdout.decode('utf-8', errors='replace').count('Reconnecting...')
@@ -1867,6 +1869,11 @@ async def generate_json(cfg, prompt, schema, images=None):
         return result
     except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
         kill_process_group(proc)
+        if os.name=='nt' and cfg.get('_task_identity'):
+            killer=await asyncio.create_subprocess_exec('taskkill.exe','/PID',str(proc.pid),'/T','/F',
+                stdout=asyncio.subprocess.DEVNULL,stderr=asyncio.subprocess.DEVNULL,**process_options())
+            try:await asyncio.wait_for(killer.wait(),timeout=5)
+            except asyncio.TimeoutError:killer.kill()
         # Killing the direct child first avoids waiting forever when taskkill
         # itself stalls.  Fall back to the Windows tree kill only if necessary.
         try:
@@ -2067,9 +2074,18 @@ async def _run(smoke=False):
                     log.warning('Large task generation stopped; message_id=%s; error_type=%s; reason=%s',
                         file_target.get('_id'),type(error).__name__,debug_events.safe_log(str(error))[:200])
                     if not active():return
+                    if file_target.get('_local_task_resume'):return
                     sandbox_mode=file_cfg.get('large_task_executor','text') in {'docker','podman','host'}
                     failure=getattr(error,'task_failure_info',{'error_type':type(error).__name__,'reason':debug_events.safe_log(str(error))[:800],'uploaded':False})
-                    result=await task_notice(file_cfg,file_target,'isolation_failed' if sandbox_mode else 'failed',{'failure':failure},generate_json,ROOT)
+                    result=None
+                    trace=getattr(error,'task_trace_id',None)
+                    if trace and settings().get('large_task_send_incomplete',True):
+                        try:
+                            from task_controls import partial_reply
+                            result=partial_reply(RUNTIME,trace,file_cfg);result.task_failure_info=failure
+                        except (ValueError,OSError):pass
+                    if result is None:result=await task_notice(file_cfg,file_target,'isolation_failed' if sandbox_mode else 'failed',{'failure':failure},generate_json,ROOT)
+                if file_target.get('_local_task_resume'):return
                 if not result or not active():
                     if getattr(result,'task_view_id',None):__import__('task_history').update(RUNTIME,result.task_view_id,status='cancelled',error='Session or permissions changed before upload')
                     return
@@ -2078,11 +2094,13 @@ async def _run(smoke=False):
                     'summary':''.join(segment.get('data',{}).get('text','') for segment in result.segments if segment['type']=='text')[:300]}
                     if files else {})
                 if getattr(result,'task_sandbox_warning',None):details['sandbox_warning']=result.task_sandbox_warning
+                if getattr(result,'unfinished_task',False):details.update(unfinished=True,failure=getattr(result,'task_failure_info',{}))
                 plan=delivery_plan(files if files else outgoing_segments(result,file_target,history),file_cfg['group_id'])
                 def allowed():
                     current=settings()
                     return (active() and sum(time.time()-stamp<3600 for stamp in reply_times)<current['max_replies_per_hour']
-                        and len(reply_times)<current['max_replies_per_day'])
+                        and len(reply_times)<current['max_replies_per_day']
+                        and (not getattr(result,'unfinished_task',False) or current.get('large_task_send_incomplete',True)))
                 def recorded(sent,part):
                     nonlocal last_send
                     from message_time import sent_timestamp
@@ -2090,10 +2108,11 @@ async def _run(smoke=False):
                     if part['action']=='upload_group_file':
                         if getattr(result,'task_view_id',None):
                             __import__('task_history').update(RUNTIME,result.task_view_id,status='uploaded')
-                        for row in history:
-                            if str(row.get('_id')) in {str(file_target.get('_id')),str(file_target.get('_large_task_origin_id'))}:row['_large_task_completed']=True
-                        journal.mark_file_completed(file_target.get('_id'))
-                        journal.mark_file_completed(file_target.get('_large_task_origin_id'))
+                        if not getattr(result,'unfinished_task',False):
+                            for row in history:
+                                if str(row.get('_id')) in {str(file_target.get('_id')),str(file_target.get('_large_task_origin_id'))}:row['_large_task_completed']=True
+                            journal.mark_file_completed(file_target.get('_id'))
+                            journal.mark_file_completed(file_target.get('_large_task_origin_id'))
                         debug_events.emit('stage',text='任务文件已上传：'+part['params']['name'],context_id=file_target.get('_id'))
                     else:
                         text=''.join(segment.get('data',{}).get('text','') for segment in part['params'].get('message',[]) if segment['type']=='text')
@@ -2118,9 +2137,9 @@ async def _run(smoke=False):
                     notice=await task_notice(file_cfg,file_target,'uploaded',details,generate_json,ROOT)
                     if notice and allowed():
                         completion=delivery_plan(outgoing_segments(notice,file_target,history),file_cfg['group_id'])
-                        for part in completion:part['_large_task_completed']=True
+                        for part in completion:part['_large_task_completed']=not getattr(result,'unfinished_task',False)
                         await deliver_burst(api,client,env,completion,allowed,recorded)
-            status=file_pool.submit(file_target.get('_large_task_origin_id') or file_target.get('_id'),file_cfg,process,active)
+            status=file_pool.submit(file_target.get('_large_task_origin_id') or file_target.get('_id'),{**file_cfg,'_task_delivery_only':bool(file_target.get('_manual_file_send'))},process,active)
             debug_events.emit('stage',text='任务接收：'+status+'；全局上限='+str(file_cfg.get('large_task_max_concurrent',3)),context_id=file_target.get('_id'))
             if callable(report):
                 report(status);return ReplyText('',route='background')
@@ -2376,8 +2395,16 @@ async def _run(smoke=False):
             manual_task=claim_manual_task(RUNTIME)
             if manual_task:
                 async def manual_work(item=manual_task,config=dict(cfg)):
+                    if item.get('_manual_file_send'):
+                        from task_controls import send
+                        sent=await send(ROOT,cfg['group_id'],item['_manual_file_send'],True)
+                        return await __import__('large_task_notices').write({**config,'_reserve_extra_call':reserve_extra_call},item,'uploaded',
+                            {'unfinished':sent.get('partial',False),'failure':sent.get('failure',{})},generate_json,ROOT)
                     if not reserve_extra_call():raise ValueError('Model call budget exhausted')
                     config.pop('_dispatch_large_task',None);config['_reserve_extra_call']=reserve_extra_call
+                    if item.get('_local_task_resume'):
+                        from task_controls import resume
+                        return await resume(ROOT,cfg['group_id'],item['_local_task_resume'],config,generate_json)
                     return await generate_for_message(client,config,list(history),'WebUI manual task',item)
                 await dispatch_large_task(manual_task,cfg,manual_work,lambda status:finish_manual_task(RUNTIME,manual_task,status))
             poll_succeeded = False

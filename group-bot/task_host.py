@@ -41,4 +41,13 @@ class Host:
             if total>self.cap or len(rows)>=64:raise ValueError('Output limit exceeded')
             rows.append((safe_name(p.relative_to(self.root/'output').as_posix()),p.read_bytes()))
         return rows
+    async def restore(self,files):
+        for name,raw in files:
+            path=self.root/safe_name(name);path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
+    async def snapshot(self):
+        from task_controls import read_files
+        return read_files(self.root,self.cap)
+    async def inventory(self):
+        from task_file_metrics import describe
+        return [describe(name,raw,hashed=True) for name,raw in await self.outputs()]
     async def close(self):pass

@@ -71,22 +71,31 @@ def normalize_limits(result):
 def db_path(root):return Path(root)/'runtime'/'token-usage.sqlite3'
 
 
-def record(root,cfg,stdout,identity,stamp=None):
-    """Only count reported final turn usage; never infer from prompt length."""
+def reported_usage(stdout):
+    """Return validated actual CLI usage, or None when it was not reported."""
     usage=None
     for line in stdout.decode('utf-8',errors='replace').splitlines():
         try:event=json.loads(line)
         except ValueError:continue
         if event.get('type')=='turn.completed' and isinstance(event.get('usage'),dict):usage=event['usage']
-    if usage is None or not {'input_tokens','output_tokens'}<=usage.keys():return False
+    if usage is None or not {'input_tokens','output_tokens'}<=usage.keys():return None
     cached=usage.get('cached_input_tokens')
     if cached is None:cached=usage.get('input_tokens_details',{}).get('cached_tokens') if isinstance(usage.get('input_tokens_details'),dict) else None
     counts=[]
     for index,value in enumerate((usage['input_tokens'],cached,usage['output_tokens'])):
         if index==1 and value is None:counts.append(None);continue
-        if type(value) is not int or value<0:return False
+        if type(value) is not int or value<0:return None
         counts.append(value)
-    if cached is not None and cached>counts[0]:return False
+    if cached is not None and cached>counts[0]:return None
+    return dict(zip(('input_tokens','cached_input_tokens','output_tokens'),counts))
+
+
+def record(root,cfg,stdout,identity,stamp=None):
+    """Only count reported final turn usage; never infer from prompt length."""
+    usage=reported_usage(stdout)
+    if usage is None:return False
+    counts=[usage[k] for k in ('input_tokens','cached_input_tokens','output_tokens')]
+    cached=usage['cached_input_tokens']
     path=db_path(root);path.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(path,timeout=5) as db:
         db.execute('BEGIN IMMEDIATE')

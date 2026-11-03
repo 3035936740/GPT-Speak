@@ -8,7 +8,7 @@ import time
 import uuid
 from console_config import atomic,read_json,pid_alive
 
-TERMINAL={'uploaded','failed','cancelled','rejected','upload_uncertain','interrupted'}
+TERMINAL={'uploaded','failed','cancelled','rejected','upload_uncertain','interrupted','local_ready'}
 
 def update(runtime,identity,**values):
     if not re.fullmatch(r'[a-f0-9]{32}',str(identity)):raise ValueError('无效任务编号')
@@ -21,7 +21,7 @@ def update(runtime,identity,**values):
 def begin(runtime,target,cfg):
     identity=uuid.uuid4().hex
     update(runtime,identity,status='preparing',pid=os.getpid(),created=time.time(),message_id=str(target.get('_id','')),
-        sender=str(target.get('sender',''))[:80],request=target.get('_file_task_request') or target.get('text',''),
+        sender=str(target.get('sender',''))[:80],requester_qq=str(target.get('_uid','')),request=target.get('_file_task_request') or target.get('text',''),
         model=cfg.get('large_task_model'),step=0,characters=0)
     return identity
 
@@ -52,6 +52,7 @@ def cleanup(runtime,cfg):
             folder=(runtime/'generated-files'/path.stem).resolve();base=(runtime/'generated-files').resolve()
             if folder.parent==base and folder.is_dir():shutil.rmtree(folder)
             path.unlink(missing_ok=True)
+            (runtime/'task-cancel'/(path.stem+'.json')).unlink(missing_ok=True)
 
 def view(root,group,identity='',scope='group'):
     from console_config import Config,runtime
@@ -75,6 +76,10 @@ def view(root,group,identity='',scope='group'):
         return {'enabled':True,'daily_used':daily_usage(root),'daily_limit':cfg.get('large_task_daily_limit',0),'rows':[{k:v for k,v in r.items() if k not in {'person_references','source_files','artifact','request'}} for r in rows]}
     row=next((r for r in rows if r['id']==identity),None)
     if row is None:raise ValueError('任务不存在或已过保存期限')
+    row['can_resume']=row.get('status') in {'failed','cancelled','interrupted','rejected'}
+    row['can_cancel']=row.get('status') in {'preparing','generating','continuing'}
+    row['can_send']=row.get('status') in TERMINAL|{'ready'}
+    row['partial']=row.get('partial',row.get('status') in {'failed','cancelled','interrupted','rejected'})
     # Older tasks staged bytes without recording their visible manifest.
     # Recover metadata only; never expose local paths or binary file contents.
     if 'input_files' not in row:

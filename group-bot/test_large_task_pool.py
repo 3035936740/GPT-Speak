@@ -8,6 +8,13 @@ from large_task_pool import LargeTaskPool
 
 
 class PoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_delivery_does_not_consume_generation_daily_admission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pool=LargeTaskPool(folder,Path(folder)/'a',1)
+            token,status=pool.claim('send',{'large_task_daily_limit':1,'_task_delivery_only':True})
+            self.assertEqual(status,'accepted');pool.release(token)
+            token,status=pool.claim('generate',{'large_task_daily_limit':1})
+            self.assertEqual(status,'accepted');pool.release(token)
     async def test_zero_concurrent_limit_accepts_more_than_32_and_keeps_duplicate_guard(self):
         with tempfile.TemporaryDirectory() as folder:
             pool=LargeTaskPool(folder,Path(folder)/'a',1);cfg={'large_task_max_concurrent':0}

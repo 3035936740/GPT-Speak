@@ -134,6 +134,7 @@ class SandboxTests(unittest.TestCase):
             results=iter([{'action':'python','code':'print(1)','summary':''},{'action':'done','code':'','summary':'完成'}])
             async def model(cfg,prompt,schema):
                 self.assertEqual(cfg['_usage_category'],'task')
+                self.assertEqual(cfg['max_prompt_chars'],128000)
                 self.assertIn('sandbox_files',prompt)
                 if 'tool_observations' in prompt:self.assertIn('parsed MIDI',prompt)
                 return next(results)

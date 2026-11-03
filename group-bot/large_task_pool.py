@@ -34,12 +34,12 @@ class LargeTaskPool:
             if db.execute('SELECT 1 FROM jobs WHERE scope=? AND message_id=?',(self.group,str(identity))).fetchone():return None,'duplicate'
             concurrent=cfg.get('large_task_max_concurrent',3)
             if concurrent and db.execute('SELECT count(*) FROM jobs').fetchone()[0]>=concurrent:return None,'full'
-            day=datetime.now().strftime('%Y-%m-%d');limit=cfg.get('large_task_daily_limit',0)
+            day=datetime.now().strftime('%Y-%m-%d');limit=0 if cfg.get('_task_delivery_only') else cfg.get('large_task_daily_limit',0)
             used=db.execute('SELECT count(*) FROM admissions WHERE day=?',(day,)).fetchone()[0]
             if limit and used>=limit:return None,'daily_limit'
             db.execute('INSERT INTO jobs VALUES (?,?,?,?,?,?)',(token,self.group,str(identity),os.getpid(),now,
                 max(120,cfg.get('large_task_timeout_seconds',600)+2*cfg.get('napcat_timeout_seconds',30)+120)))
-            db.execute('INSERT INTO admissions VALUES (?,?,?)',(token,day,now))
+            if not cfg.get('_task_delivery_only'):db.execute('INSERT INTO admissions VALUES (?,?,?)',(token,day,now))
             db.execute('DELETE FROM admissions WHERE stamp<?',(now-32*86400,))
         return token,'accepted'
 

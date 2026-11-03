@@ -16,6 +16,7 @@ class LargeTaskTests(unittest.IsolatedAsyncioTestCase):
     async def test_zero_step_limit_allows_more_than_twelve_text_calls(self):
         calls=0
         async def model(cfg,prompt,schema):
+            self.assertEqual(cfg['max_prompt_chars'],128000)
             nonlocal calls
             calls+=1
             return {'filename':'result.txt','content':'part '+str(calls)+'\n','complete':calls==14,'summary':''}

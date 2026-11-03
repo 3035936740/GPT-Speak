@@ -9,6 +9,46 @@ from message_time import formatted
 
 
 class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
+    def test_task_cap_configuration_leaves_chat_limits_unchanged(self):
+        from console_config import Config,atomic
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);atomic(root/'settings.json',bot.settings());config=Config(root)
+            for value in ('0','500','128000','2147483647'):
+                config.set('large_task_max_prompt_chars',value)
+                self.assertEqual(config.load()['large_task_max_prompt_chars'],int(value))
+                self.assertEqual(config.load()['max_prompt_chars'],12800)
+                self.assertEqual(config.load()['console_max_text_chars'],12800)
+            for value in ('-1','499','2147483648'):
+                with self.assertRaises(ValueError):config.set('large_task_max_prompt_chars',value)
+
+    def test_task_budget_is_independent_of_chat_and_handles_reported_payload(self):
+        instructions='i'*3324
+        data={'conversation':[],'sandbox_files':[{'path':'/workspace/input/'+('f'*300)} for _ in range(10)],
+            'tool_observations':[{'step':1,'exit_code':0,'output':'x'*3000},{'step':2,'exit_code':1,'output':'y'*3000}],
+            'request':'KEEP_REQUEST'}
+        first=render({'max_prompt_chars':500,'console_max_text_chars':1},instructions,data,[])
+        second=render({'max_prompt_chars':100000,'console_max_text_chars':12800},instructions,data,[])
+        self.assertEqual(first,second);self.assertGreater(len(first)+len(instructions),12800)
+        result=json.loads(render({'large_task_max_prompt_chars':12800},instructions,data,[]))
+        from knowledge_budget import encoded
+        self.assertLessEqual(len(encoded(result))+len(instructions)+160,12800)
+        self.assertTrue(any(row.get('truncated') for row in result['tool_observations']))
+        self.assertEqual(result['request'],'KEEP_REQUEST');self.assertEqual(result['sandbox_files'],data['sandbox_files'])
+        self.assertEqual(len(data['tool_observations'][0]['output']),3000)
+
+    def test_restored_inventory_collapses_without_losing_input_file_paths(self):
+        original={'path':'/workspace/input/original.mid','bytes':1483}
+        files=[original]+[{'path':'/workspace/output/'+('n'*120)+str(i),'restored':True} for i in range(40)]
+        result=json.loads(render({'large_task_max_prompt_chars':1800},'rules',{'request':'keep','sandbox_files':files},[]))
+        self.assertIn(original,result['sandbox_files'])
+        directory=next(row for row in result['sandbox_files'] if row.get('restored_directory'))
+        self.assertEqual(directory['file_count'],40);self.assertTrue(directory['listing_required'])
+        self.assertEqual(len(files),41)
+
+    def test_zero_task_cap_does_not_reapply_chat_cap(self):
+        payload={'request':'r'*130000}
+        result=json.loads(render({'large_task_max_prompt_chars':0,'max_prompt_chars':500},'rules',payload,[]))
+        self.assertEqual(result['request'],payload['request'])
     def test_window_metadata_is_counted_before_trimming_at_exact_boundary(self):
         from knowledge_budget import encoded
         instructions='trusted rules'
@@ -17,7 +57,7 @@ class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
         old_payload={'conversation':data['conversation'],'context_boundary':{'speaker':'assistant','text':BOUNDARY,'program_inserted':True},
             'context_window':data['context_window'],'request':data['request']}
         cap=len(instructions)+160+len(encoded(old_payload))
-        prompt=render({'max_prompt_chars':cap},instructions,data,[]);result=json.loads(prompt)
+        prompt=render({'large_task_max_prompt_chars':cap},instructions,data,[]);result=json.loads(prompt)
         self.assertLessEqual(len(prompt)+len(instructions)+160,cap)
         self.assertEqual(result['request'],'KEEP_CURRENT_REQUEST')
         self.assertEqual(len(result['conversation']),1)
@@ -29,7 +69,7 @@ class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
         data={'conversation':[{'text':'history '*35} for _ in range(8)],
             'context_window':{'window_messages':8,'chat_char_limit':12800},'request':'KEEP_REQUEST'}
         for cap in range(1000,1400,7):
-            prompt=render({'max_prompt_chars':cap},'rules'*10,data,[{'name':'evidence.txt','content':'ORIGINAL_EVIDENCE '*20}])
+            prompt=render({'large_task_max_prompt_chars':cap},'rules'*10,data,[{'name':'evidence.txt','content':'ORIGINAL_EVIDENCE '*20}])
             result=json.loads(prompt)
             self.assertLessEqual(len(prompt)+50+160,cap)
             self.assertEqual(result['request'],'KEEP_REQUEST');self.assertTrue(result['source_files'])
@@ -38,7 +78,7 @@ class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
     def test_impossible_required_input_reports_sizes_without_exposing_content(self):
         from task_prompt import TaskPromptBudgetError
         with self.assertRaises(TaskPromptBudgetError) as error:
-            render({'max_prompt_chars':500},'PERSONA_SECRET'*100,{'request':'REQUEST_SECRET','conversation':[]},[])
+            render({'large_task_max_prompt_chars':500},'PERSONA_SECRET'*100,{'request':'REQUEST_SECRET','conversation':[]},[])
         self.assertEqual(error.exception.budget['cap'],500)
         self.assertIn('request',error.exception.budget['sections'])
         self.assertNotIn('PERSONA_SECRET',str(error.exception));self.assertNotIn('REQUEST_SECRET',str(error.exception))

@@ -46,7 +46,7 @@ class IntegrityTests(unittest.IsolatedAsyncioTestCase):
         history=[{'_id':str(i),'_uid':'11111','_time':999,'text':'old '*200} for i in range(8)]
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaises(ValueError):
-                await large_tasks.generate(self.cfg(max_prompt_chars=7000,large_task_max_steps=2),target,[],self.api,model,folder,history)
+                await large_tasks.generate(self.cfg(large_task_max_prompt_chars=7000,large_task_max_steps=2),target,[],self.api,model,folder,history)
             self.assertFalse(list(Path(folder).rglob('page.html')))
         self.assertEqual(len(prompts),2)
 

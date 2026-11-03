@@ -15,9 +15,13 @@ DEFAULTS={'large_tasks_enabled':False,'large_task_max_file_bytes':20*1024*1024,'
     'large_task_container_mode':'shared',
     'large_task_dockerfile':(Path(__file__).parent/'task-sandbox/Dockerfile').read_text(encoding='utf-8').strip(),
     'large_task_host_acknowledged':False,
+    'large_task_send_incomplete':True,
+    'large_task_max_prompt_chars':128000,
+    'large_task_stall_limit':6,
     'large_task_model':'gpt-6.1-sol','large_task_reasoning_effort':'high','large_task_fast_mode':False,'large_task_max_concurrent':3,'large_task_max_steps':4,'large_task_retention_hours':2,'large_task_daily_limit':0}
 EXTENSIONS={'.html','.htm','.css','.js','.ts','.py','.sh','.ps1','.json','.yaml','.yml','.ini','.toml','.xml','.md','.txt','.csv','.log','.svg'}
 INSTRUCTION=('任务已开启。明确要求制作可交付的网页、HTML、代码、报告或文件时选择generate_file，'
+    '解题并将答案或步骤做成PDF发群、处理引用附件并交付结果同样是任务；sandbox_pending表示原附件已送入沙箱等待处理，不代表缺少附件，不因此改为普通聊天。'
     '由程序实际生成并上传，不先发“我来做/稍等”代替执行。未指定主题、说随便做或自由发挥时自行选择合理主题。'
     '当前发言延续同一群友尚未交付的文件请求时继续该任务；已交付、已取消、换人或无关聊天不重复执行，明确要求改版或重做则是新请求。'
     '只有真正缺少必需信息才追问。generate_file时text和text_parts留空，不声称已经上传。')
@@ -36,9 +40,12 @@ def requested(text):
     if re.search(r'^(?:怎么|如何|怎样|为什么|什么是)|(?:有多难|有啥区别|有什么区别|是什么意思)[吗?？]*$',text):return False
     if not cancelled(text) and re.search(r'(?:编排|编曲|修改|转换|制作|导出|生成).{0,180}(?:midi|\bmid\b|zip|docx|xlsx)',text,re.I):return True
     prefix=r'^(?:你)?(?:(?:请(?:你)?|麻烦(?:你)?|能不能|可不可以|可以|帮我|给我|帮忙|随便|随意|直接|随手|现在|就|先|再|也|那|自由发挥)[，,\s]*)*'
-    delivery=re.search(r'^(?:你\s*)?(?:算了[，,]?\s*|那[，,]?\s*|请\s*)?(?:把|将|帮我|给我|做完|解答|解完|算|完成|分析|整理|总结|根据).{0,240}(?:给我|发给我|交给我|导出|输出|写成|整理成|保存成).{0,50}(?:文件|文档|报告|html|csv|json|markdown)',text,re.I)
+    formats=r'文件|文档|报告|html|csv|json|markdown|pdf|docx?|xlsx?|pptx?|midi|\bmid\b|zip'
+    # Natural delivery requests may put the format before "发群里", not after it.
+    delivery=re.search(prefix+r'(?:(?:把|将|根据|按照|基于|参考).{0,120}?)?(?:做|解答|解完|解|算|完成|分析|整理|总结|修改|转换|导出|生成|制作|写).{0,240}',text,re.I)
+    if (delivery and re.search(formats,text,re.I) and re.search(r'发(?:到|给|进)?(?:群(?:里|中|聊)?|我)|交付|导出|输出|写成|整理成|保存成|做成|生成',text) and not cancelled(text)):return True
     return bool((delivery or re.search(prefix+r'(?:(?:根据|按照|基于|参考|用|以).{0,200}?)?(?:写|生成|制作|开发|实现|做|编写|输出|导出)',text)) and
-        re.search(r'html|前端|网页|脚本|代码|文档|文件|报告|用户画像|人物画像|个人画像|长篇|策划案|csv|json|markdown|midi|编曲|曲子|音乐',text,re.I) and
+        re.search(formats+r'|前端|网页|脚本|代码|用户画像|人物画像|个人画像|长篇|策划案|编曲|曲子|音乐',text,re.I) and
         not cancelled(text))
 
 
@@ -138,13 +145,14 @@ def validate_upload(params,cfg):
 
 
 async def _generate(cfg,target,pages,api,model,runtime,context=()):
-    cfg={**cfg,'_image_context_runtime':runtime}
+    from task_prompt import budget
+    cfg={**cfg,'_image_context_runtime':runtime,'max_prompt_chars':budget(cfg)}
     if not cfg.get('large_tasks_enabled'):return None,{'allowed':False,'status':'disabled','reason':'任务文件生成与上传（实验性）未开启'}
     request=target.get('_file_task_request') or target.get('text','')
     if target.get('_file_task_repair') and not target.get('_task_inputs') and not any(p.get('source_type')=='file' and p.get('body') for p in pages):
         return None,{'allowed':False,'status':'missing_source','reason':'未读取到引用文件的正文，无法据此修订；请重新提供原文件'}
     reason=size_rejection(request,cfg)
-    status={'allowed':False,'status':'rejected','reason':reason} if reason else await permission(api,cfg['group_id'],target.get('_self_id') or cfg.get('expected_self_id'))
+    status=({'allowed':False,'status':'rejected','reason':reason} if reason else {'allowed':True} if target.get('_local_only') else await permission(api,cfg['group_id'],target.get('_self_id') or cfg.get('expected_self_id')))
     if not status['allowed']:return None,status
     if any(row.get('status') in {'blocked','ambiguous_subject','insufficient'} for row in target.get('_person_context',[])):
         return None,{'status':'missing_person_evidence','reason':'指定群友缺少可用证据，不生成虚构人物文件'}
@@ -196,15 +204,24 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
         **{key:p[key] for key in ('extraction_note','pages','pages_read','empty_pages') if key in p}}
         for p in pages if p.get('source_type')=='file']
     def bounded_prompt(data):return render(cfg,instructions,data,sources)
+    if target.get('_resume_content'):
+        data['continuation']={'filename':target.get('_resume_filename',''),'written_chars':len(target['_resume_content']),
+            'tail':target['_resume_content'][-3000:],'reason':'从保留的草稿继续，只追加缺失部分'}
     prompt=bounded_prompt(data)
     from task_history import update
     public=json.loads(prompt);update(runtime,target['_task_trace_id'],person_references=public.get('person_references',[]),source_files=public.get('source_files',[]),request=public['request'],status='generating')
     directory=Path(runtime)/'generated-files'/target['_task_trace_id'];directory.mkdir(parents=True,exist_ok=False)
     schema_path=directory/'result.schema.json';schema_path.write_text(json.dumps(schema),encoding='utf-8')
-    chunks=[];filename='';deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600)
+    chunks=[target['_resume_content']] if target.get('_resume_content') else [];filename=target.get('_resume_filename','');deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600)
+    content=''.join(chunks)
+    if content:
+        from storage_io import atomic_write_text
+        atomic_write_text(directory/'draft.txt',content)
+        update(runtime,target['_task_trace_id'],filename=filename,characters=len(content),bytes=len(content.encode('utf-8')))
     from artifact_integrity import problem
     try:
         limit=cfg.get('large_task_max_steps',4)
+        model_calls=[]
         for step in range(limit) if limit else count():
             if step:
                 reserve=cfg.get('_reserve_extra_call')
@@ -212,11 +229,17 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
             remaining=deadline-time.monotonic()
             if remaining<=0:raise TimeoutError('Large task generation timed out; not uploaded')
             update(runtime,target['_task_trace_id'],status='generating' if step==0 else 'continuing',step=step+1)
+            call={'step':step+1};model_calls.append(call)
+            def capture_usage(usage):
+                if usage is not None:call['usage']=usage
+                update(runtime,target['_task_trace_id'],model_calls=model_calls)
             result=await asyncio.wait_for(model({**cfg,'model':cfg.get('large_task_model','gpt-6.1-sol'),
                 'reasoning_effort':cfg.get('large_task_reasoning_effort','high'),'fast_mode':cfg.get('large_task_fast_mode',False),
                 '_developer_instructions':instructions,'_task_instruction_chars':len(instructions),
                 '_usage_category':'task',
+                '_task_identity':target['_task_trace_id'],'_task_usage_sink':capture_usage,
                 'model_timeout_seconds':remaining,'_request_timeout_seconds':remaining,'_web_search_mode':'disabled'},prompt,schema_path),remaining)
+            update(runtime,target['_task_trace_id'],model_calls=model_calls)
             piece=result.get('content','')
             invalid=('content_not_text' if not isinstance(piece,str) else 'content_too_long' if len(piece)>20000 else 'missing_completion_flag' if type(result.get('complete')) is not bool else 'empty_content' if not piece else '')
             if invalid:
@@ -247,6 +270,8 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
     packet={'group_id':cfg['group_id'],'name':filename,'file':'base64://'+base64.b64encode(content.encode('utf-8')).decode('ascii')}
     raw=validate_upload(packet,cfg)
     path=directory/packet['name'];path.write_bytes(raw)
+    from task_file_metrics import describe
+    update(runtime,target['_task_trace_id'],filename=filename,artifact_file=packet['name'],characters=len(content),bytes=len(raw),binary=False,partial=False,files=[describe(filename,raw)])
     from emoji_library import ReplyText
     reply=ReplyText('',segments=[
         {'type':'_generated_group_file','data':packet},
@@ -261,15 +286,22 @@ async def generate(cfg,target,pages,api,model,runtime,context=()):
     from task_history import begin,update,cleanup
     from debug_events import safe_log
     await asyncio.to_thread(cleanup,runtime,cfg);identity=begin(runtime,target,cfg)
+    if target.get('_resume_parent'):
+        update(runtime,identity,resumed_from=target['_resume_parent'],local_only=True)
+        update(runtime,target['_resume_parent'],resume_child=identity)
     try:
-        result,status=await _generate(cfg,{**target,'_task_trace_id':identity},pages,api,model,runtime,context)
-        update(runtime,identity,status='ready' if result else 'rejected',error=status.get('reason',''))
+        from task_cancel import guarded
+        result,status=await guarded(_generate(cfg,{**target,'_task_trace_id':identity},pages,api,model,runtime,context),runtime,identity)
+        update(runtime,identity,status=('local_ready' if target.get('_local_only') else 'ready') if result else 'rejected',partial=False,error=status.get('reason',''))
         return result,status
     except BaseException as error:
-        row=update(runtime,identity,status='cancelled' if isinstance(error,asyncio.CancelledError) else 'failed',error=safe_log(str(error))[:500],stage='任务已停止，未上传')
+        from task_cancel import requested
+        operator=requested(runtime,identity)
+        row=update(runtime,identity,status='cancelled' if isinstance(error,asyncio.CancelledError) else 'failed',error='操作员已强制中断此任务' if operator else safe_log(str(error))[:500],stage='任务已强制中断' if operator else '任务已停止，未上传')
         error.task_failure_info={'error_type':type(error).__name__,'reason':safe_log(str(error))[:800],
             'steps_used':row.get('step',0),'step_limit':cfg.get('large_task_max_steps',4),
             'input_files':row.get('input_files',[]),'uploaded':False,
             'last_execution':({'exit_code':row['execution'][-1].get('exit_code'),
                 'output':safe_log(row['execution'][-1].get('output',''))[-800:]} if row.get('execution') else None)}
+        error.task_trace_id=identity
         raise
