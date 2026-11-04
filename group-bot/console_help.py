@@ -19,7 +19,7 @@ HELP = {
         '/config prompt 文本 或 /config persona 文本：修改人设；/config reply_protocol 文本：修改回复规则。\n'
         '/config edit [settings|persona|reply_protocol]：外部编辑器（仅CLI）；网页请用设置/人设页。\n'
         '/config cooldown on|off：回复冷却开关；local只影响当前群，global影响授权群。\n'
-        '常用字段：max_prompt_chars / console_max_text_chars（默认12800）；model_timeout_seconds / vision_timeout_seconds / image_timeout_seconds（默认30/60/150）。\n'
+        '普通模型输入 max_prompt_chars 默认19200，0表示不限。记录窗口 console_max_text_chars 默认12800。model_timeout_seconds / vision_timeout_seconds / image_timeout_seconds 默认30/60/150。\n'
         '群友策略：member_prompt_owner / member_prompt_human / member_prompt_AI / member_prompt_bot；自动屏蔽member_model_block_enabled默认off，规则member_model_block_rules。\n'
         '示例：/config local set passive_probability 0.35；/config local inherit passive_probability。'),
     'groups':('/groups','列出授权群的名称和群号。'),

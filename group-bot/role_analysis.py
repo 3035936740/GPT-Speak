@@ -10,6 +10,7 @@ from debug_events import emit
 from debug_events import safe_log
 from group_identity import identity_facts, identity_instruction, qq_id
 from social_planner import PLAN_SCHEMA, checked_plan
+from model_input_budget import configured_limit, input_budget
 
 log = logging.getLogger('qq-group-bot')
 
@@ -263,15 +264,15 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                 # Optional candidate pools must not break a valid direct call.
                 prefix = prompt.split(json.dumps(payload,ensure_ascii=False,separators=(',',':')),1)[0] + planning
                 def render():return prefix+json.dumps(payload,ensure_ascii=False,separators=(',',':'))
-                if len(render())>cfg.get('max_prompt_chars',12800):payload['group_identities']['recent_members']=[]
+                limit = input_budget(role_cfg)
+                if len(render())>limit:payload['group_identities']['recent_members']=[]
                 for key in ('expression_candidates','memory_candidates'):
-                    while len(payload[key])>1 and len(render())>cfg.get('max_prompt_chars',12800):payload[key].pop()
-                if len(render())>cfg.get('max_prompt_chars',12800):payload['person_profile']={}
+                    while len(payload[key])>1 and len(render())>limit:payload[key].pop()
+                if len(render())>limit:payload['person_profile']={}
                 for key in ('expression_candidates','memory_candidates'):
-                    if len(render())>cfg.get('max_prompt_chars',12800):payload[key]=[]
+                    if len(render())>limit:payload[key]=[]
                 # Preserve source facts/current question before old conversation
                 # or optional identity pools can overflow the planner budget.
-                limit=cfg.get('max_prompt_chars',12800)
                 while len(payload.get('reaction_options',{}).get('candidates',[]))>1 and len(render())>limit:
                     payload['reaction_options']['candidates'].pop()
                 while len(payload.get('group_turn',{}).get('batch',[]))>2 and len(render())>limit:
@@ -302,8 +303,8 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
                 if data.get('reference_context'):
                     concise+='\n收件人与话题对象分别判断；GPT可能是产品，别名只是线索。@参考敏感度，名单、转述、顺带点名可silent，不强制聊天。'
                 if role_knowledge:payload['knowledge_references']=role_knowledge
-                prompt=fit_role_prompt(prefix,payload,role_cfg.get('max_prompt_chars',12800),concise)
-                log.info('Role input chars=%s; cap=%s; role=%s',len(prompt),role_cfg.get('max_prompt_chars',12800),role)
+                prompt=fit_role_prompt(prefix,payload,input_budget(role_cfg),concise)
+                log.info('Role input chars=%s; cap=%s; role=%s',len(prompt),configured_limit(role_cfg) or 'unlimited',role)
                 result=await generate_json(role_cfg,prompt,path,list(image_paths) if role=='vision' else None)
                 accepted=checked(role,result,valid_ids,data.get('shorthand_context'),vision_level=depth)
                 if accepted:

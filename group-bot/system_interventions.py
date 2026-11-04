@@ -9,6 +9,7 @@ import uuid
 
 from console_config import Config, read_json, runtime
 from storage_io import atomic_write_text
+from model_input_budget import input_budget, remaining_limit
 
 MODES={'context','once','timed','persistent'}
 
@@ -67,7 +68,7 @@ class Interventions:
         if mode not in MODES:raise ValueError('有效期可选 context/once/timed/persistent')
         if mode=='timed' and (isinstance(minutes,bool) or not isinstance(minutes,(int,float)) or not 1<=minutes<=10080):raise ValueError('定时有效期范围1~10080分钟')
         cfg=Config(self.root,self.group).load()
-        cap=min(1500,max(100,cfg['max_prompt_chars']//4),cfg['console_max_text_chars']-1)
+        cap=min(1500,max(100,input_budget(cfg)//4),cfg['console_max_text_chars']-1)
         with self.locked():
             data=self._read();self._expire(data,cfg)
             active=[row for row in data['entries'] if row['status']=='active']
@@ -129,7 +130,7 @@ def attach(cfg,root):
     cfg['_developer_instructions']=instructions
     cfg['_intervention_ids']=[row['id'] for row in rows]
     cfg['_intervention_chars']=len(instructions)
-    cfg['max_prompt_chars']=max(1,cfg.get('max_prompt_chars',12800)-len(instructions))
+    cfg['max_prompt_chars']=remaining_limit(cfg, len(instructions))
     return cfg
 
 

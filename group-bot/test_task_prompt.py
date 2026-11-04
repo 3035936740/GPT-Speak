@@ -12,11 +12,14 @@ class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
     def test_task_cap_configuration_leaves_chat_limits_unchanged(self):
         from console_config import Config,atomic
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);atomic(root/'settings.json',bot.settings());config=Config(root)
+            root=Path(folder)
+            chat_settings={**bot.settings(),'max_prompt_chars':19200,'console_max_text_chars':12800}
+            atomic(root/'settings.json',chat_settings)
+            config=Config(root)
             for value in ('0','500','128000','2147483647'):
                 config.set('large_task_max_prompt_chars',value)
                 self.assertEqual(config.load()['large_task_max_prompt_chars'],int(value))
-                self.assertEqual(config.load()['max_prompt_chars'],12800)
+                self.assertEqual(config.load()['max_prompt_chars'],19200)
                 self.assertEqual(config.load()['console_max_text_chars'],12800)
             for value in ('-1','499','2147483648'):
                 with self.assertRaises(ValueError):config.set('large_task_max_prompt_chars',value)

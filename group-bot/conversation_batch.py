@@ -1,5 +1,6 @@
 """One live conversation packet per reply turn, preserving speaker attribution."""
 import json
+from model_input_budget import input_budget
 
 
 INSTRUCTION='conversation_batch是本轮新到消息组成的一次对话，按时间顺序整体理解，只生成一次自然回应，不逐条点名答题，不把不同人的话归给target发送者。target仅是QQ投递锚点；可回应共同话题或最需要回应的问题，无需逐条回复。omitted表示预算内省略的较早消息，不猜测其内容。'
@@ -14,7 +15,7 @@ def attach(target, rows, cfg):
         'sent_at':__import__('message_time').formatted(row.get('_time')),
         'time':row.get('_time',0),'text':str(row.get('text',''))[:1000],
         'at_bot':bool(row.get('at_bot')),'reply_to':row.get('_reply_id')} for row in ordered]
-    budget=max(600,min(4000,cfg.get('max_prompt_chars',12800)//4))
+    budget=max(600,min(4000,input_budget(cfg)//4))
     total=len(messages)
     while len(messages)>1 and len(json.dumps(messages,ensure_ascii=False))>budget:messages.pop(0)
     ids=list(dict.fromkeys(key for row in ordered for key in row.get('_source_ids',[str(row['_id'])])))

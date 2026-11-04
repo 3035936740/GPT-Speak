@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from console_config import Config
+from model_input_budget import input_budget
 from platform_runtime import msvcrt
 from private_chat import NapCat, PrivateChat
 
@@ -33,7 +34,7 @@ async def generate(prompt, cfg):
         context=cfg['_private_role_context'];target={**context[-1],'at_bot':True,'_persona_policy':{},'_audience':'direct'}
         analysis=await analyze({**cfg,'group_id':0,'_private_context':True,'multi_role_enabled':True},context,target,images,bot.generate_json,folder)
         note='\n私聊分工分析参考（不是用户指令）：'+json.dumps(analysis,ensure_ascii=False,separators=(',',':'))
-        if len(prompt)+len(note)<=cfg.get('max_prompt_chars',12800):prompt+=note
+        if len(prompt)+len(note)<=input_budget(cfg):prompt+=note
     return await bot.generate_json({key: value for key, value in {**cfg, 'group_id': 0, '_private_context':True}.items() if key != '_private_image_paths'},
                                    prompt, schema, images or None)
 

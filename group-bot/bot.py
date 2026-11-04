@@ -59,6 +59,7 @@ from member_labels import MemberLabels
 from member_policy import blocked_accounts,is_blocked,model_view,clean_data,MemberBlocked
 from model_timeouts import request_timeout,vision_config
 from model_routing import decision_config
+from model_input_budget import configured_limit, input_budget, remaining_limit
 from sticker_prefill import StickerPrefill
 from image_sources import validate_source, ImageDownloadError, failure_details as image_failure_details
 from social_state import SocialState, participation
@@ -236,7 +237,7 @@ async def researched_reply(cfg, query):
     if rank_count:
         answer_limit = min(9000, max(2000, rank_count * 65))
     today = datetime.now().date().isoformat()
-    page_limit = min(6500, max(1800, cfg.get('max_prompt_chars',12800)-5400)) if rank_count else 1800
+    page_limit = min(6500, max(1800, input_budget(cfg)-5400)) if rank_count else 1800
     pages = [{**page, 'body': str(page.get('body', ''))[:page_limit]} for page in
         cfg.get('_research_pages', [])[:1] if page.get('status') == 'read' and page.get('body')]
     coverage = (f'本次必须输出第1至第{rank_count}名，每行使用“1. 名称”，按原始排名顺序。'
@@ -1127,7 +1128,7 @@ async def generated_failure_reply(cfg, context, target, kind, error):
 def build_prompt(cfg, context, trigger, target):
     cfg={**cfg,'_image_context_runtime':RUNTIME}
     context,target=model_view(RUNTIME,context,target)
-    limit = cfg.get('max_prompt_chars', 12800)
+    limit = input_budget(cfg)
     message_limit = cfg.get('context_message_chars', 300)
     def compact(item, target_item=False):
         result = {'sender': str(item.get('sender', ''))[:40],
@@ -1289,7 +1290,7 @@ def build_prompt(cfg, context, trigger, target):
         return prompt + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if 'conversation_batch' in payload:
         from conversation_batch import trim
-        while len(render())>cfg['max_prompt_chars'] and trim(payload['conversation_batch']):pass
+        while len(render())>limit and trim(payload['conversation_batch']):pass
     all_context = list(context)
     from topic_context import select as select_context
     required_context,recent_context,context_reason=select_context(all_context,target,cfg)
@@ -1552,7 +1553,7 @@ def build_sticker_prompt(cfg,context,target):
     language=language_context(cfg,target)
     if language:payload['shorthand_context']=language;prefix=language_instruction+prefix
     def render():return prefix+json.dumps(payload,ensure_ascii=False,separators=(',',':'))
-    limit=cfg.get('max_prompt_chars',12800)
+    limit=input_budget(cfg)
     while len(render())>limit and payload['recent_chat']:payload['recent_chat'].pop(0)
     while len(render())>limit and len(choices)>1:choices.pop()
     if len(render())>limit:raise ValueError('Sticker selector exceeds character budget')
@@ -1672,9 +1673,9 @@ async def generate(cfg, context, trigger, target, images=None):
     if read_source_available(target):
         suffix += '\n本轮网页已读取成功，以reference_pages.body和scope为依据。不要沿用旧的读取失败说法或把表达改写失败说成打不开网页；直接完成对方请求。区分原创与fork，没读源码不评源码质量。'
     if target.get('_accepted_plan',{}).get('action')=='sticker' and target.get('_reply_style',{}).get('allow_no_words_reaction'):
-        prompt=build_sticker_prompt({**cfg,'max_prompt_chars':cfg.get('max_prompt_chars',12800)-len(profile_instruction)},context,target)
+        prompt=build_sticker_prompt({**cfg,'max_prompt_chars':remaining_limit(cfg, len(profile_instruction))},context,target)
     else:
-        prompt = build_prompt({**cfg, 'max_prompt_chars': cfg.get('max_prompt_chars', 12800) - len(suffix)-len(profile_instruction)}, context, trigger, target) + suffix
+        prompt = build_prompt({**cfg, 'max_prompt_chars': remaining_limit(cfg, len(suffix) + len(profile_instruction))}, context, trigger, target) + suffix
     prompt=profile_instruction+prompt
     target['_prompt_media_ids']=prompt_media_ids(prompt) or []
     result = await generate_reply_json(cfg, prompt, target, images, context)
@@ -1791,7 +1792,7 @@ async def generate(cfg, context, trigger, target, images=None):
             repair_hint+='按当前人物卡的身份和性别表达自然接话；人物卡要求保密时自然避开，不解释内部设定或规则，不用“叫我名字就好”的客服收尾。'
         if issue in {'out_of_character_identity','unsupported_real_identity'}:
             repair_hint+='保持'+cfg.get('bot_name','yonagi')+'角色，遵循当前人物卡的身份表达；不改成声称是真人或编造身体与现实经历。'
-        repair_prompt = build_prompt({**cfg, 'max_prompt_chars': cfg.get('max_prompt_chars', 12800) - len(repair_hint)}, context, trigger, target) + repair_hint
+        repair_prompt = build_prompt({**cfg, 'max_prompt_chars': remaining_limit(cfg, len(repair_hint))}, context, trigger, target) + repair_hint
         target['_prompt_media_ids']=prompt_media_ids(repair_prompt) or []
         try:
             repaired = await generate_reply_json(cfg, repair_prompt, target, images)
@@ -1903,9 +1904,9 @@ async def generate_json(cfg, prompt, schema, images=None):
     if cfg.get('_strict_output_schema'):cached_schema=Path(schema)
     log.info('Prompt cache schema; fingerprint=%s; local_dynamic_validation=true',cached_schema.stem[:16])
     output = RUNTIME / ('result-' + uuid.uuid4().hex + '.json')
-    if len(prompt)+cfg.get('_task_instruction_chars',0) > cfg.get('max_prompt_chars', 12800):
+    if len(prompt)+cfg.get('_task_instruction_chars',0) > input_budget(cfg):
         raise ValueError('Model input exceeds character budget')
-    log.info('Model input chars=%s; cap=%s', len(prompt), cfg.get('max_prompt_chars', 12800))
+    log.info('Model input chars=%s; cap=%s', len(prompt), configured_limit(cfg) or 'unlimited')
     command = [resolve_codex_executable(cfg.get('codex_exe','auto'),ROOT), 'exec', '--ignore-user-config',
         '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
         '-c', 'features.shell_tool=false', '-c', 'features.unified_exec=false',

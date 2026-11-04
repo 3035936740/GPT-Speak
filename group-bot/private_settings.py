@@ -48,7 +48,7 @@ FIELDS = {
     'memory_enabled': field('memory', '参考近期私聊记录', '关闭后仅提供最新一条消息；本地聊天记录仍可查看。', '_private_memory_enabled', default=True),
     'context_messages': field('memory', '传入模型的近期消息条数', '只读取当前好友，最多100条。', 'context_messages', 'integer', low=1, high=100),
     'context_message_chars': field('memory', '历史单条消息字符上限', '裁减历史长消息；最新消息保留完整文字。', 'context_message_chars', 'integer', low=100, high=2000),
-    'max_prompt_chars': field('memory', '模型输入字符上限', '空间不足时依次裁减历史、印象和知识；不能容纳人设时停止本轮并记日志。', 'max_prompt_chars', 'integer', low=1000, high=100000),
+    'max_prompt_chars': field('memory', '模型输入字符上限', '原默认19200，范围0～2147483647。0表示不设本地字符上限，仍受模型上下文容量及历史选取规则限制。', 'max_prompt_chars', 'integer', low=0, high=2147483647),
     'max_replies_per_hour': field('limits', '全部私信每小时回复上限', '所有好友共享，包含手动发送；仅可在私聊默认中设置。', 'private_max_replies_per_hour', 'integer', low=1, high=10000, shared=True),
     'max_model_calls_per_day': field('limits', '全部私信每日模型调用上限', '所有好友共享；仅可在私聊默认中设置。', 'private_max_model_calls_per_day', 'integer', low=1, high=10000, shared=True),
     'console_max_records': field('debug', '每类显示记录上限（条）', '聊天和执行日志分别显示；本地仍最多保留100条聊天和1000条其他事件。', 'console_max_records', 'integer', low=1, high=1000),

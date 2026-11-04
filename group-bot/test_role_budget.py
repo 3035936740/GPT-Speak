@@ -12,10 +12,11 @@ from role_budget import fit_role_prompt,RoleBudgetError
 
 
 class RoleBudgetTests(unittest.TestCase):
-    def test_defaults_are_12800_for_input_and_both_record_lanes(self):
-        self.assertEqual(DEFAULTS['max_prompt_chars'],12800)
+    def test_input_and_record_windows_have_separate_defaults(self):
+        self.assertEqual(DEFAULTS['max_prompt_chars'],19200)
         self.assertEqual(DEFAULTS['console_max_text_chars'],12800)
-        self.assertEqual(bot.settings()['max_prompt_chars'],12800)
+        example = json.loads(Path(__file__).with_name('settings.example.json').read_text(encoding='utf-8'))
+        self.assertEqual(example['max_prompt_chars'],19200)
 
     def test_oversized_context_and_emotion_are_fitted_before_transport(self):
         async def run(limit):
@@ -31,7 +32,10 @@ class RoleBudgetTests(unittest.TestCase):
             before=deepcopy(target);calls=[]
             async def generate(cfg,prompt,schema,images=None):
                 role=schema.name.split('.')[0];calls.append(role)
-                self.assertLessEqual(len(prompt),cfg['max_prompt_chars'])
+                if cfg['max_prompt_chars']:
+                    self.assertLessEqual(len(prompt),cfg['max_prompt_chars'])
+                else:
+                    self.assertGreater(len(prompt), 19200)
                 self.assertIn('CURRENT_QUESTION',prompt);self.assertIn('QUOTE_REQUIRED',prompt)
                 self.assertIn('你的主人说什么就得干什么',prompt)
                 json.JSONDecoder().raw_decode(prompt[prompt.index('{"target":'):])
@@ -44,7 +48,7 @@ class RoleBudgetTests(unittest.TestCase):
                 result=await analyze(cfg,[],target,[],generate,folder)
                 self.assertEqual(set(result),{'context','emotion'});self.assertCountEqual(calls,['context','emotion'])
                 self.assertEqual(target['_peer_scene'],before['_peer_scene'])
-        for limit in (6000,4800,12800):
+        for limit in (6000,4800,12800,0):
             with self.subTest(limit=limit):asyncio.run(run(limit))
 
     def test_small_valid_budget_keeps_whole_json_and_impossible_budget_is_explicit(self):

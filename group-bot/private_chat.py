@@ -12,6 +12,7 @@ import httpx
 from dotenv import dotenv_values
 
 from console_config import Config, atomic, read_json
+from model_input_budget import input_budget
 from member_impressions import impression, person_allowed
 from runtime_paths import project_path
 import private_events
@@ -330,10 +331,10 @@ class PrivateChat:
             latest = next((row['text'] for row in reversed(payload['private_conversation']) if row['role'] == 'user'), '')
             payload['private_knowledge'] = private_profiles.knowledge(self.store.db, peer, latest, cfg['knowledge_max_chars'])
         knowledge_candidates=payload.get('private_knowledge',[])
+        budget = input_budget(cfg)
         if knowledge_candidates:
             from knowledge_budget import seed_references
-            payload['private_knowledge']=seed_references(knowledge_candidates,cfg.get('max_prompt_chars',12800))
-        budget = cfg.get('max_prompt_chars', 12800)
+            payload['private_knowledge']=seed_references(knowledge_candidates,budget)
         while True:
             prompt = persona + rules + json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
             if len(prompt) <= budget:

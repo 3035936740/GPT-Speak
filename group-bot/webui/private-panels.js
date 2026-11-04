@@ -51,7 +51,7 @@ function status(data,peer){
     ['最近24小时模型调用',String(data.runtime.model_calls_today||0)],['最近1小时自动回复',String(data.runtime.replies_last_hour||0)],
     ['待发送手动消息',String(data.runtime.queued_manual||0)],['私聊知识条数',String(data.runtime.knowledge_count||0)],
     ['文本 / 识图超时',String(data.runtime.model_timeout_seconds||0)+' / '+String(data.runtime.vision_timeout_seconds||0)+' 秒'],
-    ['模型输入预算',String(data.runtime.max_prompt_chars||0)+' 字符'],['模型传输',data.runtime.transport||'默认'],
+    ['模型输入预算',data.runtime.max_prompt_chars===0?'不限':data.runtime.max_prompt_chars+' 字符'],['模型传输',data.runtime.transport||'默认'],
     ['Fast模式',data.runtime.fast_mode?'开启':'关闭']);
   const strip=n('div',undefined,'vitals');for(const [label,value,note] of [['QQ连接',data.status.online?'在线':'未连接','私信服务独立连接状态'],['当前好友',data.session?.paused?'会话已终止':data.contact_settings.reply_enabled?'自动回复开启':'仅接收消息',data.access_reason||'按权限与冷却处理'],['最近24小时模型调用',String(data.runtime.model_calls_today||0),data.runtime.model||''],['进行中的会话',String(data.runtime.active_conversations||0),'全部私聊共享发送额度']]){const box=n('div',undefined,'vital');box.append(n('div',label,'vital-label'),n('div',value,'vital-value'),n('div',note,'vital-note'));strip.append(box);}area.append(strip);if(helpers.usageCard)area.append(helpers.usageCard(0));
   const grid=n('div',undefined,'status-sections'),sections=[['连接与运行',['后台进程','最后轮询','好友列表更新','模型传输','Fast模式','回复模型','当前会话']],['记录与记忆',['私聊消息','私聊知识条数','群友印象','模型输入预算','私聊识图','名单状态']],['私聊回复控制',['当前好友自动回复','回复长度上限','同一好友冷却','共享私聊额度','文本 / 识图超时','最近1小时自动回复','待发送手动消息']]];

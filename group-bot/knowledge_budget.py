@@ -13,17 +13,22 @@ def seed_references(rows,limit):
 
 def fit_references(rows,budget):
     result=[]
+    used=2  # JSON array brackets.
     for original in rows:
         row=dict(original)
         content=row.get('content','')
         if not isinstance(content,str) or not content:continue
-        if len(encoded(result+[row]))<=budget:
-            result.append(row);continue
+        room=budget-used-bool(result)  # A comma precedes every row after the first.
+        size=len(encoded(row))
+        if size<=room:
+            used+=size+bool(result)
+            result.append(row)
+            continue
         row['truncated']=True
         lo=0;hi=len(content)
         while lo<hi:
             mid=(lo+hi+1)//2;row['content']=content[:mid]
-            if len(encoded(result+[row]))<=budget:lo=mid
+            if len(encoded(row))<=room:lo=mid
             else:hi=mid-1
         if lo>=min(80,len(content)):
             row['content']=content[:lo];result.append(row)

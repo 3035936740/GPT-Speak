@@ -52,7 +52,7 @@
   "image_timeout_seconds": 150,
   "mcp_env_file": "../qq-mcp/.env",
   "codex_exe": "auto",
-  "max_prompt_chars": 12800,
+  "max_prompt_chars": 19200,
   "context_message_chars": 300,
   "max_images_per_call": 2,
   "model_max_files": 10,
