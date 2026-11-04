@@ -32,4 +32,5 @@ def allows(folder,target):
     control=state(folder)
     if control.get('paused'):return False
     cutoff=float(control.get('created',0))
-    return not cutoff or max(float(target.get('_time',0)),float(target.get('_manual_task_started',0)))>cutoff
+    return not cutoff or max(float(target.get('_time',0)),float(target.get('_manual_task_started',0)),
+        float(target.get('_manual_reply_started',0)))>cutoff

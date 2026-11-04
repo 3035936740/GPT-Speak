@@ -278,10 +278,23 @@ class Console:
                 from knowledge_base import checked
                 store,knowledge_group=checked(self.root,group)
                 mode=value.get('mode','save')
-                if mode=='save':result=store.save(knowledge_group,value.get('values'),value.get('id',''),value.get('expected'))
+                if mode=='save':
+                    result=store.save(knowledge_group,value.get('values'),value.get('id',''),value.get('expected'))
+                    from knowledge_service import index
+                    index(self.root,group,automatic=True)
                 elif mode=='delete':store.delete(knowledge_group,value.get('id',''),value.get('expected'));result={}
                 else:raise ValueError('未知知识库操作')
                 return {'ok':True,'selected':group,'message':'知识库已保存，下次回复生效','result':result}
+            elif action=='knowledge_vector':
+                if value.get('mode')=='key':
+                    from knowledge_embedding import save_key
+                    save_key(self.root,value.get('key'))
+                    return {'ok':True,'message':'Embedding API Key 已更新'}
+                if value.get('mode')=='build':
+                    from knowledge_service import index
+                    index(self.root,group,str(value.get('peer','')))
+                    return {'ok':True,'message':'已提交向量索引任务'}
+                raise ValueError('未知向量索引操作')
             elif action=='database':
                 return {**database_mutate(self.root,group,str(value.get('table','')),str(value.get('mode','')),
                     value.get('values'),value.get('row_id'),value.get('expected')),'selected':group}
@@ -314,9 +327,9 @@ class Console:
             elif action=='private_send':
                 from private_view import enqueue
                 return enqueue(self.root,str(value.get('peer','')),value.get('text'),value.get('request_id'),value.get('images'),value.get('reply_id'))
-            elif action=='task_force':
+            elif action in {'task_force','ai_reply'}:
                 from manual_task_requests import enqueue
-                return enqueue(self.root,group,str(value.get('message_id','')))
+                return enqueue(self.root,group,str(value.get('message_id','')),reply=action=='ai_reply')
             elif action=='private_refresh':
                 from private_directory import refresh
                 return refresh(self.root)
@@ -343,7 +356,12 @@ class Console:
                 return set_instruction(self.root,str(value.get('peer','')),value.get('text'))
             elif action=='private_profile':
                 from private_profiles import save
-                return save(self.root,str(value.get('peer','')),str(value.get('section','')),value.get('values'))
+                peer=str(value.get('peer',''));section=str(value.get('section',''))
+                result=save(self.root,peer,section,value.get('values'))
+                if section=='knowledge' and not value['values'].get('delete'):
+                    from knowledge_service import index
+                    index(self.root,group,peer,automatic=True)
+                return result
             elif action=='private_setting':
                 from private_settings import save
                 return save(self.root,str(value.get('peer','')),value.get('scope'),value.get('key'),value.get('value'),value.get('inherit',False))
@@ -379,6 +397,7 @@ class Console:
             groups=self.groups();self.group=original if original in groups else groups[0]
     def groups(self):return self.config.load()['chat_group_whitelist']
     def refresh(self):
+        from storage_io import read_text
         cfg=self.config.load()
         if self.group not in self.groups():self.group=self.groups()[0]
         for group in self.groups():
@@ -386,17 +405,22 @@ class Console:
             self.names[group]=meta.get('name',str(group));hidden=deleted_ids(folder)
             rows=[];seen=set()
             path=folder/'debug-events.jsonl'
-            if path.exists():
-                # The writer bounds this file by text characters and records.
-                for line in path.read_text(encoding='utf-8').splitlines():
-                    try:row=json.loads(line)
-                    except ValueError:continue
-                    if str(row.get('message_id','')) in hidden:continue
-                    key=(row.get('kind'),str(row.get('message_id','')))
-                    if row.get('kind') in {'sent','received'} and key[1]:
-                        if key in seen:continue
-                        seen.add(key)
-                    rows.append(row)
+            try:
+                lines=read_text(path).splitlines()
+            except FileNotFoundError:
+                lines=[]
+            except PermissionError:
+                # Keep this group's last view and retry on the next refresh.
+                continue
+            for line in lines:
+                try:row=json.loads(line)
+                except ValueError:continue
+                if str(row.get('message_id','')) in hidden:continue
+                key=(row.get('kind'),str(row.get('message_id','')))
+                if row.get('kind') in {'sent','received'} and key[1]:
+                    if key in seen:continue
+                    seen.add(key)
+                rows.append(row)
             rows=recover_chat(rows,folder,Config(self.root,group).load(),hidden,group)
             from member_policy import enrich_records
             rows=enrich_records(rows,folder)
@@ -473,7 +497,8 @@ class Console:
             from knowledge_base import checked
             store,group=checked(self.root,self.group)
             if rest.strip():
-                rows=store.retrieve(group,rest.strip(),self.config.load().get('knowledge_max_chars',1800))
+                from knowledge_service import preview
+                rows=preview(self.root,group,'',rest.strip())['rows']
                 self.notice='知识库检索 · 当前群及共享\n\n'+('\n\n'.join('【'+row['title']+'】 '+(row['source'] or '手动录入')+'\n'+row['content'] for row in rows) or '没有匹配的知识')
             else:
                 data=store.view(group)
@@ -569,7 +594,7 @@ class Console:
             self.notice=self.config.prompt_path(field).read_text(encoding='utf-8') if field in {'persona','reply_protocol'} else str(self.config.load().get(field));return
         if action=='set':
             pair=value.split(maxsplit=1)
-            if len(pair)==1 and pair[0] in {'webui_key','key','member_prompt_human','member_prompt_owner','member_prompt_AI','member_prompt_bot'}:pair.append('')
+            if len(pair)==1 and pair[0] in {'webui_key','key','sticker_admission_rule','member_prompt_human','member_prompt_owner','member_prompt_AI','member_prompt_bot'}:pair.append('')
             if len(pair)!=2:raise ValueError('/config set 字段 值')
             key,value=pair
         elif action=='edit':

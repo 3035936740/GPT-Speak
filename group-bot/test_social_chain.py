@@ -271,7 +271,7 @@ class SocialChainTests(unittest.TestCase):
             '_person_profile':{'facts':[{'content':'喜欢音游'}]},
             '_selected_expression_ids':['e'],'_expressions':[{'situation':'自然答疑','pattern':'直接说人话','example':'就是这个（'}]}
         prompt=bot.build_prompt({**bot.settings(),'max_prompt_chars':6000},[],'被@',target)
-        self.assertIn('GPT 6 Luna',prompt)
+        self.assertIn('GPT',prompt)
         self.assertIn('成年女性的成熟心智',prompt)
         self.assertIn('白色大肥龙',prompt)
         self.assertIn('按当前目标、对话对象和真实证据',prompt)

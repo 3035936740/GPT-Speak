@@ -32,12 +32,27 @@ def observe(root,peer,identity,text,stamp):
     finally:memory.close()
 
 
-def recall(root,peer,text):
+def recall(root,peer,text,cfg=None):
+    from contextlib import closing
+
     path=folder(root,peer,False)/'group-memory.sqlite3'
     if not path.exists():return []
-    memory=GroupMemory(path)
-    try:return memory.retrieve({'_uid':str(peer),'text':text},[],limit=1200)
-    finally:memory.close()
+    target={'_uid':str(peer),'text':text}
+    cfg=cfg or {}
+    mode=cfg.get('private_memory_retrieval_mode','keyword')
+    sample=None
+    with closing(GroupMemory(path)) as memory:
+        keyword=memory.retrieve(target,[],limit=1200)
+        if mode in {'vector','hybrid'} and cfg.get('knowledge_embedding_provider','ollama')=='ollama':
+            from chat_retrieval import snapshot
+            sample=snapshot(memory,target,include_chat=False)
+    if not sample:return keyword
+
+    from chat_retrieval import retrieve
+    from knowledge_embedding import configured
+    from knowledge_ranking import configured_reranker
+    return retrieve(sample,path.with_name('chat-vectors.sqlite3'),mode=mode,
+        embedding=configured(cfg,root),reranker=configured_reranker(cfg,root,local_only=True)) or keyword
 
 
 def prepare_learning(service,peer,cfg):

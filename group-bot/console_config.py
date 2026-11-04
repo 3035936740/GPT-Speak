@@ -12,11 +12,12 @@ import ctypes
 from configure_launch import validate as validate_model
 from storage_io import atomic_write_text, read_text
 from model_input_budget import DEFAULT_INPUT_CHARS, MAX_INPUT_CHARS
+from knowledge_embedding import DEFAULTS as EMBEDDING_DEFAULTS
 
 DEFAULT_WINDOW_CHARS = 19200
 MAX_WINDOW_CHARS = 2147483647
 
-DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
+DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['GPT','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
     'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
     'model_avatar_query_enabled':True,'model_profile_query_enabled':True,'profile_query_cache_seconds':300,
@@ -27,9 +28,11 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'owner_commands_enabled':False,'owner_command_prefix':'/','owner_command_aliases':{},
     'private_access_mode':'all','private_user_whitelist':[],'private_user_blacklist':[],
     'private_reply_enabled':False,'private_use_group_impressions':True,'private_vision_enabled':True,
+    'private_memory_retrieval_mode':'keyword',
     'private_max_replies_per_hour':60,'private_max_model_calls_per_day':200,
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
-    'knowledge_enabled':True,'knowledge_max_chars':0,
+    'memory_retrieval_mode':'keyword',
+    'knowledge_enabled':True,'knowledge_retrieval_mode':'keyword','knowledge_chat_retrieval_enabled':True,'knowledge_max_chars':0,
     'high_eq_enabled':True,
     'name_match_sensitivity':.5,'at_context_sensitivity':.95,
     'pinyin_abbreviation_guess_enabled':True,
@@ -55,6 +58,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'social_planner_enabled':True, 'semantic_selection_enabled':True,
     'adaptive_participation_enabled':True, 'style_adaptation_strength':.35,
     'conversation_state_ttl_seconds':600,'semantic_candidate_chars':900,
+    'sticker_admission_rule':'','sticker_ignore_market_faces':False,
     'sticker_repeat_review_min_count':5,'sticker_repeat_review_step':3,
     'sticker_upload_retry_seconds':300,'sticker_recent_suppression_strength':.5,'peer_reply_enabled':True,
     'reply_failure_log_only':True,
@@ -73,7 +77,8 @@ from model_attachments import DEFAULTS as ATTACHMENT_DEFAULTS
 DEFAULTS.update(ATTACHMENT_DEFAULTS)
 from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
 DEFAULTS.update(LARGE_TASK_DEFAULTS)
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+DEFAULTS.update(EMBEDDING_DEFAULTS)
+GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','sticker_admission_rule','sticker_ignore_market_faces','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | set(EMBEDDING_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 
 
 def pid_alive(pid):
@@ -187,8 +192,10 @@ class Config:
                 if isinstance(current[key],int) and not isinstance(value,int) and key not in {'generated_image_ttl_hours','generated_image_cleanup_interval_hours','generated_image_cleanup_interval_minutes'} and not any(word in key for word in ('probability','confidence','strength')):raise ValueError(key+' 必须为整数')
                 if ('probability' in key or 'confidence' in key) and not 0<=value<=1:raise ValueError(key+' 范围为 0~1')
                 if value<0:raise ValueError(key+' 不能为负数')
-                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key in {'knowledge_max_chars','max_prompt_chars','console_max_text_chars','large_task_max_concurrent','large_task_max_steps','large_task_max_prompt_chars'} and value==0):raise ValueError(key+' 必须大于0')
+                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key in {'knowledge_max_chars','max_prompt_chars','console_max_text_chars','large_task_max_concurrent','large_task_max_steps','large_task_max_prompt_chars','large_task_script_max_chars'} and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>(20000 if key=='large_task_dockerfile' else 1000)):raise ValueError(key+' 文本过长或类型无效')
+        from knowledge_embedding import validate as validate_embedding
+        validate_embedding(cfg)
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
         for key in ('name_match_sensitivity','at_context_sensitivity'):
             if not 0<=cfg[key]<=1:raise ValueError(key+' 范围0～1，表示匹配敏感度，不是随机回复概率')
@@ -203,7 +210,8 @@ class Config:
         if not isinstance(cfg['webui_key'],str) or len(cfg['webui_key'])>256 or any(ord(c)<33 or ord(c)>126 for c in cfg['webui_key']):raise ValueError('WebUI key须为空或最多256个可打印ASCII字符，不含空格')
         for key in ('member_model_block_rules','member_prompt_owner','member_prompt_human','member_prompt_AI','member_prompt_bot'):
             if not isinstance(cfg[key],str) or len(cfg[key])>1000:raise ValueError(key+' 最多1000字')
-        for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds','large_task_timeout_seconds'):
+        for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds','large_task_timeout_seconds',
+                    'large_task_prepare_notice_timeout_seconds','large_task_step_timeout_seconds'):
             if not 1<=cfg[key]<=7200:raise ValueError(key+' 范围1～7200秒')
         if not 100<=cfg['console_max_records']<=100000:raise ValueError('控制台记录条数范围100~100000')
         if type(cfg['console_max_text_chars']) is not int or not 0<=cfg['console_max_text_chars']<=MAX_WINDOW_CHARS:
@@ -264,7 +272,11 @@ class Config:
         if not 0<=cfg['large_task_retention_hours']<=87600:raise ValueError('Task retention hours: 0~87600')
         if not 0<=cfg['large_task_max_steps']<=2147483647:raise ValueError('任务生成调用上限范围0～2147483647，0表示不限次数，仍受总超时和模型额度限制')
         if cfg['large_task_max_prompt_chars']!=0 and not 500<=cfg['large_task_max_prompt_chars']<=2147483647:raise ValueError('任务独立输入上限须为0或500～2147483647字，0不设本地字符上限')
+        if type(cfg['large_task_background_chars']) is not int or not 0<=cfg['large_task_background_chars']<=2147483647:
+            raise ValueError('任务群聊背景上限须为0～2147483647字，0表示不附带群聊背景')
         if not 0<=cfg['large_task_stall_limit']<=2147483647:raise ValueError('任务空转轮数范围0～2147483647，0关闭空转保护')
+        if type(cfg['large_task_script_max_chars']) is not int or not 0<=cfg['large_task_script_max_chars']<=2147483647:
+            raise ValueError('任务单步脚本字符上限范围0～2147483647，0表示不限')
         from model_routing import validate_decision_models
         validate_decision_models(catalog,cfg)
         return cfg

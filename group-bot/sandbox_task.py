@@ -9,9 +9,10 @@ from task_sandbox import Sandbox,package,preview,safe_name
 from task_history import update
 from task_file_metrics import describe
 
-
 async def generate(cfg,target,pages,model,runtime,context):
     from task_prompt import budget
+    from large_tasks import DEFAULTS
+    script_limit=cfg.get('large_task_script_max_chars',DEFAULTS['large_task_script_max_chars'])
     cfg={**cfg,'max_prompt_chars':budget(cfg)}
     identity=target['_task_trace_id'];folder=Path(runtime)/'generated-files'/identity
     folder.mkdir(parents=True,exist_ok=True)
@@ -48,7 +49,7 @@ async def generate(cfg,target,pages,model,runtime,context):
         if target.get('_resume_files'):
             await box.restore(target['_resume_files'])
         update(runtime,identity,input_files=[{**describe(name,raw),'status':'staged'} for name,raw in inputs],stage='附件已就绪，等待模型规划')
-        from task_prompt import trusted,render,chat_window
+        from task_prompt import background_limit,chat_window,clip_background,render,trusted
         from task_execution_state import Progress
         progress=Progress(state.get('task_state'),cfg.get('large_task_stall_limit',6))
         if progress.state.get('last_action',{}).get('code_path'):
@@ -61,29 +62,37 @@ async def generate(cfg,target,pages,model,runtime,context):
             '无网络、不可安装依赖、不能访问宿主文件、QQ接口或密钥，不申请提权。默认Python标准库；根据实际可用库工作。'
             '处理二进制要用代码解析，不猜测文件内容。禁止创建填充、随机、无意义或超限文件。')
         rules+='先形成简短计划，持续更新state中的plan、completed、phase和next_step。已有解析结果直接复用；stdout只打印简短结论，不反复打印全部音符。last_action是前一步实际执行的代码和结果，不要遗忘后重做同一分析。交付目录没有实际变化时不把分析文件改名当成任务进展。'
-        rules+='对MIDI编排、格式转换等明确任务，优先action=run_and_finish：code为一个完整脚本，在同一步读取输入、完成修改、写入output并重新读取校验成品；校验失败必须抛错或非零退出。程序仅在脚本成功且交付目录存在非空文件时直接打包，不再调用模型确认done。不要只解析或打印音符，交付目标文件。确需观察再决策时才分步python/run，完成后done。run_and_finish的代码语言与当前执行环境一致。'
+        rules+='适合短脚本的MIDI编排、格式转换等任务可用action=run_and_finish，读取、修改、写入output并校验。较大的HTML、代码或多文件任务可分步：先写入可用骨架，再用独立脚本追加或修改现有文件，最后校验成品。每步保持引号、括号和缩进完整。触及长度上限或脚本解析失败时，将原脚本拆成更小的可运行步骤，不重发整段。最终脚本校验失败必须抛错或非零退出；程序仅在脚本成功且output存在非空文件时直接打包。'
+        if script_limit:
+            rules+=f'每步code最多{script_limit}字符，超出时拆分为多个完整脚本。'
         if cfg.get('large_task_sandbox_runtime')=='shell':rules=rules.replace('Python3','基础Shell').replace('action=python时code为要执行的Python代码','action=run时code为/bin/sh脚本').replace('默认Python标准库；根据实际可用库工作','不假设存在Python或其他语言；先检查实际可用命令')
         work=box.work
         if cfg.get('large_task_executor')=='host':rules=rules.replace('隔离的Python3容器','已由管理员确认风险的本机Python工作目录（无容器隔离）').replace('无网络、不可安装依赖、不能访问宿主文件、QQ接口或密钥，不申请提权。','仅操作本任务工作目录，不读取密钥、不联网、不修改本机配置、不运行其他程序或申请提权。')
         rules=rules.replace('/workspace/input',work+'/input').replace('/workspace/output',work+'/output')
         instructions=trusted(cfg,runtime,rules)
+        old=state.get('base')
+        conversation=(clip_background(reversed(old.get('conversation',[])),background_limit(cfg))
+            if old else chat_window(cfg,target,context))
         base={'request':target.get('_file_task_request') or target.get('text',''),
-            'conversation':chat_window(cfg,target,context),'person_references':target.get('_person_context',[]),
+            'conversation':conversation,'person_references':target.get('_person_context',[]),
             'sandbox_files':[{'path':work+'/input/'+str(i)+'-'+n.rsplit('/',1)[-1],'bytes':len(b)} for i,(n,b) in enumerate(inputs,1)]}
-        if state.get('base'):
-            old=state['base'];base.update(conversation=old.get('conversation',[]),person_references=old.get('person_references',[]))
+        if old:
+            base['person_references']=old.get('person_references',[])
             base['request']=old.get('request',base['request'])
         if target.get('_task_research') or state.get('base',{}).get('web_references'):
             base['web_references'] = target.get('_task_research') or state['base']['web_references']
         if target.get('_resume_files'):
             base['sandbox_files'].extend({'path':work+'/'+name,'bytes':len(raw),'restored':True} for name,raw in target['_resume_files'])
-        schema={'type':'object','properties':{'action':{'type':'string','enum':['run','python','run_and_finish','done']},'code':{'type':'string','maxLength':20000},
+        schema={'type':'object','properties':{'action':{'type':'string','enum':['run','python','run_and_finish','done']},'code':{'type':'string'},
             'summary':{'type':'string','maxLength':200},'state':{'type':'object','properties':{
                 'plan':{'type':'array','maxItems':8,'items':{'type':'string','maxLength':120}},
                 'completed':{'type':'array','maxItems':8,'items':{'type':'string','maxLength':120}},
                 'phase':{'type':'string','maxLength':100},'next_step':{'type':'string','maxLength':200}},'required':['plan','completed','phase','next_step'],'additionalProperties':False}},'required':['action','code','summary','state'],'additionalProperties':False}
+        if script_limit:schema['properties']['code']['maxLength']=script_limit
         path=folder/'tool.schema.json';path.write_text(json.dumps(schema),encoding='utf-8')
         deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600);observations=state.get('observations',[])[-2:]
+        timeout_key='large_task_step_timeout_seconds'
+        step_timeout=cfg.get(timeout_key,DEFAULTS[timeout_key])
         from console_config import atomic
         def checkpoint():atomic(folder/'resume.json',{'base':base,'observations':observations[-2:],'task_state':progress.state})
         checkpoint()
@@ -94,26 +103,40 @@ async def generate(cfg,target,pages,model,runtime,context):
             if step and callable(reserve) and not reserve():raise ValueError('Task call budget exhausted')
             left=deadline-time.monotonic()
             if left<=0:raise TimeoutError('Task sandbox timeout')
-            update(runtime,identity,status='generating',step=step+1,stage='模型规划' if not observations else '检查执行结果')
             prompt=render(cfg,instructions,{**base,'tool_observations':observations[-2:],'task_state':progress.state},[])
+            left=deadline-time.monotonic()
+            if left<=0:raise TimeoutError('Task sandbox timeout')
+            call_timeout=min(left,step_timeout)
+            update(runtime,identity,status='generating',step=step+1,
+                stage=f'第 {step+1} 步 · 等待模型返回（限时 {call_timeout:.0f} 秒）')
             call={'step':step+1}
             model_calls.append(call)
             def capture_usage(usage):
                 if usage is not None:call['usage']=usage
                 update(runtime,identity,model_calls=model_calls)
-            result=await asyncio.wait_for(model({**cfg,'model':cfg.get('large_task_model','gpt-6.1-sol'),
-                'reasoning_effort':cfg.get('large_task_reasoning_effort','high'),'fast_mode':cfg.get('large_task_fast_mode',False),
-                '_usage_category':'task','_web_search_mode':'disabled','_developer_instructions':instructions,
-                '_task_identity':identity,'_task_usage_sink':capture_usage,
-                '_request_timeout_seconds':left,'model_timeout_seconds':left},prompt,path),left)
+            try:
+                result=await asyncio.wait_for(model({**cfg,'model':cfg.get('large_task_model','gpt-6.1-sol'),
+                    'reasoning_effort':cfg.get('large_task_reasoning_effort','high'),'fast_mode':cfg.get('large_task_fast_mode',False),
+                    '_usage_category':'task','_web_search_mode':'disabled','_developer_instructions':instructions,
+                    '_task_identity':identity,'_task_usage_sink':capture_usage,
+                    '_request_timeout_seconds':call_timeout,'model_timeout_seconds':call_timeout},prompt,path),call_timeout)
+            except (asyncio.TimeoutError,TimeoutError) as error:
+                raise TimeoutError(f'任务第 {step+1} 步等待模型返回超时（{call_timeout:.0f} 秒）') from error
             call['action']=result.get('action');update(runtime,identity,model_calls=model_calls)
             if result.get('action')=='done':break
             if result.get('action') not in {'run','python','run_and_finish'}:raise ValueError('Invalid task action')
-            update(runtime,identity,stage='沙箱执行Python')
-            execute=box.shell if cfg.get('large_task_sandbox_runtime')=='shell' else box.python
+            code=result.get('code','')
             action_path='.task-actions/last.'+('sh' if cfg.get('large_task_sandbox_runtime')=='shell' else 'py')
-            if hasattr(box,'restore'):await box.restore([(action_path,str(result.get('code','')).encode())])
-            status,out=await execute(result.get('code'),min(60,max(.1,deadline-time.monotonic())))
+            reached_limit=bool(script_limit and len(code)>script_limit)
+            if reached_limit:
+                status,out=1,'脚本超过单步字符上限。请分步编写并提交完整短脚本，本步未执行。'.encode()
+                action_path=''
+                result={**result,'code':''}
+            else:
+                update(runtime,identity,stage='正在执行脚本')
+                execute=box.shell if cfg.get('large_task_sandbox_runtime')=='shell' else box.python
+                if hasattr(box,'restore'):await box.restore([(action_path,code.encode())])
+                status,out=await execute(code,min(60,max(.1,deadline-time.monotonic())))
             text=out.decode('utf-8',errors='replace')
             clipped=len(text)>3000
             observations.append({'step':step+1,'exit_code':status,'output':text[:800]+'\n[输出已截断]\n'+text[-2200:] if clipped else text,
@@ -123,8 +146,9 @@ async def generate(cfg,target,pages,model,runtime,context):
             observations[-1]['files']=inventory
             finish=result.get('action')=='run_and_finish'
             complete=finish and status==0 and bool(inventory) and all(f.get('bytes',0)>0 for f in inventory)
-            if finish and not complete:observations[-1]['completion_issue']='未通过交付检查：需要脚本成功且output中存在非空成品。修正脚本并写出文件，不能只分析输入。'
-            stalled=progress.observe(result,status,text,inventory,work+'/'+action_path)
+            if finish and not complete and not reached_limit:
+                observations[-1]['completion_issue']='未通过交付检查：需要脚本成功且output中存在非空成品。脚本报错时先提交更小的完整脚本，再增量写入后续内容。'
+            stalled=progress.observe(result,status,text,inventory,work+'/'+action_path if action_path else '')
             checkpoint()
             update(runtime,identity,execution=observations,task_state={k:v for k,v in progress.state.items() if k!='last_action'},stage='纠正重复分析' if progress.state.get('correction') else '等待下一步')
             if complete:break

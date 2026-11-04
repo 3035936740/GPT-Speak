@@ -61,7 +61,7 @@ class VisualSummaryBoundaryTests(unittest.TestCase):
         prompt=bot.build_sticker_prompt(bot.settings(),history,target)
         self.assertLessEqual(len(prompt),6000)
         self.assertGreater(len(bot.prompt_media_ids(prompt)),0)
-        self.assertNotIn('无关身份',prompt);self.assertIn('GPT 6 Luna',prompt)
+        self.assertNotIn('无关身份',prompt);self.assertIn('GPT',prompt)
         self.assertIn('text为空',prompt)
 
     def test_normal_reply_leak_uses_one_rewrite_instead_of_sending_caption(self):

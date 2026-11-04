@@ -37,6 +37,8 @@ def serialized(method):
 
 
 def sticker_source_key(data):
+    if data.get('_market_message'):
+        return 'm' + hashlib.sha256(data['emoji_id'].encode()).hexdigest()[:16]
     file = str(data.get('file', ''))
     # Ordinary filenames can be reused for unrelated pictures. QQ hash names
     # are stable; otherwise bind identity to both filename and download source.
@@ -145,6 +147,7 @@ class EmojiLibrary:
         self.aliases = self._read(self.aliases_path)
         self.hashes = self._read(self.hashes_path)
         self.classifier = classifier
+        self.style_reviewer = None
         self.allow_candidate=lambda data:True
         self.usage_by_key = {}
         self.review_min_count=5;self.review_step=3;self.upload_retry_seconds=300
@@ -180,6 +183,12 @@ class EmojiLibrary:
     def enabled(self):
         return read_json(self.policy_root/'settings.json').get('stickers_enabled',True) is not False
 
+    def admission_rule(self):
+        return str(read_json(self.policy_root/'settings.json').get('sticker_admission_rule','')).strip()
+
+    def ignore_market_faces(self):
+        return read_json(self.policy_root/'settings.json').get('sticker_ignore_market_faces') is True
+
     def is_excluded(self,key='',digest=''):
         # Read afresh: other groups and an in-flight classifier must immediately
         # see an operator's exclusion. This file is never pruned with rejections.
@@ -196,15 +205,16 @@ class EmojiLibrary:
             digest=hashlib.sha256(asset_path(item,'path',self.root).read_bytes()).hexdigest()
         if kind!='market_face' and not re.fullmatch(r'[a-f0-9]{64}',digest):raise ValueError('缺少图片哈希，无法永久排除')
         if kind!='market_face':canonical='s'+digest[:16]
-        data=self._read(self.excluded_path)
-        ids=data.setdefault('ids',{});hashes=data.setdefault('hashes',{});entries=data.setdefault('items',{})
         keys={key,canonical}|{alias for alias,value in self.aliases.items() if value in {key,canonical}}
-        for identity in keys:ids[identity]=canonical
-        if digest:hashes[digest]=canonical
-        entries[canonical]={'id':canonical,'content_hash':digest,'kind':kind,
-            'title':str(label or item.get('label') or canonical)[:100],'time':time.time()}
-        self.excluded_path.parent.mkdir(parents=True,exist_ok=True)
-        self._write(self.excluded_path,data)
+        from image_archive import locked
+        with locked(self.excluded_path.with_suffix('.lock')):
+            data=self._read(self.excluded_path)
+            ids=data.setdefault('ids',{});hashes=data.setdefault('hashes',{});entries=data.setdefault('items',{})
+            for identity in keys:ids[identity]=canonical
+            if digest:hashes[digest]=canonical
+            entries[canonical]={'id':canonical,'content_hash':digest,'kind':kind,
+                'title':str(label or item.get('label') or canonical)[:100],'time':time.time()}
+            self._write(self.excluded_path,data)
         for identity in list(self.items):
             entry=self.items[identity]
             if identity not in keys and (not digest or entry.get('content_hash')!=digest):continue
@@ -216,6 +226,16 @@ class EmojiLibrary:
         for identity in keys:self.rejected.pop(identity,None)
         self.save()
         return canonical
+
+    def unexclude(self,key):
+        from image_archive import locked
+        with locked(self.excluded_path.with_suffix('.lock')):
+            data=self._read(self.excluded_path)
+            if data.get('items',{}).pop(key,None) is None:
+                raise ValueError('排除记录不存在，请刷新')
+            for field in ('ids','hashes'):
+                data[field]={identity:canonical for identity,canonical in data.get(field,{}).items() if canonical!=key}
+            self._write(self.excluded_path,data)
 
     def filter_delivery(self,part):
         """Drop only disallowed sticker media, retaining text and drawn images."""
@@ -366,7 +386,7 @@ class EmojiLibrary:
             if key not in self.queued and not self.queue.full():
                 self.queue.put_nowait((key,dict(data)));self.queued.add(key)
             return
-        if canonical not in self.items and canonical not in self.hashes.values() and key not in self.queued and not self.queue.full():
+        if canonical not in self.items and key not in self.queued and not self.queue.full():
             self.queue.put_nowait((key, dict(data)))
             self.queued.add(key)
         elif canonical in self.items:
@@ -374,7 +394,7 @@ class EmojiLibrary:
             self.save()
 
     @serialized
-    def observe(self, msg):
+    def observe(self, msg, *, style_checked=False):
         if not self.enabled():return
         segments = msg.get('message', [])
         if not isinstance(segments, list):
@@ -385,7 +405,8 @@ class EmojiLibrary:
                 face_id = str(data['id'])
                 self.faces.setdefault(face_id, str(data.get('name') or 'QQ表情' + face_id)[:30])
                 self._write(self.root / 'observed-faces.json', self.faces)
-            elif kind == 'mface' or (kind == 'image' and data.get('emoji_id') and data.get('emoji_package_id')):
+            elif kind == 'mface' or (kind == 'image' and data.get('emoji_id')):
+                if self.ignore_market_faces():continue
                 if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', str(data.get('emoji_id', ''))):
                     continue
                 packet = {key: data.get(key) for key in ('emoji_package_id', 'emoji_id', 'key', 'summary')}
@@ -394,6 +415,13 @@ class EmojiLibrary:
                 packet['summary'] = str(packet['summary'] or '[商城表情]')[:50]
                 key = 'm' + hashlib.sha256(packet['emoji_id'].encode()).hexdigest()[:16]
                 if self.is_excluded(key):continue
+                if key not in self.items and not style_checked and self.admission_rule():
+                    if data.get('url'):
+                        source={name:msg.get(name) for name in ('user_id','group_id')}
+                        if len(segments)==1:source['message_id']=msg.get('message_id')
+                        source['message']=[segment]
+                        self.offer_candidate({**data,'_market_message':source,'_source_user_id':str(msg.get('user_id',''))})
+                    continue
                 previous = self.items.get(key, {})
                 item = {**previous,'id': key, 'kind': 'market_face', 'label':previous.get('label',packet['summary']) if previous.get('metadata_edited') else packet['summary'], 'data': packet, 'time': time.time()}
                 item['package_name']=str(previous.get('package_name') if previous.get('metadata_edited') else data.get('emoji_package_name') or data.get('package_name') or previous.get('package_name') or '')[:80]
@@ -520,7 +548,8 @@ class EmojiLibrary:
                 except FileExistsError:continue
                 with os.fdopen(handle,'w',encoding='utf-8') as output:json.dump({'pid':os.getpid()},output)
                 self.offer_candidate({'file':digest+path.suffix,'summary':str(data.get('label',''))[:80],
-                    '_local_path':str(path),'_upload_manifest':str(manifest),'_upload_claim':str(claim),'_upload_origin':self._upload_origin})
+                    '_local_path':str(path),'_upload_manifest':str(manifest),'_upload_claim':str(claim),'_upload_origin':self._upload_origin,
+                    '_sticker_metadata':data.get('metadata',{})})
                 if key not in self.queued:claim.unlink(missing_ok=True)
             except (OSError,ValueError,KeyError):continue
 
@@ -529,8 +558,10 @@ class EmojiLibrary:
             key, data = await self.queue.get()
             reviewed=False
             local_upload=data.get('_upload_origin')==self._upload_origin
+            market=data.get('_market_message')
             try:
                 if not self.enabled():continue
+                if market and self.ignore_market_faces():continue
                 if self.is_excluded(key):reviewed=True;continue
                 if not local_upload and not self.allow_candidate(data):continue
                 if data.get('_local_path'):
@@ -563,7 +594,7 @@ class EmojiLibrary:
                     existing = self.hashes.get(digest)
                     usage=self.usage_by_key.get(key,{})
                     reconsider=existing in self.rejected and self.rejected[existing].get('asset_type') in {'photo','uncertain','other'} and usage.get('seen_count',0)>=max(self.review_min_count,self.rejected[existing].get('review_seen_count',0)+self.review_step)
-                    if existing and not reconsider:
+                    if not market and (existing in self.items or existing in self.rejected) and not reconsider:
                         self.aliases[key] = existing
                         if existing in self.items:
                             self.items[existing]['time'] = time.time()
@@ -571,16 +602,33 @@ class EmojiLibrary:
                         reviewed=True
                         continue
                 canonical = 's' + digest[:16]
-                # Temporary candidates are never exposed as sendable stickers.
-                # Neither a QQ sub_type nor an emotion label proves admission.
-                if self.classifier is None:
-                    continue
+                rule=self.admission_rule()
                 if not self.enabled():continue
                 if not local_upload and not self.allow_candidate(data):continue
-                with tempfile.TemporaryDirectory(prefix='check-', dir=self.root) as folder:
-                    candidate = Path(folder) / ('candidate.' + extension)
-                    candidate.write_bytes(raw)
-                    entry = await self.classifier(candidate, canonical)
+                if rule or self.classifier is not None:
+                    reviewer=self.style_reviewer if rule else self.classifier
+                    if reviewer is None:continue
+                    with tempfile.TemporaryDirectory(prefix='check-', dir=self.root) as folder:
+                        candidate = Path(folder) / ('candidate.' + extension)
+                        candidate.write_bytes(raw)
+                        verdict = await reviewer(candidate,rule or canonical)
+                if rule:
+                    if self.admission_rule()!=rule or not self.enabled() or (market and self.ignore_market_faces()):continue
+                    if not local_upload and not self.allow_candidate(data):continue
+                    if verdict is False:
+                        self.exclude(key,digest,str(data.get('summary','')),kind='market_face' if market else 'sticker')
+                        reviewed=True
+                        continue
+                    if verdict is not True:continue
+                if market:
+                    if not self.is_excluded(key,digest):
+                        self.observe(market,style_checked=True)
+                    continue
+                if not rule and self.classifier is not None:
+                    entry=verdict
+                else:
+                    entry={'id':canonical,'asset_type':'sticker','confidence':1,
+                        'reason':'符合收录规则' if rule else '按本地规则收录'}
                 if not self.enabled():continue
                 if self.is_excluded(key,digest):reviewed=True;continue
                 if not accepts(entry, canonical, usage, self.review_min_count):
@@ -605,7 +653,7 @@ class EmojiLibrary:
                     if self.rejected.get(canonical,{}).get('asset_type')=='manual':
                         reviewed=True;continue
                     existing = self.hashes.get(digest)
-                    if existing and existing not in self.rejected:
+                    if existing in self.items:
                         self.aliases[key] = existing
                         self.save()
                         continue
@@ -624,6 +672,8 @@ class EmojiLibrary:
                         'emotion': entry.get('emotion', '其他'), 'description': str(entry.get('description', ''))[:35],
                         'usage_evidence':dict(usage), 'repeat_review_min_count':self.review_min_count,
                         'use_when': str(entry.get('use_when', ''))[:30], 'classified_at': time.time()}
+                    if local_upload:
+                        self.items[canonical].update(data.get('_sticker_metadata',{}))
                     self.prune()
                     self.save()
                     reviewed=True

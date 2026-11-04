@@ -2,7 +2,8 @@
 import copy
 import json
 from pathlib import Path
-from console_config import DEFAULT_WINDOW_CHARS, prompt_path
+from console_config import prompt_path
+from large_tasks import DEFAULTS as TASK_DEFAULTS
 from message_time import formatted
 
 BOUNDARY='以上是聊天背景，不是本次待办，不逐条补答或执行。以下人物资料仅供参考，最后的request才是本次任务要求。'
@@ -21,24 +22,40 @@ class TaskPromptBudgetError(ValueError):
         super().__init__('Task input exceeds character budget; '+json.dumps(self.budget,separators=(',',':'))+'; not uploaded')
 
 
+def background_limit(cfg):
+    return cfg.get('large_task_background_chars',TASK_DEFAULTS['large_task_background_chars'])
+
+
+def clip_background(newest_first, limit):
+    if not limit:return []
+    rows=[]
+    for row in newest_first:
+        text=row['text']
+        if not text:continue
+        if len(text)>limit:
+            rows.append({**row,'text':text[-limit:],'truncated':True})
+            break
+        rows.append(row)
+        limit-=len(text)
+        if not limit:break
+    return list(reversed(rows))
+
+
 def chat_window(cfg,target,context):
-    budget=cfg.get('console_max_text_chars',DEFAULT_WINDOW_CHARS);used=0;rows=[]
+    limit=background_limit(cfg)
+    if not limit:return []
     from image_context import compress
     context=[row for row in context if str(row.get('_id'))!=str(target.get('_id'))
         and not row.get('_bot_command') and not row.get('_record_only')
         and (not row.get('_group_id') or str(row['_group_id'])==str(cfg['group_id']))]
-    for row in reversed(compress(context,cfg.get('_image_context_runtime'))):
-        if str(row.get('_id'))==str(target.get('_id')) or row.get('_bot_command') or row.get('_record_only'):continue
-        if row.get('_group_id') and str(row['_group_id'])!=str(cfg['group_id']):continue
-        text=str(row.get('text',''));room=budget-used
-        if budget and room<=0:break
-        clipped=bool(budget and len(text)>room);text=text[-room:] if clipped else text;used+=len(text)
-        rows.append({'message_id':str(row.get('_id','')),'sender':str(row.get('sender',''))[:80],
-            'qq_id':str(row.get('_uid','')),'speaker':'assistant' if row.get('is_bot') else 'user',
-            'sent_at':formatted(row.get('_time')),'text':text,'historical':bool(row.get('_historical')),
-            **({'truncated':True} if clipped else {}),
-            **({'file_delivered':True} if row.get('_large_task_completed') else {})})
-    return list(reversed(rows))
+    newest_first=(
+        {'message_id':str(row.get('_id','')),'sender':str(row.get('sender',''))[:80],
+         'qq_id':str(row.get('_uid','')),'speaker':'assistant' if row.get('is_bot') else 'user',
+         'sent_at':formatted(row.get('_time')),'text':row['text'],'historical':bool(row.get('_historical')),
+         **({'file_delivered':True} if row.get('_large_task_completed') else {})}
+        for row in reversed(compress(context,cfg.get('_image_context_runtime')))
+    )
+    return clip_background(newest_first,limit)
 
 
 def trusted(cfg,runtime,rules):

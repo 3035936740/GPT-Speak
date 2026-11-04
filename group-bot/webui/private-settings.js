@@ -245,13 +245,12 @@ export function renderPrivateSettings(data,peer){
   const scroll=area.querySelector('.private-settings-list')?.scrollTop||0,term=area.querySelector('[type=search]')?.value||'';
   area.dataset.signature=signature;area.replaceChildren();
   const header=n('div',undefined,'private-settings-header'),switcher=n('div',undefined,'scope-switch');
-  header.append(n('h2','行为设置'));
   for(const [value,label] of [['default','私聊默认'],['contact','只改此好友']]){
     const button=n('button',label,scope===value?'active':'');button.type='button';button.disabled=value==='contact'&&!peer;button.dataset.privateScope=value;
     button.onclick=()=>{scope=value;area.dataset.signature='';renderPrivateSettings(data,peer);};switcher.append(button);
   }
   const search=n('input');search.type='search';search.placeholder='搜索私聊设置';search.setAttribute('aria-label','搜索私聊设置');search.value=term;
-  header.append(switcher,search,n('p',local?'只影响当前好友，未单独设置的项目继承私聊默认。':'所有未单独设置的好友使用这里的值；保存不修改群聊设置。','private-settings-description'));
+  header.append(switcher,n('p',local?'只影响当前好友，未单独设置的项目继承私聊默认。':'所有未单独设置的好友使用这里的值；保存不修改群聊设置。','private-settings-description'),search);
   const layout=n('div',undefined,'settings-layout private-settings-layout'),index=n('nav',undefined,'settings-index'),list=n('div',undefined,'settings private-settings-list');index.setAttribute('aria-label','私聊设置分类');
   layout.append(index,list);area.append(header,layout);
 

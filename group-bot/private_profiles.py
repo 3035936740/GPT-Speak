@@ -86,7 +86,12 @@ def save(root, peer, section, values):
     if not isinstance(values, dict):
         raise ValueError('配置内容必须是对象')
     path = Path(root) / 'runtime-private/private-chat.sqlite3'
+    if section == 'knowledge':
+        from private_knowledge import index_store
+        with index_store(root).connect():
+            pass
     with closing(sqlite3.connect(path, timeout=5)) as db, db:
+        db.execute('PRAGMA foreign_keys=ON')
         old = profile(db, peer)
         if section == 'behavior':
             if set(values) - {'reply_enabled', 'use_group_impressions', 'max_reply_chars', 'reply_cooldown_seconds', 'knowledge_enabled', 'vision_enabled'}:
@@ -128,15 +133,21 @@ def save(root, peer, section, values):
                     db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)', (str(peer), 'knowledge', json.dumps(list(existing), ensure_ascii=False), time.time()))
                 db.execute('DELETE FROM private_knowledge WHERE id=? AND peer=?', (identity, str(peer)))
                 db.execute('DELETE FROM private_knowledge_options WHERE id=?',(identity,))
+                db.execute('DELETE FROM documents WHERE scope=? AND id=?',(int(peer),identity))
             else:
                 title, content = values.get('title'), values.get('content')
                 if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80 or not isinstance(content, str) or not content.strip():
                     raise ValueError('标题1～80字，知识正文不能为空')
                 if existing:
                     db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)', (str(peer), 'knowledge', json.dumps(list(existing), ensure_ascii=False), time.time()))
-                db.execute('INSERT OR REPLACE INTO private_knowledge VALUES (?,?,?,?,?)', (identity,str(peer),title.strip(),content.strip(),time.time()))
+                stamp=time.time()
+                db.execute('INSERT OR REPLACE INTO private_knowledge VALUES (?,?,?,?,?)', (identity,str(peer),title.strip(),content.strip(),stamp))
+                enabled=bool(values.get('enabled',True))
+                source=str(values.get('source_file',''))[:240]
                 db.execute('INSERT OR REPLACE INTO private_knowledge_options VALUES (?,?,?)',
-                    (identity,int(values.get('enabled',True)),str(values.get('source_file',''))[:240]))
+                    (identity,int(enabled),source))
+                from knowledge_base import write_document
+                write_document(db,identity,int(peer),title.strip(),source,content.strip(),enabled,str(stamp),stamp)
             emit(db, peer, 'stage', '当前私聊知识库已更新；下次相关回复检索')
             return {'ok': True, 'message': '私聊知识库已保存'}
         else:

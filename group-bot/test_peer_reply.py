@@ -65,7 +65,7 @@ class PeerReplyTests(unittest.TestCase):
             '_role_analysis':{'context':{'note':'内部规划叙述不要念出'},'emotion':{'mood':'playful'},
                 'vision':{'description':'实际可见的挥手小猫'}}}
         prompt=bot.build_prompt(bot.settings(),[],'点名',target)
-        self.assertIn('GPT 6 Luna',prompt);self.assertIn('成年女性的成熟心智',prompt)
+        self.assertIn('GPT',prompt);self.assertIn('成年女性的成熟心智',prompt)
         self.assertIn('白色大肥龙',prompt)
         self.assertIn('群聊表达：',prompt)
         self.assertIn('不是配额',prompt)

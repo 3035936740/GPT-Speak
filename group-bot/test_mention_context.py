@@ -14,8 +14,8 @@ from mention_context import evidence,bind,quality_issue
 
 class MentionContextTests(unittest.TestCase):
     def setUp(self):
-        self.cfg={**bot.settings(),'bot_name':'白色大肥龙','bot_aliases':['GPT','Luna','龙娘'],'name_match_sensitivity':.5,'at_context_sensitivity':.95}
-        self.target={'_id':'current','_uid':'11111','_self_id':'99999','sender':'甲','_unique_bot_names':['GPT','Luna','龙娘','白色大肥龙'],
+        self.cfg={**bot.settings(),'bot_name':'白色大肥龙','bot_aliases':['GPT','龙娘'],'name_match_sensitivity':.5,'at_context_sensitivity':.95}
+        self.target={'_id':'current','_uid':'11111','_self_id':'99999','sender':'甲','_unique_bot_names':['GPT','龙娘','白色大肥龙'],
             'text':'虽然实际上gpt和小克都没用过','at_bot':False,'_time':1000}
 
     def test_product_discussion_is_not_a_direct_call(self):

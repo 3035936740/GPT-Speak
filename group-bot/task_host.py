@@ -17,7 +17,7 @@ class Host:
     async def inputs(self,files):
         for i,(name,raw) in enumerate(files,1):(self.root/'input'/(str(i)+'-'+safe_name(name).rsplit('/',1)[-1])).write_bytes(raw)
     async def python(self,code,timeout):
-        if not isinstance(code,str) or len(code)>20000:raise ValueError('Invalid task code')
+        if not isinstance(code,str):raise ValueError('Invalid task code')
         from platform_runtime import process_options
         env={k:v for k,v in os.environ.items() if k.upper() in {'PATH','SYSTEMROOT','WINDIR','LANG','LC_ALL'}}
         env.update(TEMP=str(self.root/'tmp'),TMP=str(self.root/'tmp'),TMPDIR=str(self.root/'tmp'),PYTHONIOENCODING='utf-8')

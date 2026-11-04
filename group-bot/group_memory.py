@@ -248,6 +248,10 @@ class GroupMemory:
         self.prune()
         return added
 
+    def recall_rows(self):
+        return (row for row in self.db.execute("SELECT * FROM notes WHERE kind!='expression' AND id NOT IN (SELECT old_id FROM supersessions)")
+            if self.allowed(row))
+
     def retrieve(self, target, context=(), limit=700):
         words = re.sub(r'@\d+|\[[^\]]*\]', '', target.get('text', ''))
         recall = bool(re.search(r'记得|之前|上次|刚才|先前|进展|我那个', words))
@@ -257,8 +261,7 @@ class GroupMemory:
         who = self.digest(target.get('_uid', ''))
         names = {row['id']: row['name'] for row in self.db.execute('SELECT * FROM people')}
         ranked = []
-        for row in self.db.execute("SELECT * FROM notes WHERE kind!='expression' AND id NOT IN (SELECT old_id FROM supersessions)"):
-            if not self.allowed(row):continue
+        for row in self.recall_rows():
             own = row['subject'] == who
             text = row['content'] + ' ' + row['keywords']
             overlap = len(query & grams(text))

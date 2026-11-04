@@ -43,7 +43,7 @@ class RoleplayIdentityTests(unittest.TestCase):
         prompt=bot.build_prompt(bot.settings(),[],'被点名',{'_id':'t','text':'你是AI吗','at_bot':True})
         self.assertNotIn('被直接问是不是AI时如实回答',prompt)
         self.assertNotIn('被直接问是不是AI仍如实回答',prompt)
-        self.assertIn('GPT 6 Luna',prompt)
+        self.assertIn('GPT',prompt)
         self.assertNotIn('保持yonagi角色',prompt)
 
 

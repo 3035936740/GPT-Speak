@@ -6,6 +6,7 @@ from peer_reply import spoken_text
 
 def reaction_only(target):
     """Media annotations/OCR are not a request for a caption or a visual answer."""
+    if target.get('_manual_reply_started'):return False
     words=re.sub(r'@\d+|\[[^\]]*\]','',spoken_text(target.get('text',''))).strip()
     if words:return False
     if target.get('_image_response_mode') in {'answer','context','none'}:return False

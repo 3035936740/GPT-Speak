@@ -199,11 +199,11 @@ class Sandbox:
         return ['--user='+str(self.uid)+':'+str(self.uid),'--workdir='+self.work,'--env','TMPDIR='+self.work+'/tmp','--env','HOME='+self.work]
 
     async def python(self,code,timeout):
-        if not isinstance(code,str) or len(code)>20000:raise ValueError('Invalid sandbox code')
+        if not isinstance(code,str):raise ValueError('Invalid sandbox code')
         return await self.command('exec','-i',*self.user_args(),self.name,'python','-I','-u','-',data=code.encode(),timeout=timeout)
 
     async def shell(self,code,timeout):
-        if not isinstance(code,str) or len(code)>20000:raise ValueError('Invalid sandbox code')
+        if not isinstance(code,str):raise ValueError('Invalid sandbox code')
         return await self.command('exec','-i',*self.user_args(),self.name,'/bin/sh','-s',data=code.encode(),timeout=timeout)
 
     async def inputs(self,files):

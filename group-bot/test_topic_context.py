@@ -68,27 +68,27 @@ class TopicContextTests(unittest.TestCase):
     def test_custom_gpt_persona_is_not_forced_back_to_yonagi(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
-            (root/'persona.txt').write_text('你是白色大肥龙，明确设定为GPT 6 Luna，使用白龙角色说话',encoding='utf-8')
+            (root/'persona.txt').write_text('你是白色大肥龙，明确设定为GPT',encoding='utf-8')
             (root/'reply_protocol.txt').write_text('只输出schema JSON',encoding='utf-8')
             target={**self.target,'text':'你是谁'}
             cfg={**self.cfg,'bot_name':'白色大肥龙'}
             bind(root,cfg,target)
-            self.assertEqual(quality_issue('我是GPT 6 Luna',target),'')
+            self.assertEqual(quality_issue('我是GPT',target),'')
             self.assertEqual(quality_issue('我是活人',target),'unsupported_real_identity')
             self.assertNotIn('保持yonagi',boundary(target))
             model=AsyncMock(return_value={'reply_to':'100','conversation':'direct','should_reply':True,
-                'action':'chat','text':'我是GPT 6 Luna，也是这只白龙','text_parts':[],
+                'action':'chat','text':'我是GPT，也是这只白龙','text_parts':[],
                 'media_ids':[],'media_kind':'none','media_id':'','answer_complete':True})
             with patch.object(bot,'ROOT',root),patch.object(bot,'generate_reply_json',model):
                 reply=asyncio.run(bot.generate(cfg,[],'被@',target))
-            self.assertIn('GPT 6 Luna',str(reply));model.assert_awaited_once()
+            self.assertIn('GPT',str(reply));model.assert_awaited_once()
             self.assertNotIn('保持yonagi',model.call_args.args[1])
 
     def test_default_gpt_persona_can_express_its_identity(self):
         target=dict(self.target)
         policy=bind(bot.ROOT,self.cfg,target)
         self.assertFalse(policy['avoid_ai_self_label']);self.assertFalse(policy['hide_gender'])
-        self.assertEqual(quality_issue('我是GPT 6 Luna',target),'')
+        self.assertEqual(quality_issue('我是GPT',target),'')
 
 
 if __name__=='__main__':unittest.main()

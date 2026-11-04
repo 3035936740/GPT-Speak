@@ -155,8 +155,20 @@ def database_mutate(root,group,table,mode,values=None,row_id=None,expected=None,
 def library(root):return EmojiLibrary(Path(root)/'shared-emoji-library',Path(root)/'qq-faces.json',shared=True,policy_root=root)
 
 
+def queue_sticker(lib, raw, digest, extension, label, metadata=None):
+    incoming=lib.root/'incoming'
+    incoming.mkdir(exist_ok=True)
+    identity='u'+digest[:16]
+    path=incoming/(identity+'.'+extension)
+    if not path.exists():
+        path.write_bytes(raw)
+    atomic(incoming/(identity+'.json'),{'path':path.name,'label':label,'time':time.time(),
+        'digest':digest,'metadata':metadata or {}})
+    return {'ok':True,'pending':True,'message':'已加入待审核队列，审核通过后才能发送','id':identity}
+
+
 def approve_image(lib, path, values):
-    """Explicit operator admission preserves original bytes and overrides auto refusal."""
+    """Save an operator submission, using the configured review when present."""
     import hashlib
     from emoji_assets import own_asset
     from sticker_filter import FILTER_VERSION
@@ -171,6 +183,18 @@ def approve_image(lib, path, values):
     with lib.transaction():
         if not lib.enabled():raise ValueError('表情总开关已关闭，不能收录表情')
         if lib.is_excluded(key,digest):raise ValueError('此表情已永久排除，不能再次收录')
+        if lib.admission_rule():
+            if key in lib.items:return {'ok':True,'message':'相同图片已入库，未重复保存','id':key}
+            if len(raw)>2*1024*1024:raise ValueError('视觉审核图片上限2MB')
+            with Image.open(io.BytesIO(raw)) as image:
+                if image.format not in {'GIF','PNG','JPEG','WEBP'} or image.width*image.height>20000000:
+                    raise ValueError('不支持的图片')
+                extension=image.format.lower()
+                image.verify()
+            lib.rejected.pop(key,None)
+            lib.save()
+            metadata={name:values[name] for name in limits if values.get(name)}
+            return queue_sticker(lib,raw,digest,extension,values.get('label') or values.get('description'),metadata)
         backup = lib.root/'admin-backups'; backup.mkdir(exist_ok=True)
         atomic(backup/(str(time.time_ns())+'.json'), {'index':lib.items, 'hashes':lib.hashes, 'aliases':lib.aliases, 'rejected':lib.rejected})
         assets = own_asset(lib.root, key, path, digest)
@@ -240,6 +264,9 @@ def sticker_image(root,key):
 
 def sticker_mutate(root,mode,key='',values=None):
     lib=library(root)
+    if mode=='unexclude':
+        lib.unexclude(key)
+        return {'ok':True,'message':'已删除排除记录，下次可以重新收录','id':key}
     if mode=='exclude':
         digest='';label='';canonical=key
         if re.fullmatch(r'u[a-f0-9]{16}',str(key)):
@@ -282,10 +309,10 @@ def sticker_mutate(root,mode,key='',values=None):
         if not path.exists():path.write_bytes(raw)
         if values.get('admission')=='manual':
             result=approve_image(lib,path,values)
-            path.unlink(missing_ok=True);(incoming/(identity+'.json')).unlink(missing_ok=True)
+            if not result.get('pending'):
+                path.unlink(missing_ok=True);(incoming/(identity+'.json')).unlink(missing_ok=True)
             return result
-        atomic(incoming/(identity+'.json'),{'path':path.name,'label':str(values.get('label',''))[:80],'time':time.time(),'digest':digest})
-        return {'ok':True,'message':'已加入待审核队列，审核通过后才能发送'}
+        return queue_sticker(lib,raw,digest,extension,str(values.get('label',''))[:80])
     if mode not in {'update','delete'}:raise ValueError('未知表情库操作')
     if mode=='delete' and re.fullmatch(r'u[a-f0-9]{16}',str(key)):
         incoming=lib.root/'incoming';manifest=incoming/(key+'.json')

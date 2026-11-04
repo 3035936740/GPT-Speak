@@ -9,7 +9,7 @@ import secrets
 import socket
 import threading
 from urllib.parse import urlsplit, parse_qs
-from console_config import Config, PROTECTED, read_json, runtime, deleted_ids
+from console_config import Config, GLOBAL_ONLY, PROTECTED, read_json, runtime, deleted_ids
 from config_metadata import metadata,HIDDEN_FIELDS
 from debug_references import enrich_quotes, enrich_images, text_chars
 from debug_store import database_view, sticker_view, sticker_image
@@ -26,6 +26,7 @@ ASSETS={'/':'index.html','/app.js':'app.js','/private-ui.js':'private-ui.js','/p
 ASSETS.update({'/docker-guide.html':'docker-guide.html','/podman-guide.html':'podman-guide.html'})
 ASSETS['/sandbox-guide.css']='sandbox-guide.css'
 ASSETS['/gpt-speak-logo.png']='gpt-speak-logo.png'
+ASSETS['/knowledge-tools.js']='knowledge-tools.js'
 
 
 def model_options():
@@ -89,6 +90,12 @@ class DebugWebUI:
                     if parsed.path=='/api/config':return self.reply(200,owner.public_config(parse_qs(parsed.query)))
                     if parsed.path=='/api/models':return self.reply(200,{'models':model_options()})
                     query=parse_qs(parsed.query)
+                    if parsed.path in {'/api/knowledge-index','/api/knowledge-preview'}:
+                        from knowledge_service import inspect, preview
+                        group=query.get('group',['0'])[0]
+                        peer=query.get('peer',[''])[0]
+                        result=inspect(owner.root,group,peer) if parsed.path.endswith('index') else preview(owner.root,group,peer,query.get('q',[''])[0])
+                        return self.reply(200,result)
                     if parsed.path=='/api/forward-message':
                         from forward_messages import view
                         return self.reply(200,view(owner.root,int(query.get('group',['0'])[0]),query.get('message_id',[''])[0]))
@@ -170,7 +177,7 @@ class DebugWebUI:
                     return reject(403,'Invalid local origin')
                 if not self.authorized():return reject(401,'授权会话失效，请在CLI输入 /webui')
                 path=urlsplit(self.path).path
-                if path not in {'/api/action','/api/knowledge'}:return self.reply(404,{'error':'Not found'})
+                if path not in {'/api/action','/api/knowledge','/api/embedding-test'}:return self.reply(404,{'error':'Not found'})
                 knowledge=path=='/api/knowledge'
                 try:
                     length=int(self.headers.get('Content-Length','0'))
@@ -179,6 +186,9 @@ class DebugWebUI:
                     self.connection.settimeout(None if knowledge else 15)
                     value=json.loads(self.rfile.read(length))
                     if not isinstance(value,dict):raise ValueError('请求必须是JSON对象')
+                    if path=='/api/embedding-test':
+                        from knowledge_embedding import test_connection
+                        return self.reply(200,test_connection(owner.config.load(),owner.root))
                     if knowledge and not (value.get('action')=='knowledge' or value.get('action')=='private_profile' and value.get('section')=='knowledge'):raise ValueError('此接口仅用于知识库操作')
                     if not knowledge and value.get('action') not in {'manual_send','private_send'} and length>3*1024*1024:return self.reply(413,{'error':'请求内容过大'})
                     result=owner.dispatch(value)
@@ -287,6 +297,7 @@ class DebugWebUI:
             'name':cfg['bot_name'],'rate':cfg['passive_probability'],
             'no_cooldown':(folder/'NO_COOLDOWN').exists()}}
     def public_config(self,query=None):
+        from knowledge_embedding import read_key
         query=query or {};group=int(query.get('group',[self.config.load()['group_id']])[0])
         scope=query.get('scope',['global'])[0]
         if scope not in {'global','group'}:raise ValueError('未知配置作用域')
@@ -298,7 +309,8 @@ class DebugWebUI:
             'scope':scope,'group':group,'overrides':scoped.overrides(),
             'global_config':{key:value for key,value in self.config.load().items() if key not in PROTECTED|HIDDEN_FIELDS},
             'prompt_overrides':{name:(scoped.scope_root/(name+'.txt')).exists() if scope=='group' else True for name in ('persona','reply_protocol')},
-            'global_only':['chat_group_whitelist','webui_host','webui_port','webui_key']+[key for key in cfg if key.startswith('private_')],
+            'global_only':sorted(GLOBAL_ONLY & public.keys()),
+            'has_embedding_api_key':bool(read_key(self.root)),
             'global_prompts':{name:(self.root/(name+'.txt')).read_text(encoding='utf-8') if (self.root/(name+'.txt')).exists() else '' for name in ('persona','reply_protocol')},
             'persona':scoped.prompt_path('persona').read_text(encoding='utf-8'),'models':model_options(),
             'reply_protocol':scoped.prompt_path('reply_protocol').read_text(encoding='utf-8') if scoped.prompt_path('reply_protocol').exists() else '',

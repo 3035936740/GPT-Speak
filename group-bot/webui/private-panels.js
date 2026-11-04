@@ -38,7 +38,7 @@ function form(area,peer,section,fields,values,note){
 }
 
 function status(data,peer){
-  const area=panel('status');area.replaceChildren();title(area,'运行状态','当前好友的私聊状态，与群聊后台分开。');
+  const area=panel('status');area.replaceChildren();
   const entries=[['私信服务',data.status.online?'运行中':'未连接'],['当前好友自动回复',data.enabled&&data.contact_settings.reply_enabled&&data.can_chat?'开启':'关闭'],
     ['回复模型',(data.runtime.model||'—')+' · '+(data.runtime.reasoning_effort||'')],['私聊消息',String(data.runtime.stored_messages||0)+' 条'],
     ['回复长度上限',String(data.contact_settings.max_reply_chars||0)+' 字'],['同一好友冷却',String(data.contact_settings.reply_cooldown_seconds??0)+' 秒'],

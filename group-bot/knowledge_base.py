@@ -1,4 +1,4 @@
-"""Local document knowledge with scoped, indexed lexical retrieval; no model calls."""
+"""Local knowledge documents, scoped lexical search and optional semantic retrieval."""
 from contextlib import contextmanager
 from pathlib import Path
 import json
@@ -19,15 +19,23 @@ def terms(text):
 
 
 def chunks(text):
-    # Overlap preserves phrases crossing a boundary and caps individual excerpts.
-    for n in range(0,len(text),600):
-        part=text[n:n+700]
+    # Prefer paragraph and sentence boundaries while preserving overlap.
+    start=0
+    while start<len(text):
+        end=min(start+700,len(text))
+        if end<len(text):
+            boundary=max(text.rfind(mark,start+450,end) for mark in ('\n','。','！','？','. ','? ','! '))
+            if boundary>=0:
+                end=boundary+(2 if text[boundary:boundary+2] in {'. ','? ','! '} else 1)
+        part=text[start:end]
         if part.strip():yield part
+        if end==len(text):break
+        start=end-100
 
 
 class KnowledgeBase:
-    def __init__(self,root):
-        self.path=Path(root)/'runtime'/'knowledge.sqlite3'
+    def __init__(self,root,path=None):
+        self.path=Path(path) if path is not None else Path(root)/'runtime'/'knowledge.sqlite3'
 
     @contextmanager
     def connect(self):
@@ -44,6 +52,9 @@ class KnowledgeBase:
                 CREATE TABLE IF NOT EXISTS terms(chunk_id INTEGER REFERENCES chunks(id) ON DELETE CASCADE,
                     term TEXT, PRIMARY KEY(chunk_id,term));
                 CREATE INDEX IF NOT EXISTS knowledge_terms ON terms(term,chunk_id);
+                CREATE TABLE IF NOT EXISTS knowledge_vectors(chunk_id INTEGER NOT NULL
+                    REFERENCES chunks(id) ON DELETE CASCADE, model TEXT NOT NULL, embedding BLOB NOT NULL,
+                    PRIMARY KEY(chunk_id,model));
             ''')
             yield db
         finally:db.close()
@@ -69,14 +80,9 @@ class KnowledgeBase:
                     old=db.execute('SELECT * FROM documents WHERE id=? AND scope IN (0,?)',(identity,group)).fetchone()
                     if not old:raise ValueError('知识不存在或不属于当前群')
                     if expected!=old['version']:raise ValueError('知识已被修改，请刷新后重试')
-                    db.execute('DELETE FROM chunks WHERE document_id=?',(identity,))
                 else:identity=secrets.token_hex(12)
                 version=str(time.time_ns())
-                db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)',
-                    (identity,0 if scope=='shared' else group,title.strip(),source.strip(),content,int(enabled),version,time.time()))
-                for position,part in enumerate(chunks(content)):
-                    cursor=db.execute('INSERT INTO chunks(document_id,position,content) VALUES (?,?,?)',(identity,position,part))
-                    db.executemany('INSERT INTO terms VALUES (?,?)',[(cursor.lastrowid,term) for term in terms(title+' '+part)])
+                write_document(db,identity,0 if scope=='shared' else group,title.strip(),source.strip(),content,enabled,version,time.time())
         return {'id':identity,'version':version}
 
     def delete(self,group,identity,expected):
@@ -107,12 +113,13 @@ class KnowledgeBase:
         row['scope']='shared' if row['scope']==0 else 'group';row['enabled']=bool(row['enabled'])
         return row
 
-    def retrieve(self,group,query,budget=0):
+    def retrieve(self,group,query,budget=0,*,embedding=None,mix=False,reranker=None):
         if not self.path.exists():return []
         unlimited=int(budget)==0
-        tokens=sorted(terms(re.sub(r'@\d+',' ',str(query))))
+        query=re.sub(r'@\d+',' ',str(query)).strip()
+        tokens=sorted(terms(query))
         if not unlimited:tokens=tokens[:64]
-        if not tokens:return []
+        if not query or (not tokens and not embedding):return []
         with self.connect() as db:
             # Join a temporary query table instead of exceeding SQLite's bind
             # parameter limit when the unlimited query has many unique terms.
@@ -140,28 +147,78 @@ class KnowledgeBase:
         for document in documents:
             for path,content in records(document['content'],anchors):
                 extracted.append({'document_id':document['id'],'title':document['title'],'source':document['source'],
-                    'scope':document['scope'],'content':content,'position':-100000*(len(extracted)+1)})
-        ranked=extracted+ranked
+                    'scope':document['scope'],'content':content,'position':-100000*(len(extracted)+1),
+                    'record_path':'#'+''.join('/'+key.replace('~','~0').replace('/','~1') for key in path)})
+        if embedding:
+            from knowledge_vectors import rank
+            from knowledge_ranking import RESULT_LIMIT, rerank
+            semantic_rows = rank(self,group,query,embedding)
+            if semantic_rows:
+                ranked = hybrid(ranked if mix else [],semantic_rows)
+            elif ranked:
+                ranked = hybrid(ranked,[])
+            ranked = extracted[:RESULT_LIMIT] + rerank(query,ranked,reranker)
+            ranked = ranked[:RESULT_LIMIT]
+        else:
+            ranked=extracted+ranked
         if unlimited:
-            return [{'id':row['document_id'],'title':row['title'],'source':row['source'],
-                'scope':'shared' if row['scope']==0 else 'group','content':row['content']} for row in ranked]
+            return [reference(row) for row in ranked]
         result=[];used=set();remaining=max(0,int(budget)-2)
         for row in ranked:
             # Avoid spending the budget on adjacent, heavily overlapping excerpts.
             key=(row['document_id'],row['position'])
             if any((key[0],key[1]+delta) in used for delta in (-1,0,1)):continue
-            reference={'id':row['document_id'],'title':row['title'],'source':row['source'],
-                'scope':'shared' if row['scope']==0 else 'group','content':row['content']}
-            overhead=len(json.dumps({**reference,'content':''},ensure_ascii=False,separators=(',',':')))+1
+            excerpt=reference(row)
+            overhead=len(json.dumps({**excerpt,'content':''},ensure_ascii=False,separators=(',',':')))+1
             if remaining-overhead<80:continue
-            reference['content']=reference['content'][:remaining-overhead]
-            while reference['content'] and len(json.dumps(reference,ensure_ascii=False,separators=(',',':')))+1>remaining:
-                reference['content']=reference['content'][:max(0,len(reference['content'])-40)]
-            if not reference['content']:continue
-            result.append(reference);used.add(key)
-            remaining-=len(json.dumps(reference,ensure_ascii=False,separators=(',',':')))+1
+            excerpt['content']=excerpt['content'][:remaining-overhead]
+            while excerpt['content'] and len(json.dumps(excerpt,ensure_ascii=False,separators=(',',':')))+1>remaining:
+                excerpt['content']=excerpt['content'][:max(0,len(excerpt['content'])-40)]
+            if not excerpt['content']:continue
+            result.append(excerpt);used.add(key)
+            remaining-=len(json.dumps(excerpt,ensure_ascii=False,separators=(',',':')))+1
             if len(result)>=4:break
         return result
+
+
+def write_document(db, identity, scope, title, source, content, enabled, version, updated):
+    db.execute('DELETE FROM chunks WHERE document_id=?',(identity,))
+    db.execute('INSERT OR REPLACE INTO documents VALUES (?,?,?,?,?,?,?,?)',
+        (identity,scope,title,source,content,int(enabled),version,updated))
+    for position,part in enumerate(chunks(content)):
+        cursor=db.execute('INSERT INTO chunks(document_id,position,content) VALUES (?,?,?)',(identity,position,part))
+        db.executemany('INSERT INTO terms VALUES (?,?)',[(cursor.lastrowid,term) for term in terms(title+' '+part)])
+
+
+def reference(row):
+    row = dict(row)
+    location = {'record_path':row['record_path']} if 'record_path' in row else {'part':row['position']+1}
+    return {'id':row['document_id'],'title':row['title'],'source':row['source'],
+            'scope':'shared' if row['scope']==0 else 'group',**location,
+            **({'similarity':row['similarity']} if 'similarity' in row else {}),'content':row['content']}
+
+
+def hybrid(lexical, semantic):
+    """Fuse ranks and keep distinct excerpts ahead of overlapping neighbors."""
+    from knowledge_ranking import RECALL_LIMIT
+    scores = {}
+    rows = {}
+    for source in (lexical[:48],semantic):
+        for position,row in enumerate(source,1):
+            key = (row['document_id'],row['position'])
+            scores[key] = scores.get(key,0) + 1/(20+position)
+            rows[key] = row
+    keys = sorted(scores,key=scores.__getitem__,reverse=True)
+    selected = []
+    used = set()
+    for document, position in keys:
+        if any((document,position+delta) in used for delta in (-1,0,1)):
+            continue
+        used.add((document,position))
+        selected.append(rows[document,position])
+        if len(selected)==RECALL_LIMIT:
+            break
+    return selected
 
 
 def checked(root,group):

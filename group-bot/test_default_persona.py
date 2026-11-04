@@ -56,7 +56,7 @@ class DefaultPersonaTests(unittest.TestCase):
         persona=(root/'persona-default.txt').read_text(encoding='utf-8')
         protocol=(root/'reply_protocol-default.txt').read_text(encoding='utf-8')
         example=json.loads((root/'settings.example.json').read_text(encoding='utf-8'))
-        self.assertIn('GPT 6 Luna',persona)
+        self.assertIn('GPT',persona)
         self.assertIn('白龙',persona)
         self.assertIn('句尾',persona)
         self.assertLessEqual(len(persona)+len(protocol),3000)

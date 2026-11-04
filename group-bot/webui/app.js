@@ -1,4 +1,5 @@
 import {initPrivateUI,isPrivateOpen,closePrivateUI} from '/private-ui.js';
+import {knowledgeTools} from '/knowledge-tools.js';
 import {openCollectionEditor,collectionSummary,memoryCollection,collectionDraftInput,settingSwitch,decisionDefaults,roleSettingsSummary} from '/private-settings.js';
 let activePrompt='persona',activeScope='global',configSequence=0;const promptDrafts={},configDrafts={};
 
@@ -13,31 +14,77 @@ function windowUsage(chars, limit){
 }
 
 const titles={bot_name:'人格名字',bot_aliases:'点名识别别名',model:'回复模型',reasoning_effort:'思考等级',fast_mode:'Fast 模式',passive_probability:'普通水群概率',sticker_reply_probability:'表情反应偏好',no_words_sticker_probability:'纯表情偏好',followup_sticker_probability:'文字后跟表情偏好',burst_reply_probability:'连续分段发送偏好',friendly_tease_probability:'朋友间玩笑偏好',console_max_text_chars:'调试记录文本上限',console_max_records:'调试记录条数上限',max_prompt_chars:'普通模型输入字符上限',context_messages:'传入模型的近期消息条数',max_replies_per_hour:'每小时消息上限',max_images_per_hour:'每小时绘图上限',image_summary_window_messages:'图片摘要滑动有效期',image_repeat_window_messages:'复读观察窗口',image_repeat_min_count:'复读候选次数',image_repeat_pair_confidence:'连续两次的复读置信度',image_repeat_full_streak:'明确复读所需连续次数',chat_group_whitelist:'群白名单',enabled:'机器人启用',multi_role_enabled:'模型分工',role_models:'分工角色模型',shared_sticker_library:'跨群共用表情库',style_learning_enabled:'表达学习',memory_enabled:'群聊记忆',proactive_topics_enabled:'主动开话题',image_generation_enabled:'绘图启用',recent_chat_journal_max_messages:'近期聊天存档条数',recent_chat_journal_hours:'近期聊天存档时长'};
-// First matching category wins; anything unmatched lands in "其他".
-const categories=[
-  ['profile-tools','资料查询与工具','按需读取公开资料，以及查询后绘图',key=>/^(model_avatar_query_enabled|model_profile_query_enabled|profile_query_cache_seconds|tool_workflow_enabled|tool_workflow_max_steps|web_answer_max_chars)$/.test(key)],
-  ['forwards','聊天记录卡片','转发历史文本和图片读取',key=>/^forward_/.test(key)],
-  ['member-scope','群友标记范围','按QQ号跨群与私聊共享',key=>key==='member_labels_global_enabled'],
-  ['connection','NapCat连接','HTTP / WebSocket 与 MCP',key=>/^napcat_/.test(key)],
-  ['owner-control','bot指令','在聊天中执行CLI命令',key=>/^owner_/.test(key)],
-  ['private','私信','私聊自动回复与群友印象，全局设置',key=>/^private_/.test(key)],
-  ['knowledge','知识库','检索当前群和共享资料，按需提供给模型',key=>/^knowledge_/.test(key)],
-  ['identity','身份与开关','Bot 叫什么、是否启用、在哪些群工作',key=>['enabled','receive_only','bot_name','bot_aliases','name_match_sensitivity','at_context_sensitivity','chat_group_whitelist'].includes(key)],
-  ['model','模型','分别选择生成回复与处理内部决策的模型',key=>/^(model|reasoning_effort|decision_model|decision_reasoning_effort|decision_fast_mode|fast_mode|multi_role_enabled|role_models|role_timeout_seconds|model_timeout_seconds|text_transport)$/.test(key)],
-  ['member-reference','群友资料：模型参考','选择允许传给模型参考的账号资料，默认全部开启',key=>/^member_reference_/.test(key)],
-  ['member-prompts','群友资料：类型提示词','按当前发言者的账号类型使用，支持全局及群覆盖',key=>/^member_prompt_/.test(key)],
-  ['member-block','群友资料：屏蔽规则','默认关闭自动屏蔽；人工解除优先，后台仍保留消息',key=>/^member_model_block_/.test(key)],
-  ['member-model','群友资料：模型自行标记','独立控制模型修改三项资料的权限，默认全部关闭；人工资料优先',key=>/^member_model_/.test(key)],
-  ['member-rules','群友资料：规则判断','按指令响应行为推断bot，不调用模型',key=>/^member_auto_/.test(key)],
-  ['participation','参与群聊的节奏','多久说一次话、什么时候接话、怎么回复',key=>/^passive_|^proactive_|^(adaptive_participation_enabled|social_planner_enabled|conversation_state_ttl_seconds|mention_cooldown_seconds|poll_seconds|peer_reply_enabled|high_eq_enabled|at_reply_probability|quote_reply_probability|burst_reply_probability|friendly_tease_probability)$/.test(key)],
-  ['sticker','表情','发表情的偏好与共享表情库的收录规则',key=>/sticker/.test(key)],
-  ['cleanup','生成图片的清理','Bot 生成的图片保留多久、怎么清理',key=>/^generated_image_/.test(key)],
-  ['image','识图与绘图','读取群友图片、参考附件和绘图',key=>/^image_|^vision_|^max_images?_|^model_max_file|group_file_read_enabled|background_image_reading_enabled/.test(key)],
-  ['large','任务（实验性）','生成文件并上传群文件；默认关闭',key=>/^large_task/.test(key)],
-  ['memory','记忆与学习','群聊记忆、表达学习和近期聊天存档',key=>/memory|learning|^style_|^semantic_|^recent_chat_journal/.test(key)],
-  ['limits','额度与上下文','每小时/每天的上限，以及传给模型的上下文长度',key=>/^max_|^context_/.test(key)],
-  ['debug','界面与容错','WebUI监听地址、聊天显示、记录容量和失败处理',key=>/^webui_|^console_|^reply_failure|^chat_image_display$/.test(key)],
-  ['other','其他','',()=>true]];
+// Order mirrors the settings page, independent of the order of saved keys.
+const settingsGroups=[
+  ['基础设置',
+    ['identity','Bot 身份与接入','设置 Bot 的名字、运行状态和授权群聊。',
+      ['', 'enabled receive_only bot_name chat_group_whitelist']],
+    ['model','模型与分工','设置日常回复模型和内部判断所用的模型。',
+      ['回复模型', 'model reasoning_effort fast_mode text_transport model_timeout_seconds'],
+      ['决策与角色分工', 'multi_role_enabled role_models role_timeout_seconds']],
+    ['connection','NapCat 连接','管理 QQ 消息连接、轮询和 MCP 接入。',
+      ['消息连接', 'napcat_connection_mode napcat_host napcat_port napcat_path napcat_secure napcat_token napcat_timeout_seconds poll_seconds'],
+      ['MCP 连接', 'napcat_mcp_url napcat_mcp_token']]],
+  ['聊天行为',
+    ['participation','群聊触发与节奏','控制 Bot 何时回应点名、参与聊天或主动开话题。',
+      ['点名与冷却', 'cooldown bot_aliases name_match_sensitivity at_context_sensitivity mention_cooldown_seconds'],
+      ['日常接话', `passive_trigger_mode passive_probability passive_min_messages passive_cooldown_seconds
+        passive_window_seconds passive_round_seconds passive_idle_compensation_enabled passive_retry_backoff_seconds
+        adaptive_participation_enabled social_planner_enabled conversation_state_ttl_seconds`],
+      ['主动开话题', 'proactive_topics_enabled proactive_topic_probability proactive_topic_quiet_minutes proactive_topic_min_hours proactive_topic_max_hours']],
+    ['reply','回复风格与格式','调整接话语气、引用和分段，以及失败时的表现。',
+      ['理解与语气', 'peer_reply_enabled high_eq_enabled friendly_tease_probability pinyin_abbreviation_guess_enabled'],
+      ['发送格式', 'at_reply_probability quote_reply_probability burst_reply_probability max_reply_parts max_reply_chars reply_failure_log_only']],
+    ['member','群友资料与标记','管理跨会话标记、模型可参考的资料及自动规则。',
+      ['标记范围与模型参考', 'member_labels_global_enabled member_reference_type_enabled member_reference_aliases_enabled member_reference_note_enabled'],
+      ['账号类型提示词', 'member_prompt_owner member_prompt_human member_prompt_AI member_prompt_bot'],
+      ['模型自行标记', 'member_model_type_enabled member_model_aliases_enabled member_model_note_enabled'],
+      ['指令机器人识别', 'member_auto_bot_marking_enabled member_auto_bot_command_prefixes member_auto_bot_window_messages member_auto_bot_min_observations'],
+      ['自动屏蔽', 'member_model_block_enabled member_model_block_min_messages member_model_block_rules']],
+    ['private','私信接入与默认行为','设置私信服务、好友准入和初始偏好。单个好友的设置可在私信页修改。',
+      ['私信准入', 'private_reply_enabled private_access_mode private_user_whitelist private_user_blacklist'],
+      ['回复与参考资料', 'private_reply_cooldown_seconds private_max_reply_chars private_vision_enabled private_use_group_impressions private_memory_retrieval_mode'],
+      ['私信额度', 'private_max_replies_per_hour private_max_model_calls_per_day']]],
+  ['功能与工具',
+    ['sticker','表情发送与收录','管理表情总开关、回复偏好和共享库收录规则。',
+      ['', 'stickers_enabled'],
+      ['发送偏好', 'sticker_reply_probability no_words_sticker_probability followup_sticker_probability sticker_recent_suppression_strength max_stickers_per_reply'],
+      ['收录与共享', 'shared_sticker_library sticker_admission_rule sticker_ignore_market_faces sticker_repeat_review_min_count sticker_repeat_review_step sticker_upload_retry_seconds']],
+    ['image','识图与绘图','设置图片理解、生成和生成图片的保留方式。',
+      ['识图与摘要', 'background_image_reading_enabled image_direct_original_enabled image_summary_level image_summary_window_messages max_images_per_call max_image_bytes vision_timeout_seconds'],
+      ['同图复读', 'image_repeat_window_messages image_repeat_min_count image_repeat_pair_confidence image_repeat_full_streak'],
+      ['绘图与额度', 'image_generation_enabled image_backend image_timeout_seconds image_cooldown_seconds max_images_per_hour max_images_per_day'],
+      ['生成图片清理', 'generated_image_ttl_hours generated_image_cleanup_mode generated_image_cleanup_interval_minutes generated_image_cleanup_daily_time generated_image_windows_schedule']],
+    ['attachments','文件与转发记录','管理群文件、参考附件和合并转发的读取。',
+      ['文件与附件', 'group_file_read_enabled model_max_files model_max_file_bytes'],
+      ['转发聊天记录', 'forward_messages_enabled forward_images_enabled']],
+    ['profile-tools','资料查询与联网','设置公开资料查询、联网回答和查询后绘图。',
+      ['公开资料查询', 'model_avatar_query_enabled model_profile_query_enabled profile_query_cache_seconds'],
+      ['联网与绘图联动', 'web_answer_max_chars tool_workflow_enabled tool_workflow_max_steps']],
+    ['large','任务（实验性）','设置文件交付任务、执行环境、配额与保留期限。',
+      ['任务与模型', 'large_tasks_enabled large_task_model large_task_reasoning_effort large_task_fast_mode large_task_timeout_seconds large_task_step_timeout_seconds large_task_script_max_chars large_task_background_chars large_task_max_prompt_chars large_task_max_steps large_task_stall_limit'],
+      ['执行环境', 'large_task_executor large_task_sandbox_runtime large_task_docker_wsl large_task_container_mode large_task_container_name large_task_sandbox_image large_task_dockerfile'],
+      ['接收与交付', 'large_task_max_concurrent large_task_daily_limit large_task_prepare_notice_timeout_seconds large_task_max_file_bytes large_task_send_incomplete large_task_retention_hours']]],
+  ['记忆与检索',
+    ['memory','群记忆与学习','设置群记忆检索、表达学习和近期聊天存档。',
+      ['记忆检索', 'memory_enabled memory_retrieval_mode knowledge_chat_retrieval_enabled semantic_selection_enabled semantic_candidate_chars'],
+      ['后台学习', 'style_learning_enabled style_adaptation_strength learning_min_messages learning_interval_seconds learning_prompt_chars'],
+      ['聊天存档', 'recent_chat_journal_max_messages recent_chat_journal_hours']],
+    ['knowledge','知识库','设置当前群和共享知识的检索方式及片段预算。',
+      ['', 'knowledge_enabled knowledge_retrieval_mode knowledge_max_chars']],
+    ['embedding','Embedding 服务','知识库与群聊、私聊记忆共用的向量服务与重排设置。',
+      ['向量服务', 'knowledge_embedding_provider knowledge_embedding_model knowledge_embedding_ollama_url knowledge_embedding_ollama_cpu knowledge_embedding_api_url'],
+      ['重排服务', 'knowledge_reranker_url knowledge_reranker_model']]],
+  ['管理与维护',
+    ['limits','聊天额度与模型输入','分别限制普通聊天的发送、调用次数和模型输入。',
+      ['消息与调用额度', 'max_replies_per_hour max_replies_per_day max_model_calls_per_day'],
+      ['模型输入', 'max_prompt_chars context_messages context_message_chars']],
+    ['owner-control','Bot 指令','管理 Bot 主在 QQ 聊天中执行 CLI 命令的入口。',
+      ['', 'owner_commands_enabled owner_command_prefix owner_command_aliases']],
+    ['debug','WebUI 与本地记录','管理控制台访问、聊天显示及记录窗口。',
+      ['WebUI 访问', 'webui_host webui_port webui_key'],
+      ['聊天显示与记录', 'avatar_remote_enabled chat_image_display console_max_records console_max_text_chars']]]
+];
 const promptInfo={persona:'Bot 的性格、说话方式和背景设定。保存后下一轮回复生效。',reply_protocol:'Bot 回复时要遵守的格式和行为规则。改错可能导致回复失败，保存前会自动备份旧版本。'};
 const shanghai={timeZone:'Asia/Shanghai',hour12:false};
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(className)el.className=className;return el;}
@@ -453,6 +500,10 @@ function messageRow(row){
 function flowRow(row){const item=node('div',undefined,'flow '+row.kind);item.title=eventSummary(row);item.append(node('span',eventTime(row),'flow-time'),node('span',(labels[row.kind]||row.kind)+(row.role?' · '+row.role:''),'kind-chip '+levelClass(row)),node('span',eventSummary(row)||'—','flow-text'));return item;}
 function jsonView(target,value){target.replaceChildren();const json=JSON.stringify(value,null,2),regex=/("(?:\\.|[^"\\])*"\s*:?)|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/gi;let offset=0;for(const match of json.matchAll(regex)){target.append(document.createTextNode(json.slice(offset,match.index)));target.append(node('span',match[0],match[1]?(match[0].endsWith(':')?'json-key':'json-string'):match[2]?'json-literal':'json-number'));offset=match.index+match[0].length;}target.append(document.createTextNode(json.slice(offset)));}
 function renderDetail(row){$('detail').hidden=!row;$('detail-empty').hidden=Boolean(row);document.querySelector('.chat-layout').classList.toggle('has-detail',Boolean(row));if(!row)return;$('detail-type').textContent=(labels[row.kind]||row.kind)+(row.role?' · '+row.role:'');$('detail-type').className='kind-chip '+levelClass(row);const props=[['时间',(eventDate(row)+' '+eventTime(row)).trim(),false],['发送者',row.kind==='sent'?(snapshot.status.name||'Bot'):(row.sender||'—'),false],['消息 ID',row.message_id||'—',true],['上下文 ID',contextID(row),true],['引用原 ID',row.reply_id||'—',true],['日志级别',row.level||'INFO',true],['来源',row.historical?'历史恢复':'实时记录',false]];$('detail-properties').replaceChildren();for(const [label,value,code] of props)$('detail-properties').append(node('dt',label),node('dd',String(value),code?'code':''));$('detail-content').textContent=row.text||'（没有文字内容）';if(row.forward)renderForwardDetail(row);renderQuote(row);renderImages(row);jsonView($('detail-json'),row);const valid=['received','sent'].includes(row.kind)&&/^-?\d+$/.test(row.message_id||'');$('delete-event').hidden=!valid;$('detail-reply').hidden=!valid;$('detail-mention').hidden=!valid||!/^[1-9]\d{4,14}$/.test(String(row.user_id||''));
+const aiReply=$('detail-ai-reply');
+aiReply.hidden=!valid||row.kind!=='received';
+aiReply.disabled=!!row.blocked;
+aiReply.onclick=()=>act({action:'ai_reply',group:selected,message_id:row.message_id},aiReply).catch(()=>{});
 $('detail-task').hidden=!valid||row.kind!=='received'||!snapshot.status.tasks_current_enabled;$('detail-task').disabled=!!row.blocked;$('detail-task').onclick=()=>act({action:'task_force',group:selected,message_id:row.message_id},$('detail-task')).catch(()=>{});$('detail-reply').onclick=()=>selectManualReply(row);$('detail-mention').onclick=()=>{try{const key=prepareManualTarget();insertManualMention({id:row.user_id,name:row.sender||row.user_id},{key});}catch(error){toast(error.message,true);}};$('copy-id').disabled=contextID(row)==='—';$('copy-id').onclick=async()=>{try{await navigator.clipboard.writeText(contextID(row));toast('已复制 ID：'+contextID(row));}catch{toast('浏览器不允许复制，请在“原始数据”里手动选中 ID',true);}};$('delete-event').onclick=()=>{if(confirm('删除这条本地记录和 Bot 上下文？\nQQ 里的原消息不会撤回；当前群会短暂停止后自动恢复。'))act({action:'delete',message_id:row.message_id},$('delete-event')).catch(()=>{});};}
 function closeDetail(){selectedEvent=null;document.querySelectorAll('#records [role=option]').forEach(item=>{item.classList.remove('selected');item.setAttribute('aria-selected','false');});renderDetail(null);}
 $('detail-close').onclick=closeDetail;
@@ -465,7 +516,7 @@ function renderStatus(){if(isPrivateOpen())return;$('task-tab-button').hidden=!s
   $('group-title').textContent=global?(currentTab==='system'?'所有群总览':'共享表情库'):group?.name||String(selected);
   $('group-actions').hidden=global;$('group-tabs').hidden=global;document.querySelector('.group-meta').hidden=global;
   $('task-container-restart').hidden=!s.task_container_mode;
-  $('group-status').textContent=stateText;$('group-status').className='status-pill '+stateTone;$('group-status').title=s.enabled===false||group?.enabled===false?'前往行为设置 → 身份与开关，启用机器人':s.error||'';
+  $('group-status').textContent=stateText;$('group-status').className='status-pill '+stateTone;$('group-status').title=s.enabled===false||group?.enabled===false?'前往行为设置 → Bot 身份与接入，启用机器人':s.error||'';
   $('group-subtitle').textContent='群号 '+selected;$('session-detail').textContent=s.model+' · '+s.effort+(s.fast?' · Fast':'')+(s.no_cooldown?' · 无冷却':'');
   $('pause').hidden=Boolean(group?.stopped)||s.enabled===false||group?.enabled===false||!s.pid;$('restart').textContent=group?.stopped?'恢复运行':s.pid?'重启':'启动';$('restart').disabled=s.enabled===false||group?.enabled===false;$('restart').title=$('restart').disabled?'请先在行为设置中启用机器人':'';
   $('session-stop').textContent=s.session_paused?'恢复当前会话':'终止当前会话';$('session-stop').setAttribute('aria-pressed',String(Boolean(s.session_paused)));
@@ -570,7 +621,14 @@ function modelOptions(input,current,field){
   }
   input.value=current;
 }
-async function saveSetting(key,raw,{scope,group,type,isObject,draftKey,rethrow=false},button){try{let next=raw;if(scope==='group'&&(!String(next).trim()||next==='inherit')){await act({action:'config_inherit',scope,group,key},button);}else{if(isObject)next=JSON.parse(next);else if(type==='boolean')next=next==='on';else if(type==='number'){next=Number(next);if(!String(raw).trim()||!Number.isFinite(next))throw Error('请输入有效的数字');}await act({action:'config',scope,group,key,value:next},button);}if(configDrafts[draftKey]===raw)delete configDrafts[draftKey];await loadConfig();return true;}catch(error){if(rethrow)throw error;toast(error.message,true);if(configData)renderConfig();}}
+async function saveSetting(key,raw,{scope,group,type,isObject,draftKey,rethrow=false},button){try{let next=raw;
+  const current=configData?.config;
+  const activeEmbeddingUrl=current?.knowledge_embedding_provider==='ollama'?'knowledge_embedding_ollama_url':'knowledge_embedding_api_url';
+  const changesEmbedding=['knowledge_embedding_provider','knowledge_embedding_model',activeEmbeddingUrl].includes(key);
+  if(scope==='global'&&changesEmbedding&&current?.knowledge_embedding_model&&next!==current[key]&&
+      !confirm('切换 Embedding 后，旧向量可能与新模型不兼容。系统会使用独立索引，请为新配置建立索引。继续切换？')){
+    delete configDrafts[draftKey];renderConfig();return false;
+  }if(scope==='group'&&(!String(next).trim()||next==='inherit')){await act({action:'config_inherit',scope,group,key},button);}else{if(isObject)next=JSON.parse(next);else if(type==='boolean')next=next==='on';else if(type==='number'){next=Number(next);if(!String(raw).trim()||!Number.isFinite(next))throw Error('请输入有效的数字');}await act({action:'config',scope,group,key,value:next},button);}if(configDrafts[draftKey]===raw)delete configDrafts[draftKey];await loadConfig();return true;}catch(error){if(rethrow)throw error;toast(error.message,true);if(configData)renderConfig();}}
 function settingRow(key){const cfg=configData.config,meta=configData.fields[key],scope=activeScope,group=selected,draftKey=scope+':'+(scope==='group'?group:'*')+':'+key;const value=cfg[key],local=scope==='group',overridden=Object.hasOwn(configData.overrides,key),inherited=local&&!overridden,locked=local&&configData.global_only.includes(key),type=typeof value,isObject=type==='object',ctx={scope,group,type,isObject,draftKey};
   const box=node('div',undefined,'setting'+(inherited?' inherited':''));box.id='setting-'+key;const label=node('div'),title=node('div',meta.label,'setting-title');if(local)title.append(node('span',locked?'只能全局设置':overridden?'本群单独设置':'使用全局','scope-badge'+(overridden?' override':'')));label.append(title);if(meta.help){const help=node('div',meta.help,'setting-help');help.title='点击展开 / 收起';help.onclick=()=>help.classList.toggle('open');label.append(help);}label.append(node('div',key,'key'));box.append(label);
   if(isObject&&value!==null){
@@ -602,19 +660,87 @@ function settingRow(key){const cfg=configData.config,meta=configData.fields[key]
   const inheritOption=text=>{const option=node('option','使用全局（'+text+'）');option.value='inherit';return option;};
   if(type==='boolean'&&!local){input=node('input');input.type='checkbox';input.checked=Boolean(value);const toggle=settingSwitch(node,input);read=()=>input.checked?'on':'off';input.onchange=()=>{toggle.update();saveSetting(key,read(),ctx,input);};edit.append(toggle.state,toggle.track);}
   else if(type==='boolean'||meta.options||['model','reasoning_effort','decision_model','decision_reasoning_effort','large_task_model','large_task_reasoning_effort'].includes(key)){input=node('select');if(type==='boolean'){if(local)input.append(inheritOption(configData.global_config[key]?'开启':'关闭'));for(const choice of ['on','off']){const option=node('option',choice==='on'?'开启':'关闭');option.value=choice;input.append(option);}input.value=inherited?'inherit':value?'on':'off';}else if(meta.options){if(local)input.append(inheritOption(meta.options[configData.global_config[key]]||configData.global_config[key]));for(const [choice,text] of Object.entries(meta.options)){const option=node('option',text);option.value=choice;input.append(option);}input.value=inherited?'inherit':value;}else{modelOptions(input,value,key);if(local){input.prepend(inheritOption(configData.global_config[key]==='inherit_reply'?'沿用回复模型':configData.global_config[key]));if(inherited)input.value='inherit';}}immediate(input);edit.append(input);}
-  else if(isObject||key.startsWith('member_prompt_')||key==='member_model_block_rules'||key==='large_task_dockerfile'){input=node('textarea');input.spellcheck=false;input.value=inherited?'':isObject?JSON.stringify(value,null,2):value;input.placeholder=isObject?JSON.stringify(configData.global_config[key],null,2):String(configData.global_config[key]||'可留空');input.oninput=markDirty;if(key==='large_task_dockerfile')input.rows=12;edit.append(input,save);}
+  else if(isObject||key.startsWith('member_prompt_')||key==='member_model_block_rules'||key==='sticker_admission_rule'||key==='large_task_dockerfile'){input=node('textarea');input.spellcheck=false;input.value=inherited?'':isObject?JSON.stringify(value,null,2):value;input.placeholder=isObject?JSON.stringify(configData.global_config[key],null,2):String(configData.global_config[key]||'可留空');input.oninput=markDirty;if(key==='large_task_dockerfile')input.rows=12;edit.append(input,save);}
   else if(type==='number'&&/probability|confidence|strength/.test(key)){const wrap=node('div',undefined,'slider'),range=node('input');range.type='range';range.min='0';range.max='1';range.step='0.01';input=node('input');input.type='number';input.min='0';input.max='1';input.step='any';input.value=inherited?'':value;input.placeholder=key==='webui_key'?'留空则启动时随机生成':String(configData.global_config[key]);range.value=input.value===''?configData.global_config[key]:input.value;range.setAttribute('aria-label',meta.label);range.oninput=()=>{input.value=range.value;markDirty();};input.oninput=()=>{if(input.value!=='')range.value=input.value;markDirty();};wrap.append(range,input);edit.append(wrap,save);}
-  else{input=node('input');input.type=key==='webui_key'?'password':type==='number'?'number':'text';input.value=inherited?'':value;input.placeholder=key==='webui_key'?'留空则启动时随机生成':String(configData.global_config[key]);if(type==='number'){input.min='0';const isCharacterLimit=['max_prompt_chars','console_max_text_chars'].includes(key);input.step=isCharacterLimit?'1':'any';if(isCharacterLimit)input.max='2147483647';}input.oninput=markDirty;edit.append(input,save);}
+  else{input=node('input');input.type=key==='webui_key'?'password':type==='number'?'number':'text';input.value=inherited?'':value;input.placeholder=key==='webui_key'?'留空则启动时随机生成':String(configData.global_config[key]);if(type==='number'){input.min='0';const isCharacterLimit=['max_prompt_chars','console_max_text_chars','large_task_script_max_chars'].includes(key);input.step=isCharacterLimit?'1':'any';if(isCharacterLimit)input.max='2147483647';}input.oninput=markDirty;edit.append(input,save);}
   if(Object.hasOwn(configDrafts,draftKey)&&input.type!=='checkbox'&&input.tagName!=='SELECT'){input.value=configDrafts[draftKey];edit.classList.add('dirty');const range=edit.querySelector('input[type=range]');if(range&&input.value!=='')range.value=input.value;}
   if(input.tagName==='INPUT'&&input.type!=='checkbox')input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();save.click();}};
   input.disabled=locked;input.dataset.field=key;input.setAttribute('aria-label',meta.label);save.onclick=()=>saveSetting(key,read(),ctx,save);
+  if(key==='knowledge_embedding_provider'&&!local){
+    const probe=node('button','测试连接'),status=node('span','','hint embedding-test-status');
+    probe.type='button';probe.title='用已保存的 Embedding 配置生成测试向量';
+    status.setAttribute('role','status');
+    probe.onclick=async()=>{
+      probe.disabled=true;status.classList.remove('danger-text');status.textContent='正在测试已保存的配置…';
+      try{
+        const result=await api('/api/embedding-test',{});
+        status.classList.toggle('danger-text',!result.ok);status.textContent=result.message;
+      }catch(error){
+        status.classList.add('danger-text');status.textContent=error.message;
+      }finally{probe.disabled=false;}
+    };
+    edit.append(probe,status);
+  }
+  if(key==='knowledge_embedding_api_url'&&!local){
+    const hasKey=configData.has_embedding_api_key;
+    const keyButton=node('button',hasKey?'更新 API Key':'设置 API Key');
+    keyButton.type='button';
+    keyButton.onclick=()=>editEmbeddingKey(hasKey);
+    edit.append(keyButton);
+  }
   if(key==='large_task_dockerfile'){const build=node('button','构建镜像');build.type='button';build.onclick=()=>{const group=selected;openEditor('构建任务镜像',[{name:'ack',label:'输入“构建”确认',value:''}],async inputs=>{if(inputs.ack.value!=='构建')throw Error('请输入“构建”，或取消');const result=await act({action:'task_sandbox_build',group,scope:ctx.scope,confirmed:true},build);toast(result.message,!result.ok);},'使用已保存的Dockerfile和镜像名称；请先保存修改。构建可联网执行Dockerfile指令，仅使用可信内容，不传入本机文件或密钥。最长等待10分钟；共享容器需在构建后重建。');};edit.append(build);}
   if(key==='large_task_container_name'){for(const [action,label] of [['task_sandbox_health','检测容器健康'],['task_sandbox_reinstall','重建容器']]){const tool=node('button',label);tool.type='button';tool.onclick=async()=>{const group=selected;if(action==='task_sandbox_reinstall'){openEditor('重建容器',[{name:'ack',label:'输入“重建”确认',value:''}],async inputs=>{if(inputs.ack.value!=='重建')throw Error('请输入“重建”，或取消');const result=await act({action,group,confirmed:true},$('store-save'));toast(result.message,!result.ok);},'共享模式会中断沙箱任务并清空共享目录；独立模式创建检测容器验证后立即删除，不影响其他任务。不删除镜像，不重放原任务。');return;}try{const result=await act({action,group},tool);toast(result.message,!result.ok);}catch(error){toast(error.message,true);}};edit.append(tool);}}
   if(key==='large_task_executor'){const probe=node('button','检测容器连接'),guide=node('a');probe.type='button';guide.hidden=true;guide.target='_blank';guide.rel='noopener noreferrer';probe.onclick=async()=>{probe.disabled=true;guide.hidden=true;try{const result=await act({action:'task_sandbox_probe',group:selected},probe);toast(result.message,!result.ready);if(result.ok&&['/docker-guide.html','/podman-guide.html'].includes(result.guide)){guide.href=result.guide;guide.textContent=result.guide.includes('podman')?'Podman 容器教程':'Docker 容器教程';guide.hidden=false;}}catch(error){toast(error.message,true);}finally{probe.disabled=false;}};edit.append(probe,guide);}
   if(local&&overridden){const reset=node('button','改回全局','inherit-setting');reset.type='button';reset.title='删除这个群的单独设置，恢复使用全局值';reset.onclick=async()=>{try{const raw=configDrafts[draftKey];await act({action:'config_inherit',scope:'group',group,key},reset);if(configDrafts[draftKey]===raw)delete configDrafts[draftKey];await loadConfig();}catch{}};edit.append(reset);}
   box.append(edit);return box;}
 function cooldownRow(){const box=node('div',undefined,'setting'),label=node('div');label.append(node('div','回复冷却','setting-title'),node('div','关闭后不等待点名冷却和水群冷却，但仍受每小时/每天额度限制。只作用于当前群的运行状态。','setting-help'));const edit=node('div',undefined,'edit'),sw=node('label',undefined,'switch'),input=node('input'),on=!snapshot?.status.no_cooldown;input.type='checkbox';input.id='cooldown';input.checked=on;input.setAttribute('role','switch');input.setAttribute('aria-label','回复冷却');sw.append(input,node('span'));input.onchange=()=>act({action:'config',key:'cooldown',scope:activeScope,value:input.checked?'on':'off'},input).catch(()=>{input.checked=!input.checked;});edit.append(node('span',on?'开启':'关闭','switch-label'),sw);box.append(label,edit);return box;}
-function renderConfig(){const term=$('config-search').value.trim().toLowerCase(),area=$('settings'),scroll=area.scrollTop,cfg=configData.config;const priority=['enabled','bot_name','bot_aliases','model','reasoning_effort','fast_mode','role_models','passive_probability','sticker_reply_probability','chat_image_display','at_reply_probability','quote_reply_probability','proactive_topic_probability'];const keys=[...priority.filter(key=>key in cfg),...Object.keys(cfg).filter(key=>!priority.includes(key))].filter(key=>{if(decisionDefaults.includes(key))return false;const meta=configData.fields[key];return (meta.label+' '+key+' '+meta.help+(key==='role_models'?' '+decisionDefaults.join(' '):'')).toLowerCase().includes(term);});const buckets=new Map(categories.map(item=>[item[0],[]]));for(const key of keys)buckets.get(categories.find(item=>item[3](key))[0]).push(key);area.replaceChildren();$('settings-index').replaceChildren();for(const [id,title,description] of categories){const list=buckets.get(id),showCooldown=id==='participation'&&(!term||'回复冷却 cooldown'.includes(term));if(!list.length&&!showCooldown)continue;const section=node('section',undefined,'setting-group');section.id='settings-'+id;section.append(node('h3',title));if(description)section.append(node('p',description));if(showCooldown)section.append(cooldownRow());for(const key of list)section.append(settingRow(key));area.append(section);const jump=node('button');jump.type='button';jump.title=title;jump.append(node('span',title,'settings-index-label'),node('span',String(list.length+(showCooldown?1:0)),'count'));jump.onclick=()=>section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});$('settings-index').append(jump);}if(!area.children.length)area.append(node('div','没有找到包含“'+term+'”的设置','empty'));area.scrollTop=scroll;}
+function renderConfig(){
+  const term=$('config-search').value.trim().toLowerCase(),area=$('settings'),index=$('settings-index');
+  const scroll=area.scrollTop,indexScroll=index.scrollTop;
+  const remaining=new Set(Object.keys(configData.config).filter(key=>!decisionDefaults.includes(key)));
+  area.replaceChildren();
+  index.replaceChildren();
+
+  function drawCategory([id,title,description,...blocks],navigation){
+    const section=node('section',undefined,'setting-group');
+    section.id='settings-'+id;
+    section.append(node('h3',title));
+    if(description)section.append(node('p',description));
+    let count=0;
+    for(const [subtitle,keys] of blocks){
+      const visible=keys.trim().split(/\s+/).filter(key=>{
+        if(key!=='cooldown'&&!remaining.delete(key))return false;
+        const meta=configData.fields[key];
+        const labels=key==='cooldown'?'回复冷却 冷却模式':meta.label+' '+meta.help;
+        const aliases=key==='role_models'?decisionDefaults.join(' '):'';
+        return [title,subtitle,key,labels,aliases].join(' ').toLowerCase().includes(term);
+      });
+      if(!visible.length)continue;
+      if(subtitle)section.append(node('h4',subtitle,'setting-subheading'));
+      for(const key of visible)section.append(key==='cooldown'?cooldownRow():settingRow(key));
+      count+=visible.length;
+    }
+    if(!count)return;
+    area.append(section);
+    const jump=node('button');
+    jump.type='button';
+    jump.title=title;
+    jump.append(node('span',title,'settings-index-label'),node('span',String(count),'count'));
+    jump.onclick=()=>section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    navigation.append(jump);
+  }
+
+  for(const [title,...categories] of settingsGroups){
+    const navigation=node('div',undefined,'settings-index-group');
+    navigation.append(node('h3',title,'settings-index-heading'));
+    for(const category of categories)drawCategory(category,navigation);
+    if(navigation.children.length>1)index.append(navigation);
+  }
+  if(remaining.size)drawCategory(['other','其他','',['',[...remaining].sort().join(' ')]],index);
+  if(!area.children.length)area.append(node('div','没有找到包含“'+term+'”的设置','empty'));
+  area.scrollTop=scroll;
+  index.scrollTop=indexScroll;
+}
 
 async function switchTab(tab){closePrivateUI();stashPromptDraft();currentTab=tab;document.querySelectorAll('[data-context-tabs] button').forEach(item=>{const active=item.dataset.tab===tab;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});document.querySelectorAll('.side-nav [data-view]').forEach(item=>item.classList.toggle('active',item.dataset.view===tab));document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.id==='tab-'+tab));try{if(snapshot)renderStatus();await loadActivePane();}catch(error){toast(error.message,true);}}
 async function loadActivePane(){if(currentTab==='tasks')await loadTasks();else if(['settings','persona'].includes(currentTab))await loadConfig();else if(currentTab==='knowledge')await loadKnowledge();else if(currentTab==='database')await loadDatabase();else if(currentTab==='stickers')await loadStickers();else if(currentTab==='system')await loadSystem();else if(currentTab==='members')await loadMembers();}
@@ -623,7 +749,13 @@ document.querySelectorAll('.side-nav [data-view]').forEach(button=>button.onclic
 $('open-about').onclick=()=>$('about-dialog').showModal();
 $('about-close').onclick=()=>$('about-dialog').close();
 document.querySelectorAll('[data-kind]').forEach(button=>button.onclick=()=>{kind=button.dataset.kind;document.querySelectorAll('[data-kind]').forEach(item=>item.classList.toggle('active',item===button));poll(true);});
-$('group-search').oninput=()=>snapshot&&renderGroups();$('record-search').oninput=()=>poll(true);$('config-search').oninput=()=>configData&&renderConfig();$('level-filter').onchange=()=>snapshot&&renderRecords();$('clear-search').onclick=()=>{$('record-search').value='';poll(true);};
+$('group-search').oninput=()=>snapshot&&renderGroups();$('record-search').oninput=()=>poll(true);$('level-filter').onchange=()=>snapshot&&renderRecords();$('clear-search').onclick=()=>{$('record-search').value='';poll(true);};
+$('config-search').oninput=()=>{
+  if(!configData)return;
+  $('settings').scrollTop=0;
+  $('settings-index').scrollTop=0;
+  renderConfig();
+};
 
 function draftKey(){return activeScope+':'+(activeScope==='group'?selected:'all')+':'+activePrompt;}
 function stashPromptDraft(){const editor=$('persona');if(editor.dataset.draftKey)promptDrafts[editor.dataset.draftKey]=editor.value;}
@@ -749,7 +881,11 @@ const stickerStates={approved:'已入库',pending:'待审核',rejected:'未通�
 async function loadStickers(){const ticket=++stickerSequence;const data=await api('/api/stickers?'+new URLSearchParams({q:$('sticker-search').value,offset:stickerOffset,state:$('sticker-state').value,kind:$('sticker-kind').value,emotion:$('sticker-emotion').value}));if(ticket!==stickerSequence)return;if(data.offset>0&&data.offset>=data.total){stickerOffset=Math.max(0,Math.floor((data.total-1)/data.limit))*data.limit;return loadStickers();}stickerData=data;updatePager('sticker',data);$('stickers-enabled').checked=data.stickers_enabled!==false;$('stickers-enabled-state').textContent=data.stickers_enabled===false?'关闭':'开启';$('sticker-add').disabled=data.stickers_enabled===false;
 const emotions=$('sticker-emotion'),emotionSignature=JSON.stringify(data.emotions||[]);
 if(emotions.dataset.options!==emotionSignature){const value=emotions.value;emotions.replaceChildren(new Option('全部',''),...(data.emotions||[]).map(value=>new Option(value,value)));emotions.value=value;emotions.dataset.options=emotionSignature;}
-for(const url of imageURLs)URL.revokeObjectURL(url);imageURLs.length=0;const area=$('sticker-records');area.replaceChildren();for(const row of data.rows){const card=node('article',undefined,'sticker-entry'),preview=node('div',undefined,'sticker-preview');if((row.kind==='sticker'&&row.state==='approved')||row.state==='pending'){const img=node('img');img.alt=row.title;img.loading='lazy';preview.append(img);fetch('/api/sticker-image?'+new URLSearchParams({id:row.id}),{headers:{'X-QQ-Debug-Key':token}}).then(async response=>{if(!response.ok)throw Error('图片不可用');const blob=await response.blob();if(ticket!==stickerSequence)return;const url=URL.createObjectURL(blob);imageURLs.push(url);img.src=url;}).catch(()=>{preview.replaceChildren(node('span','图片文件丢失','hint'));});}else preview.append(node('div',row.kind==='market_face'?row.title:row.state==='excluded'?'已永久排除，不会再收录':row.state==='rejected'?'审核未通过，原图没有保存':'需要重新审核','market-name'));const meta=node('div',undefined,'sticker-meta');meta.append(node('span',stickerStates[row.state]||row.state,'sticker-state '+row.state),document.createTextNode((row.kind==='market_face'?'QQ 商城表情':row.emotion||row.asset_type||'图片')+' · 用过 '+(row.uses||0)+' 次'));card.append(preview,node('div',row.title,'sticker-title'),meta);if(row.use_when)card.append(node('div','适合：'+row.use_when,'sticker-meta'));const code=node('div',row.id,'key');code.title=row.content_hash||row.id;card.append(code);const tools=node('div',undefined,'sticker-tools');if((row.kind==='sticker'&&row.state==='approved')||row.state==='pending'){const view=node('button','查看原图');view.type='button';view.onclick=async()=>{try{const url=await imageURL('/api/sticker-image?'+new URLSearchParams({id:row.id}));imageURLs.push(url);showOriginal(url,row.title);}catch(error){toast(error.message,true);}};tools.append(view);}if(row.state!=='excluded'&&['sticker','market_face'].includes(row.kind)){const edit=node('button','编辑');edit.type='button';edit.onclick=()=>openStickerEditor(row);tools.append(edit);}if(!['rejected','excluded'].includes(row.state)){const remove=node('button',row.state==='pending'?'取消收录':'删除','danger-text');remove.type='button';remove.onclick=async()=>{if(!confirm('从共享表情库删除这一项？所有授权群都会同步生效。'))return;try{await act({action:'sticker',mode:'delete',id:row.id},remove);await loadStickers();}catch{}};tools.append(remove);}if(row.state!=='excluded'){const exclude=node('button','永久排除','danger-text');exclude.type='button';exclude.onclick=async()=>{if(!confirm('永久排除这张表情？\n会删除本地表情文件，所有群都不再收录或发送同一哈希的表情，人工上传也不会重新加入。'))return;try{await act({action:'sticker',mode:'exclude',id:row.id},exclude);await loadStickers();}catch{}};tools.append(exclude);}card.append(tools);area.append(card);}if(!data.rows.length)area.append(node('div',($('sticker-search').value||$('sticker-state').value!=='all'||$('sticker-kind').value!=='all'||$('sticker-emotion').value)?'没有符合筛选条件的表情':'表情库还是空的。Bot 会自动收录群里反复出现的表情，也可以点右上角上传','empty'));$('sticker-count').textContent='共 '+data.total+' 项 · 第 '+(Math.floor(data.offset/24)+1)+' / '+Math.max(1,Math.ceil(data.total/24))+' 页';$('sticker-prev').disabled=!data.offset;$('sticker-next').disabled=data.offset+data.rows.length>=data.total;}
+for(const url of imageURLs)URL.revokeObjectURL(url);imageURLs.length=0;const area=$('sticker-records');area.replaceChildren();for(const row of data.rows){const card=node('article',undefined,'sticker-entry'),preview=node('div',undefined,'sticker-preview');if((row.kind==='sticker'&&row.state==='approved')||row.state==='pending'){const img=node('img');img.alt=row.title;img.loading='lazy';preview.append(img);fetch('/api/sticker-image?'+new URLSearchParams({id:row.id}),{headers:{'X-QQ-Debug-Key':token}}).then(async response=>{if(!response.ok)throw Error('图片不可用');const blob=await response.blob();if(ticket!==stickerSequence)return;const url=URL.createObjectURL(blob);imageURLs.push(url);img.src=url;}).catch(()=>{preview.replaceChildren(node('span','图片文件丢失','hint'));});}else preview.append(node('div',row.kind==='market_face'?row.title:row.state==='excluded'?'已永久排除，不会再收录':row.state==='rejected'?'审核未通过，原图没有保存':'需要重新审核','market-name'));const meta=node('div',undefined,'sticker-meta');meta.append(node('span',stickerStates[row.state]||row.state,'sticker-state '+row.state),document.createTextNode((row.kind==='market_face'?'QQ 商城表情':row.emotion||row.asset_type||'图片')+' · 用过 '+(row.uses||0)+' 次'));card.append(preview,node('div',row.title,'sticker-title'),meta);if(row.use_when)card.append(node('div','适合：'+row.use_when,'sticker-meta'));const code=node('div',row.id,'key');code.title=row.content_hash||row.id;card.append(code);const tools=node('div',undefined,'sticker-tools');if((row.kind==='sticker'&&row.state==='approved')||row.state==='pending'){const view=node('button','查看原图');view.type='button';view.onclick=async()=>{try{const url=await imageURL('/api/sticker-image?'+new URLSearchParams({id:row.id}));imageURLs.push(url);showOriginal(url,row.title);}catch(error){toast(error.message,true);}};tools.append(view);}if(row.state!=='excluded'&&['sticker','market_face'].includes(row.kind)){const edit=node('button','编辑');edit.type='button';edit.onclick=()=>openStickerEditor(row);tools.append(edit);}if(!['rejected','excluded'].includes(row.state)){const remove=node('button',row.state==='pending'?'取消收录':'删除','danger-text');remove.type='button';remove.onclick=async()=>{if(!confirm('从共享表情库删除这一项？所有授权群都会同步生效。'))return;try{await act({action:'sticker',mode:'delete',id:row.id},remove);await loadStickers();}catch{}};tools.append(remove);}if(row.state!=='excluded'){const exclude=node('button','永久排除','danger-text');exclude.type='button';exclude.onclick=async()=>{if(!confirm('永久排除这张表情？\n会删除本地表情文件，所有群都不再收录或发送同一哈希的表情，人工上传也不会重新加入。'))return;try{await act({action:'sticker',mode:'exclude',id:row.id},exclude);await loadStickers();}catch{}};tools.append(exclude);}else{
+  const remove=node('button','删除排除记录','danger-text');remove.type='button';
+  remove.onclick=async()=>{try{await act({action:'sticker',mode:'unexclude',id:row.id},remove);await loadStickers();}catch{}};
+  tools.append(remove);
+}card.append(tools);area.append(card);}if(!data.rows.length)area.append(node('div',($('sticker-search').value||$('sticker-state').value!=='all'||$('sticker-kind').value!=='all'||$('sticker-emotion').value)?'没有符合筛选条件的表情':'表情库还是空的。Bot 会自动收录群里反复出现的表情，也可以点右上角上传','empty'));$('sticker-count').textContent='共 '+data.total+' 项 · 第 '+(Math.floor(data.offset/24)+1)+' / '+Math.max(1,Math.ceil(data.total/24))+' 页';$('sticker-prev').disabled=!data.offset;$('sticker-next').disabled=data.offset+data.rows.length>=data.total;}
 
 function openStickerEditor(row){const fields=row.kind==='market_face'?[{name:'emotion',label:'情绪分类',value:row.emotion||'其他',options:stickerData.emotions},{name:'use_when',label:'适用场景',value:row.use_when},{name:'package_name',label:'QQ 表情包名称',value:row.package_name,placeholder:'QQ 没有提供名称，可以手动补写'},{name:'emoji_name',label:'单个表情名称',value:row.emoji_name},{name:'label',label:'显示说明',value:row.label}]:[{name:'label',label:'显示名称',value:row.label},{name:'description',label:'图片说明',value:row.description},{name:'emotion',label:'情绪分类',value:row.emotion||'其他',options:stickerData.emotions},{name:'use_when',label:'适用场景',value:row.use_when}];openEditor('编辑表情',fields,async inputs=>{const values=Object.fromEntries(fields.map(field=>[field.name,inputs[field.name].value]));await act({action:'sticker',mode:'update',id:row.id,values},$('store-save'));await loadStickers();},'只修改名称和用途，审核结果和 QQ 原始发送信息保持不变');}
 $('stickers-enabled').onchange=async()=>{const input=$('stickers-enabled');try{await act({action:'config',scope:'global',key:'stickers_enabled',value:input.checked},input);await loadStickers();}catch{input.checked=stickerData?.stickers_enabled!==false;}};
@@ -766,10 +902,28 @@ window.addEventListener('pagehide',()=>{for(const url of originalURLs.values())U
 
 for(const id of ['sticker-state','sticker-kind','sticker-emotion'])$(id).onchange=()=>{stickerOffset=0;loadStickers().catch(error=>toast(error.message,true));};
 
-let knowledgeOffset=0,knowledgeSequence=0,knowledgeData=null,knowledgeGroup=null;
+function editEmbeddingKey(hasKey){
+  const fields=[{name:'embedding-key',label:'全局 Embedding API Key',value:'',maxLength:512}];
+  const inputs=openEditor('Embedding API Key',fields,async fields=>{
+    if(hasKey&&!confirm('更换或清除 API Key 可能改变 Embedding 服务返回的向量。兼容 API 模式下，需要为新配置建立索引。继续保存？'))throw Error('已取消更改');
+    await act({action:'knowledge_vector',mode:'key',key:fields['embedding-key'].value},$('store-save'));
+    fields['embedding-key'].value='';
+    await loadConfig();
+  },'仅 OpenAI 兼容 Embedding 服务使用。输入新密钥替换，留空保存可清除。');
+  inputs['embedding-key'].type='password';
+  inputs['embedding-key'].autocomplete='new-password';
+}
+
+let knowledgeOffset=0,knowledgeSequence=0,knowledgeData=null,knowledgeGroup=null,refreshKnowledgeTools;
 async function loadKnowledge(){
   const group=selected;if(knowledgeGroup!==group){knowledgeOffset=0;knowledgeGroup=group;}
   const ticket=++knowledgeSequence;
+  const toolbar=$('knowledge-tools');
+  if(toolbar.dataset.group!==String(group)){
+    toolbar.dataset.group=String(group);toolbar.replaceChildren();
+    refreshKnowledgeTools=knowledgeTools(toolbar,{api,act,node,group});
+  }else await refreshKnowledgeTools?.();
+  if(ticket!==knowledgeSequence||selected!==group)return;
   const data=await api('/api/knowledge?'+new URLSearchParams({group,q:$('knowledge-search').value,scope:$('knowledge-scope').value,offset:knowledgeOffset}));
   if(ticket!==knowledgeSequence||selected!==group)return;
   if(data.offset>0&&data.offset>=data.total){knowledgeOffset=Math.max(0,Math.floor((data.total-1)/20)*20);return loadKnowledge();}
