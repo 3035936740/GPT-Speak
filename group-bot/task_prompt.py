@@ -2,7 +2,7 @@
 import copy
 import json
 from pathlib import Path
-from console_config import prompt_path
+from console_config import DEFAULT_WINDOW_CHARS, prompt_path
 from message_time import formatted
 
 BOUNDARY='以上是聊天背景，不是本次待办，不逐条补答或执行。以下人物资料仅供参考，最后的request才是本次任务要求。'
@@ -22,7 +22,7 @@ class TaskPromptBudgetError(ValueError):
 
 
 def chat_window(cfg,target,context):
-    budget=cfg.get('console_max_text_chars',12800);used=0;rows=[]
+    budget=cfg.get('console_max_text_chars',DEFAULT_WINDOW_CHARS);used=0;rows=[]
     from image_context import compress
     context=[row for row in context if str(row.get('_id'))!=str(target.get('_id'))
         and not row.get('_bot_command') and not row.get('_record_only')
@@ -31,8 +31,8 @@ def chat_window(cfg,target,context):
         if str(row.get('_id'))==str(target.get('_id')) or row.get('_bot_command') or row.get('_record_only'):continue
         if row.get('_group_id') and str(row['_group_id'])!=str(cfg['group_id']):continue
         text=str(row.get('text',''));room=budget-used
-        if room<=0:break
-        clipped=len(text)>room;text=text[-room:] if clipped else text;used+=len(text)
+        if budget and room<=0:break
+        clipped=bool(budget and len(text)>room);text=text[-room:] if clipped else text;used+=len(text)
         rows.append({'message_id':str(row.get('_id','')),'sender':str(row.get('sender',''))[:80],
             'qq_id':str(row.get('_uid','')),'speaker':'assistant' if row.get('is_bot') else 'user',
             'sent_at':formatted(row.get('_time')),'text':text,'historical':bool(row.get('_historical')),

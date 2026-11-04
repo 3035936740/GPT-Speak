@@ -7,7 +7,7 @@ HELP = {
     'knowledge':('/knowledge [查询内容]','查看当前群及共享知识；带查询内容时预览本地检索片段，不调用模型、不发群消息。新增、导入TXT、Markdown、YAML、JSON、INI等文本（不限文件大小与正文字数）、编辑、停用和删除请打开WebUI的“知识库”。/config knowledge_enabled off可关闭回复检索。'),
     'reconnect':('/reconnect napcat|mcp','napcat：保存并重启当前群连接，恢复暂停群，其他群不受影响；mcp：建立新stdio MCP会话并读取当前群信息，不重启QQ或其他应用。其他应用已有MCP会话需在其宿主重连。'),
     'usage':('/usage [refresh] [all]','查看5小时/1周账号额度与本项目token统计；refresh只读查询当前Codex登录的额度（60秒缓存），all统计全部群，默认当前群。账号额度不是固定token总量；旧调用无usage记录不能补算。'),
-    'status':('/status','运行总览：QQ连接、模型、超时、调用额度、12800字默认窗口、屏蔽数量和后台状态。密钥隐藏；Esc返回聊天。'),
+    'status':('/status','运行总览：QQ连接、模型、超时、调用额度、对话窗口、屏蔽数量和后台状态。密钥隐藏；Esc返回聊天。'),
     'config':('/config [local|global] [show|get|set|edit|inherit|字段=值]',
         '不带参数打开可搜索面板：↑↓选择，Enter编辑/保存，空格切换开关，Tab切换全局/当前群，Ctrl+U清空编辑，Esc取消/返回。\n'
         '交互面板仅CLI；WebUI请用“行为设置”，命令行仍可使用show/get/set等文本命令。\n'
@@ -19,7 +19,7 @@ HELP = {
         '/config prompt 文本 或 /config persona 文本：修改人设；/config reply_protocol 文本：修改回复规则。\n'
         '/config edit [settings|persona|reply_protocol]：外部编辑器（仅CLI）；网页请用设置/人设页。\n'
         '/config cooldown on|off：回复冷却开关；local只影响当前群，global影响授权群。\n'
-        '普通模型输入 max_prompt_chars 默认19200，0表示不限。记录窗口 console_max_text_chars 默认12800。model_timeout_seconds / vision_timeout_seconds / image_timeout_seconds 默认30/60/150。\n'
+        '普通模型输入 max_prompt_chars 和记录窗口 console_max_text_chars 都默认19200，设为0表示不限字符。model_timeout_seconds / vision_timeout_seconds / image_timeout_seconds 默认30/60/150。\n'
         '群友策略：member_prompt_owner / member_prompt_human / member_prompt_AI / member_prompt_bot；自动屏蔽member_model_block_enabled默认off，规则member_model_block_rules。\n'
         '示例：/config local set passive_probability 0.35；/config local inherit passive_probability。'),
     'groups':('/groups','列出授权群的名称和群号。'),
@@ -38,7 +38,7 @@ HELP = {
         '/system list：查看系统干预；/system add 内容：加入当前群当前对话窗口，不立即触发回复。\n'
         '/system remove ID 或 /system delete ID：删除指定干预；/system clear：清除干预。\n'
         '选项放在内容前：--scope group|all，--mode context|once|timed|persistent，--minutes 分钟。\n'
-        'context：默认，随对话窗口滚动到期（默认12800字）；once：下一次自然回复；timed：指定分钟；persistent：直到手动清除。\n'
+        'context：默认，随对话窗口的字符预算滚动到期。窗口设为不限字符时不会因字数到期。once：下一次自然回复；timed：指定分钟；persistent：直到手动清除。\n'
         '示例：/system add --scope group --mode timed --minutes 30 这半小时回复简短一些。\n'
         '这是System→AI干预，不是User→AI消息，不会直接发送到QQ群。'),
     'say':('/say 消息内容','以bot身份发送文字到当前QQ群；成功后加入上下文与手动消息记忆。WebUI的“消息（发到群）”还支持上传、粘贴图片并与文字同条发送。不会将内容当作系统提示词。'),

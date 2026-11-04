@@ -64,7 +64,7 @@ class DebugEvents:
         if 'text' in row: row['text'] = clean(row['text'])
         cfg=self.config()
         limit=cfg['console_max_text_chars']
-        if 'text' in row:row['text']=row['text'][:limit]
+        if limit and 'text' in row:row['text']=row['text'][:limit]
         self.rows.append(row)
         self._save(cfg)
         if kind in {'received','sent'} and self.group_id in cfg.get('chat_group_whitelist',[]):

@@ -148,6 +148,7 @@ def validate_upload(params,cfg):
 
 
 async def _generate(cfg,target,pages,api,model,runtime,context=()):
+    from console_config import DEFAULT_WINDOW_CHARS
     from task_prompt import budget
     cfg={**cfg,'_image_context_runtime':runtime,'max_prompt_chars':budget(cfg)}
     if not cfg.get('large_tasks_enabled'):return None,{'allowed':False,'status':'disabled','reason':'任务文件生成与上传（实验性）未开启'}
@@ -198,7 +199,7 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
         'generation_clock':__import__('message_time').clock(),
         'request_metadata':{'message_id':str(target.get('_id','')),'sender':str(target.get('sender',''))[:80],
             'qq_id':str(target.get('_uid','')),'sent_at':__import__('message_time').formatted(target.get('_time'))},
-        'context_window':{'window_messages':len(conversation),'chat_char_limit':cfg.get('console_max_text_chars',12800)}}
+        'context_window':{'window_messages':len(conversation),'chat_char_limit':cfg.get('console_max_text_chars',DEFAULT_WINDOW_CHARS)}}
     if target.get('_task_research'):
         data['web_references'] = target['_task_research']
     prefix+='主题或风格未指定时自行决定并直接交付完整成品，不只追问或承诺。conversation为当前群对话窗口，仅作背景，不重新执行历史请求。\n'

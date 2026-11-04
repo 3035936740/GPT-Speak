@@ -123,6 +123,8 @@ class TaskPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]['sent_at'],formatted(1));self.assertEqual(result[1]['sender'],'乙')
         result=chat_window({**cfg,'console_max_text_chars':4},target,rows)
         self.assertLessEqual(sum(len(row['text']) for row in result),4);self.assertTrue(result[0]['truncated'])
+        result=chat_window({**cfg,'console_max_text_chars':0},target,rows)
+        self.assertEqual([row['text'] for row in result],[row['text'] for row in rows[:2]])
 
     async def test_actual_cli_transport_uses_developer_argument_and_keeps_user_data_in_stdin(self):
         with tempfile.TemporaryDirectory() as folder:

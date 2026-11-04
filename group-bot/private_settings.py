@@ -61,7 +61,7 @@ FIELDS = {
     'role_models': field('model','分工角色模型','在快速填充设置决策模型、决策思考等级和决策 Fast。上下文、情绪和视觉可分别覆盖这些设置。','role_models','mapping',default={}),
     'model_max_attachments': field('image','模型单次参考附件数','超出时只取前面的附件。','model_max_attachments','integer',low=1,high=50),
     'model_max_file_bytes': field('image','模型单个附件上限（字节）','达到该大小拒收，默认5MiB。','model_max_file_bytes','integer',low=1024,high=104857600),
-    'console_max_text_chars': field('debug', '每类显示文本上限（字符）', '聊天和执行日志分别计算，超出窗口的旧记录暂不显示。', 'console_max_text_chars', 'integer', low=500, high=1000000),
+    'console_max_text_chars': field('debug', '每类显示文本上限（字符）', '原默认19200，范围0～2147483647。聊天和执行日志分别计数，0表示不限字符。', 'console_max_text_chars', 'integer', low=0, high=2147483647),
 }
 
 

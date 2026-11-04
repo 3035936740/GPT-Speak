@@ -13,6 +13,9 @@ from configure_launch import validate as validate_model
 from storage_io import atomic_write_text, read_text
 from model_input_budget import DEFAULT_INPUT_CHARS, MAX_INPUT_CHARS
 
+DEFAULT_WINDOW_CHARS = 19200
+MAX_WINDOW_CHARS = 2147483647
+
 DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
     'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
@@ -43,7 +46,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'chat_image_display':'image',
     'webui_host':'127.0.0.1','webui_port':0,'webui_key':'',
     'max_reply_parts':6,'max_stickers_per_reply':3,
-    'max_prompt_chars':DEFAULT_INPUT_CHARS,'console_max_records':6000, 'console_max_text_chars':12800, 'image_summary_window_messages':2000, 'image_summary_level':'brief',
+    'max_prompt_chars':DEFAULT_INPUT_CHARS,'console_max_records':6000, 'console_max_text_chars':DEFAULT_WINDOW_CHARS, 'image_summary_window_messages':2000, 'image_summary_level':'brief',
     'image_direct_original_enabled':False,
     'image_repeat_window_messages':10, 'image_repeat_min_count':3,
     'image_repeat_pair_confidence':.5, 'image_repeat_full_streak':3, 'role_models':{},
@@ -184,7 +187,7 @@ class Config:
                 if isinstance(current[key],int) and not isinstance(value,int) and key not in {'generated_image_ttl_hours','generated_image_cleanup_interval_hours','generated_image_cleanup_interval_minutes'} and not any(word in key for word in ('probability','confidence','strength')):raise ValueError(key+' 必须为整数')
                 if ('probability' in key or 'confidence' in key) and not 0<=value<=1:raise ValueError(key+' 范围为 0~1')
                 if value<0:raise ValueError(key+' 不能为负数')
-                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key in {'knowledge_max_chars','max_prompt_chars','large_task_max_concurrent','large_task_max_steps','large_task_max_prompt_chars'} and value==0):raise ValueError(key+' 必须大于0')
+                if ('max_' in key or key in {'poll_seconds','context_messages','image_repeat_min_count','image_repeat_full_streak','image_repeat_window_messages','image_summary_window_messages'}) and value<=0 and not (key in {'knowledge_max_chars','max_prompt_chars','console_max_text_chars','large_task_max_concurrent','large_task_max_steps','large_task_max_prompt_chars'} and value==0):raise ValueError(key+' 必须大于0')
             elif isinstance(current[key],str) and (not isinstance(value,str) or len(value)>(20000 if key=='large_task_dockerfile' else 1000)):raise ValueError(key+' 文本过长或类型无效')
         if not 24<=cfg['recent_chat_journal_max_messages']<=100000:raise ValueError('近期记录条数范围24~100000')
         for key in ('name_match_sensitivity','at_context_sensitivity'):
@@ -203,7 +206,8 @@ class Config:
         for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds','large_task_timeout_seconds'):
             if not 1<=cfg[key]<=7200:raise ValueError(key+' 范围1～7200秒')
         if not 100<=cfg['console_max_records']<=100000:raise ValueError('控制台记录条数范围100~100000')
-        if not 500<=cfg['console_max_text_chars']<=1000000:raise ValueError('控制台文本字符上限范围500~1000000')
+        if type(cfg['console_max_text_chars']) is not int or not 0<=cfg['console_max_text_chars']<=MAX_WINDOW_CHARS:
+            raise ValueError('对话／执行窗口字符上限范围0～2147483647，0表示不限')
         if type(cfg['max_prompt_chars']) is not int or not 0<=cfg['max_prompt_chars']<=MAX_INPUT_CHARS:
             raise ValueError('普通模型输入字符上限范围0～2147483647，0表示不限')
         if type(cfg['knowledge_max_chars']) is not int or (cfg['knowledge_max_chars']!=0 and cfg['knowledge_max_chars']<200):raise ValueError('知识库检索字符预算为0（不限）或至少200字')

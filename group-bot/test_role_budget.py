@@ -14,9 +14,10 @@ from role_budget import fit_role_prompt,RoleBudgetError
 class RoleBudgetTests(unittest.TestCase):
     def test_input_and_record_windows_have_separate_defaults(self):
         self.assertEqual(DEFAULTS['max_prompt_chars'],19200)
-        self.assertEqual(DEFAULTS['console_max_text_chars'],12800)
+        self.assertEqual(DEFAULTS['console_max_text_chars'],19200)
         example = json.loads(Path(__file__).with_name('settings.example.json').read_text(encoding='utf-8'))
         self.assertEqual(example['max_prompt_chars'],19200)
+        self.assertEqual(example['console_max_text_chars'],19200)
 
     def test_oversized_context_and_emotion_are_fitted_before_transport(self):
         async def run(limit):

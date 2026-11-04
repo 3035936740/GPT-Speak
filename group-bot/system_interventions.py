@@ -39,10 +39,11 @@ class Interventions:
     def _write(self,data):atomic_write_text(self.path,json.dumps(data,ensure_ascii=False,indent=2))
     def _expire(self,data,cfg):
         changed=False
+        limit=cfg['console_max_text_chars']
         for row in data['entries']:
             if row['status']!='active':continue
             reason=('time' if row['mode']=='timed' and time.time()>=row['expires_at'] else
-                'context' if row['mode']=='context' and row.get('used_chars',0)+len(row['text'])>=cfg['console_max_text_chars'] else '')
+                'context' if row['mode']=='context' and limit and row.get('used_chars',0)+len(row['text'])>=limit else '')
             if reason:row.update(status='expired',ended=time.time(),end_reason=reason);changed=True
         return changed
 
@@ -68,7 +69,9 @@ class Interventions:
         if mode not in MODES:raise ValueError('有效期可选 context/once/timed/persistent')
         if mode=='timed' and (isinstance(minutes,bool) or not isinstance(minutes,(int,float)) or not 1<=minutes<=10080):raise ValueError('定时有效期范围1~10080分钟')
         cfg=Config(self.root,self.group).load()
-        cap=min(1500,max(100,input_budget(cfg)//4),cfg['console_max_text_chars']-1)
+        cap=min(1500,max(100,input_budget(cfg)//4))
+        if cfg['console_max_text_chars']:
+            cap=min(cap,cfg['console_max_text_chars']-1)
         with self.locked():
             data=self._read();self._expire(data,cfg)
             active=[row for row in data['entries'] if row['status']=='active']

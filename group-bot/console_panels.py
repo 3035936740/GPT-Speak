@@ -9,6 +9,7 @@ def status(ui):
     cfg=Config(ui.root,ui.group).load();folder=runtime(ui.root,ui.group,cfg)
     state=read_json(folder/'state.json');rows=ui.rows.get(ui.group,[])
     profiles=MemberLabels(folder).facts();cache=read_json(folder/'image-memory.json')
+    window_limit=cfg['console_max_text_chars']
     return '\n'.join(['运行状态  /status',
         '群聊       '+ui.names.get(ui.group,str(ui.group))+' ('+str(ui.group)+')',
         'QQ连接     '+('在线' if state.get('online') else '等待连接 / 已停止')+'   PID '+str(state.get('pid','—')),
@@ -19,7 +20,7 @@ def status(ui):
         '模型       '+cfg['model']+' · '+cfg['reasoning_effort']+' · fast='+str(cfg['fast_mode']),
         '超时       聊天 '+str(cfg['model_timeout_seconds'])+'s / 识图 '+str(cfg['vision_timeout_seconds'])+'s / 绘图 '+str(cfg['image_timeout_seconds'])+'s',
         '今日调用   '+str(state.get('model_calls_today',0))+' / '+str(cfg['max_model_calls_per_day']),
-        '对话窗口   '+str(cfg['console_max_text_chars'])+'字符；保留 '+str(len(rows))+' 条记录',
+        '对话窗口   '+(str(window_limit)+'字符' if window_limit else '不限字符')+'；保留 '+str(len(rows))+' 条记录',
         '近期对话   '+str(cfg['recent_chat_journal_max_messages'])+'条 / '+str(cfg['recent_chat_journal_hours'])+'小时',
         '图片摘要   '+str(len(cache.get('entries',{})))+'；已观察消息 '+str(cache.get('sequence',0)),
         '群友资料   '+str(len(profiles))+' 位；屏蔽 '+str(sum(row['blocked'] for row in profiles.values()))+' 位',

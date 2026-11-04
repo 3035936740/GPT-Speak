@@ -19,13 +19,13 @@ def bounded(records,cfg,runtime=None):
         name=lane(original)
         if name in closed:continue
         row=original;size=text_chars(row)
-        if counts[name]==0 and size>limit:
+        if limit and counts[name]==0 and size>limit:
             # An oversized newest event must not empty its entire window.
             row={**row,'text':str(row.get('text',''))[:limit],'text_truncated':True}
             if row.get('quote'):
                 row['quote']={**row['quote'],'text':str(row['quote'].get('text',''))[:max(0,limit-len(row['text']))]}
             size=text_chars(row)
-        if counts[name]>=capacity or totals[name]+size>limit:
+        if counts[name]>=capacity or (limit and totals[name]+size>limit):
             closed.add(name);continue
         kept.append(row);totals[name]+=size;counts[name]+=1
     return list(reversed(kept))

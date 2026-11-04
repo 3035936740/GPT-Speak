@@ -39,6 +39,22 @@ class DebugWindowTests(unittest.TestCase):
         self.assertEqual(kept[-1]['text'],'x'*500)
         self.assertTrue(kept[-1]['text_truncated'])
 
+    def test_zero_character_limit_keeps_text_in_both_lanes_with_count_limit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);cfg=self.setup_root(root)
+            cfg.update(console_max_text_chars=0,console_max_records=100)
+            atomic(root/'settings.json',cfg)
+            events=DebugEvents(runtime(root,100),100)
+            for n in range(6):
+                events.emit('received',message_id=str(n),text='chat'*750)
+                events.emit('stage',text='flow'*750)
+            status=DebugWebUI(root,lambda value:None).snapshot({'group':['100']})['status']
+            self.assertEqual(status['text_limit'],0)
+            self.assertEqual((status['chat_text_chars'],status['flow_text_chars']),(18000,18000))
+            kept=bounded(events.rows,{**cfg,'console_max_records':2})
+            self.assertEqual([row['kind'] for row in kept],['received','stage']*2)
+            self.assertTrue(all(len(row['text'])==3000 for row in kept))
+
     def test_native_delivery_receipt_is_not_a_second_chat_message(self):
         rows=[{'kind':'sent','message_id':'','action':'forward_group_single_msg','image_count':1,
                 'text':'[表情包：[这是你吗]]'},

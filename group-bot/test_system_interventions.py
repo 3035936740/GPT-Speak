@@ -47,6 +47,17 @@ class InterventionTests(unittest.TestCase):
         cfg['console_max_text_chars']=500;atomic(self.root/'settings.json',cfg)
         self.assertEqual(self.store.list()[0]['status'],'expired')
 
+    def test_unlimited_context_intervention_stays_active_until_finite_limit_returns(self):
+        cfg=Config(self.root,100).load()
+        cfg['console_max_text_chars']=0
+        atomic(self.root/'settings.json',cfg)
+        self.store.add('少用括号')
+        self.store.observe(self.event('x'*25000),cfg)
+        self.assertEqual(self.store.list()[0]['status'],'active')
+        cfg['console_max_text_chars']=19200
+        atomic(self.root/'settings.json',cfg)
+        self.assertEqual(self.store.list()[0]['status'],'expired')
+
     def test_once_requires_successful_send_that_used_this_instruction(self):
         row=self.store.add('只回答重点','once');cfg=Config(self.root,100).load()
         self.store.observe(self.event('a',kind='sent',intervention_ids=[]),cfg)

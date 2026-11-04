@@ -188,7 +188,8 @@ class WebUITests(unittest.TestCase):
     def test_config_excludes_paths_and_preserves_actual_persona(self):
         result=self.client.get('/api/config',headers=self.headers).json()
         self.assertNotIn('mcp_env_file',result['config']);self.assertNotIn('codex_exe',result['config'])
-        self.assertIn('yonagi',result['persona']);self.assertEqual(result['config']['console_max_text_chars'],12800)
+        self.assertIn('yonagi',result['persona'])
+        self.assertEqual(result['config']['console_max_text_chars'],Config(self.root).load()['console_max_text_chars'])
 
     def test_disabled_group_is_identified_without_claiming_qq_is_offline(self):
         cfg=Config(self.root).load();cfg['enabled']=False;atomic(self.root/'settings.json',cfg)
