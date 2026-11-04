@@ -14,6 +14,7 @@ from storage_io import atomic_write_text, read_text
 
 DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
+    'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
     'model_avatar_query_enabled':True,'model_profile_query_enabled':True,'profile_query_cache_seconds':300,
     'tool_workflow_enabled':True,'tool_workflow_max_steps':4,'web_answer_max_chars':300,
     'forward_messages_enabled':True,'forward_images_enabled':False,
@@ -42,6 +43,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'webui_host':'127.0.0.1','webui_port':0,'webui_key':'',
     'max_reply_parts':6,'max_stickers_per_reply':3,
     'max_prompt_chars':12800,'console_max_records':6000, 'console_max_text_chars':12800, 'image_summary_window_messages':2000, 'image_summary_level':'brief',
+    'image_direct_original_enabled':False,
     'image_repeat_window_messages':10, 'image_repeat_min_count':3,
     'image_repeat_pair_confidence':.5, 'image_repeat_full_streak':3, 'role_models':{},
     'proactive_topic_probability':.15, 'background_image_reading_enabled':True,
@@ -257,13 +259,25 @@ class Config:
         if not 0<=cfg['large_task_max_steps']<=2147483647:raise ValueError('任务生成调用上限范围0～2147483647，0表示不限次数，仍受总超时和模型额度限制')
         if cfg['large_task_max_prompt_chars']!=0 and not 500<=cfg['large_task_max_prompt_chars']<=2147483647:raise ValueError('任务独立输入上限须为0或500～2147483647字，0不设本地字符上限')
         if not 0<=cfg['large_task_stall_limit']<=2147483647:raise ValueError('任务空转轮数范围0～2147483647，0关闭空转保护')
-        if not isinstance(cfg['role_models'],dict):raise ValueError('role_models 必须是JSON对象')
-        if cfg.get('role_models'):
-            for role,model in cfg['role_models'].items():
-                if role not in {'context','emotion','vision'} or not isinstance(model,dict):raise ValueError('无效分工模型配置')
-                validate_model(catalog,model.get('model',cfg['model']),model.get('reasoning_effort',cfg['reasoning_effort']),cfg['fast_mode'])
+        from model_routing import validate_decision_models
+        validate_decision_models(catalog,cfg)
         return cfg
-    def save(self,cfg,explicit_keys=()):
+    def save_decision_settings(self, changes):
+        from model_routing import DECISION_SETTINGS
+
+        if not isinstance(changes, dict) or not changes or set(changes) - set(DECISION_SETTINGS):
+            raise ValueError('无效的决策模型设置')
+        cfg = self.load()
+        resets = {key for key, value in changes.items() if value is None}
+        if resets:
+            if self.group_id is None:
+                raise ValueError('全局设置没有上层可继承')
+            parent = Config(self.root).load()
+            cfg.update({key: parent[key] for key in resets})
+        cfg.update({key: value for key, value in changes.items() if key not in resets})
+        self.save(cfg, explicit_keys=set(changes) - resets, inherited_keys=resets)
+
+    def save(self,cfg,explicit_keys=(),inherited_keys=()):
         old_cfg=self.load()
         destination=self.scope_root/'settings.json'
         original=destination.read_bytes() if destination.exists() else None
@@ -272,7 +286,8 @@ class Config:
         cfg=self.validate(cfg)
         if self.group_id is not None:
             global_cfg=Config(self.root).load();old=self.overrides()
-            data={key:cfg[key] for key in cfg if key not in GLOBAL_ONLY and (key in old or key in explicit_keys or cfg[key]!=global_cfg[key])}
+            data={key:cfg[key] for key in cfg if key not in GLOBAL_ONLY and key not in inherited_keys
+                  and (key in old or key in explicit_keys or cfg[key]!=global_cfg[key])}
             self.save_overrides(data)
         else:
             backup=self.root/'config-backups';backup.mkdir(exist_ok=True)

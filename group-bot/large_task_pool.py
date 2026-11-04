@@ -13,6 +13,23 @@ from console_config import pid_alive,atomic
 log=logging.getLogger('qq-group-bot')
 
 
+def container_maintenance(root):
+    """Hold the admission transaction through maintenance so no task can race it."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def guard():
+        pool = LargeTaskPool(root, Path(root)/'runtime', 'maintenance')
+        with closing(pool.connect()) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            now = time.time()
+            for pid, stamp, ttl in db.execute('SELECT pid,stamp,ttl FROM jobs'):
+                if now - stamp <= ttl and pid_alive(pid):
+                    raise ValueError('还有任务正在运行，请等待结束后再重启容器')
+            yield
+    return guard()
+
+
 class LargeTaskPool:
     def __init__(self,root,folder,group):
         self.root=Path(root);self.folder=Path(folder);self.group=str(group)
@@ -54,7 +71,12 @@ class LargeTaskPool:
 
     def submit(self,identity,cfg,work,active=lambda:True):
         if self.closed or not cfg.get('large_tasks_enabled') or not active():return 'disabled'
-        token,status=self.claim(identity,cfg)
+        try:
+            token,status=self.claim(identity,cfg)
+        except sqlite3.OperationalError as error:
+            if getattr(error,'sqlite_errorcode',None) not in {5,6} and 'locked' not in str(error).lower():
+                raise
+            return 'full'
         if not token:return status
         async def runner():
             operation=asyncio.create_task(work())

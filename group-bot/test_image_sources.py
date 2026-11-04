@@ -30,6 +30,60 @@ def gif_bytes():
 
 
 class ImageSourceTests(unittest.TestCase):
+    def test_direct_original_images_keep_bytes_and_order_above_summary_limit(self):
+        async def run():
+            urls = [f'https://gchat.qpic.cn/ordered-{index}' for index in range(12)]
+            data = {}
+            for index, url in enumerate(urls):
+                buffer = io.BytesIO()
+                Image.new('RGB', (20, 30), (index, 30, 100)).save(buffer, format='PNG')
+                data[url] = buffer.getvalue()
+            for mode in ('own', 'quoted', 'both', 'default'):
+                requests = []
+                def respond(request):
+                    url = str(request.url)
+                    requests.append(url)
+                    return httpx.Response(200, content=data[url])
+                with tempfile.TemporaryDirectory() as folder:
+                    memory = ImageMemory(Path(folder) / 'cache.json')
+                    memory.observe('quote', ['key'])
+                    memory.store('key', hashlib.sha256(data[urls[0]]).hexdigest(), FACTS)
+                    quote = {'_id': 'quote', 'text': '图片原文', 'is_bot': True,
+                             '_images': urls if mode == 'quoted' else urls[:3]}
+                    target = {'_id': 'ask', 'text': '这是什么意思？', 'at_bot': mode != 'quoted',
+                              '_audience': 'direct'}
+                    if mode in {'own', 'default'}:
+                        target.update(_images=urls, _image_keys={urls[0]: 'key'})
+                    else:
+                        target['_reply_id'] = 'quote'
+                        if mode == 'both':
+                            target['_images'] = urls[3:]
+                    async def generate(cfg, context, trigger, adjusted, paths):
+                        self.assertEqual(adjusted['text'], target['text'])
+                        if mode == 'default':
+                            self.assertEqual(requests, urls[1:2])
+                            self.assertEqual(len(paths), 1)
+                        else:
+                            self.assertEqual(requests, urls[:10])
+                            self.assertEqual([path.read_bytes() for path in paths], [data[url] for url in urls[:10]])
+                            self.assertEqual(adjusted['_content_reference']['image_labels'],
+                                             [f'[图片{i}]' for i in range(1, 11)])
+                            self.assertEqual(adjusted['_attachment_status'][0]['count'], 2)
+                            if mode in {'quoted', 'both'}:
+                                self.assertEqual(adjusted['_quoted_message']['text'], '图片原文')
+                        return 'ok'
+                    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                        cfg = {**bot.settings(), '_image_memory': memory,
+                               'max_images_per_call': 2, 'model_max_files': 10}
+                        if mode != 'default':
+                            cfg['image_direct_original_enabled'] = True
+                        with patch.object(bot, 'RUNTIME', Path(folder)), patch.object(bot, 'generate', generate), \
+                                patch.object(bot, 'analyze_roles', AsyncMock(return_value={})), \
+                                patch.object(bot.EmojiLibrary, 'contact_sheet', return_value=False):
+                            result = await bot.generate_for_message(client, cfg, [quote], '直接对话', target)
+                        self.assertEqual(result, 'ok')
+        asyncio.run(run())
+
     def test_market_gif_download_decodes_for_vision_and_hashes_original(self):
         async def run():
             raw = gif_bytes()

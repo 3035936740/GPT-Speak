@@ -157,12 +157,11 @@ async def analyze(cfg, context, target, image_paths, generate_json, runtime, vis
     with tempfile.TemporaryDirectory(prefix='roles-',dir=runtime) as folder:
         async def run(role):
             from model_timeouts import vision_config
+            from model_routing import decision_config
             role_timeout=min(timeout,cfg.get('model_timeout_seconds',30))
             role_cfg=(vision_config(cfg) if role=='vision' else
                 {**cfg,'model_timeout_seconds':role_timeout,'_request_timeout_seconds':role_timeout})
-            overrides=cfg.get('role_models',{}).get(role,{})
-            for field in ('model','reasoning_effort'):
-                if field in overrides: role_cfg[field]=overrides[field]
+            role_cfg = decision_config(role_cfg, role)
             path=Path(folder)/(role+'.schema.json')
             from member_model import update_schema,instruction,consume_updates
             profile_schema=update_schema(cfg,target,context) if role=='context' else None

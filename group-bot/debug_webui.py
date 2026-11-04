@@ -28,6 +28,13 @@ ASSETS['/sandbox-guide.css']='sandbox-guide.css'
 ASSETS['/gpt-speak-logo.png']='gpt-speak-logo.png'
 
 
+def model_options():
+    catalog_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'models_cache.json'
+    catalog = read_json(catalog_path)
+    return [{'name': item['slug'], 'efforts': [row['effort'] for row in item.get('supported_reasoning_levels', [])]}
+            for item in catalog.get('models', []) if item.get('slug')]
+
+
 class DebugWebUI:
     def __init__(self,root,dispatch):
         self.root=Path(root);self.config=Config(root);self.dispatch=dispatch
@@ -80,6 +87,7 @@ class DebugWebUI:
                         return self.reply(200,view(owner.root,query.get('peer',[''])[0],query.get('kind',['all'])[0]))
                     if parsed.path=='/api/snapshot':return self.reply(200,owner.snapshot(parse_qs(parsed.query)))
                     if parsed.path=='/api/config':return self.reply(200,owner.public_config(parse_qs(parsed.query)))
+                    if parsed.path=='/api/models':return self.reply(200,{'models':model_options()})
                     query=parse_qs(parsed.query)
                     if parsed.path=='/api/forward-message':
                         from forward_messages import view
@@ -247,7 +255,9 @@ class DebugWebUI:
             or (kind=='system' and row['kind']=='system'))
             and term in (' '.join(str(row.get(key,'')) for key in ('text','message_id','reply_id','sender','context_id','trace_id','request_id','role','kind','level'))+' '+json.dumps(row.get('quote',{}),ensure_ascii=False)).lower()]
         return {'ui_revision':2,'features':['avatars','system_interventions','manual_send','manual_images','manual_targets','intervention_delete','image_management','sticker_ai_prefill'],'groups':groups,'selected':selected,'events':filtered,'status':{
-            'tasks_current_enabled':bool(cfg.get('large_tasks_enabled')),'tasks_enabled':any(Config(self.root,g).load().get('large_tasks_enabled') for g in self.config.load()['chat_group_whitelist']),'enabled':bool(cfg['enabled']),
+            'tasks_current_enabled':bool(cfg.get('large_tasks_enabled')),
+            'task_container_mode':cfg.get('large_task_container_mode','shared') if cfg.get('large_tasks_enabled') and cfg.get('large_task_executor') in {'docker','podman'} else None,
+            'tasks_enabled':any(Config(self.root,g).load().get('large_tasks_enabled') for g in self.config.load()['chat_group_whitelist']),'enabled':bool(cfg['enabled']),
             'manual_send_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid'),
             'manual_images_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid') and read_json(folder/'manual-worker.json').get('version',1)>=2,
             'manual_targets_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid') and read_json(folder/'manual-worker.json').get('version',1)>=3,
@@ -281,9 +291,7 @@ class DebugWebUI:
         scope=query.get('scope',['global'])[0]
         if scope not in {'global','group'}:raise ValueError('未知配置作用域')
         scoped=Config(self.root,group if scope=='group' else None)
-        cfg=scoped.load();catalog=read_json(Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))/'models_cache.json')
-        models=[{'name':item['slug'],'efforts':[row['effort'] for row in item.get('supported_reasoning_levels',[])]}
-            for item in catalog.get('models',[]) if item.get('slug')]
+        cfg=scoped.load()
         public={key:value for key,value in cfg.items() if key not in PROTECTED|HIDDEN_FIELDS}
         return {'config':public,'fields':metadata(public),
             'ui_revision':2,
@@ -292,7 +300,7 @@ class DebugWebUI:
             'prompt_overrides':{name:(scoped.scope_root/(name+'.txt')).exists() if scope=='group' else True for name in ('persona','reply_protocol')},
             'global_only':['chat_group_whitelist','webui_host','webui_port','webui_key']+[key for key in cfg if key.startswith('private_')],
             'global_prompts':{name:(self.root/(name+'.txt')).read_text(encoding='utf-8') if (self.root/(name+'.txt')).exists() else '' for name in ('persona','reply_protocol')},
-            'persona':scoped.prompt_path('persona').read_text(encoding='utf-8'),'models':models,
+            'persona':scoped.prompt_path('persona').read_text(encoding='utf-8'),'models':model_options(),
             'reply_protocol':scoped.prompt_path('reply_protocol').read_text(encoding='utf-8') if scoped.prompt_path('reply_protocol').exists() else '',
             'help':('当前群覆盖保存到 group-config/'+str(group)+'/；空白/恢复继承采用全局值，其他群不受影响' if scope=='group' else '全局默认保存到 settings.json；未单独配置的群继承它')+'；修改前备份，重启保留'}
     def system_status(self):

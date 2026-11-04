@@ -457,6 +457,24 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             save_private_setting(self.root, '44444', 'contact', 'vision_enabled', True)
 
+    async def test_private_decision_batch_inherits_missing_values_and_keeps_explicit_false(self):
+        from private_settings import save_decision_settings
+
+        group_settings = Config(self.root).load()
+        with patch('configure_launch.validate'):
+            save_decision_settings(self.root, '', 'default', {'decision_fast_mode':True})
+            save_decision_settings(self.root, '11111', 'contact', {
+                'decision_fast_mode':False, 'role_models':{'context':{'fast_mode':True}}})
+            save_decision_settings(self.root, '11111', 'contact', {'decision_fast_mode':None})
+            with self.assertRaises(ValueError):
+                save_decision_settings(self.root, '11111', 'contact', {
+                    'decision_fast_mode':False, 'role_models':{'context':{'fast_mode':1}}})
+
+        settings = view(self.root, '11111')['contact_settings']
+        self.assertTrue(settings['decision_fast_mode'])
+        self.assertEqual(settings['role_models'], {'context':{'fast_mode':True}})
+        self.assertEqual(Config(self.root).load(), group_settings)
+
     async def test_whitelist_and_blacklist_precedence_and_manual_send(self):
         save_private_setting(self.root, '', 'default', 'access_mode', 'whitelist')
         save_private_setting(self.root, '', 'default', 'user_whitelist', [11111, '22222', 11111])

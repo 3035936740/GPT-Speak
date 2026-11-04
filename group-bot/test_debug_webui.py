@@ -16,6 +16,27 @@ from config_metadata import FIELDS
 
 
 class WebUITests(unittest.TestCase):
+    def test_group_decision_settings_save_and_validate_as_one_change(self):
+        scoped = Config(self.root, 100)
+        with patch('configure_launch.validate') as validate:
+            data = {'action':'decision_settings', 'scope':'group', 'group':100,
+                    'changes':{'decision_model':'example-model', 'decision_fast_mode':True,
+                               'role_models':{'vision':{'fast_mode':False}}}}
+            response = self.client.post('/api/action', headers=self.headers, json=data)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(scoped.overrides(), data['changes'])
+            self.assertEqual(Config(self.root, 200).overrides(), {})
+            self.assertFalse(validate.call_args.args[-1])
+
+            data['changes'] = {'decision_fast_mode':False, 'role_models':{'vision':{'fast_mode':'off'}}}
+            self.assertEqual(self.client.post('/api/action', headers=self.headers, json=data).status_code, 400)
+            self.assertTrue(scoped.overrides()['decision_fast_mode'])
+
+            data['changes'] = {'decision_fast_mode':None}
+            self.assertEqual(self.client.post('/api/action', headers=self.headers, json=data).status_code, 200)
+            self.assertNotIn('decision_fast_mode', scoped.overrides())
+            self.assertFalse(scoped.overrides()['role_models']['vision']['fast_mode'])
+
     def test_disconnected_response_does_not_attempt_a_second_response(self):
         handler_type=self.server.server.RequestHandlerClass
         for phase in ('headers','body'):

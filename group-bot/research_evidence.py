@@ -38,3 +38,16 @@ def summary(stdout):
     for envelope,kind,item,done in items(stdout):
         events[str(envelope)[:60]]+=1;kinds[kind[:60]]+=1
     return {'events':dict(events),'items':dict(kinds)}
+
+
+def opened_urls(stdout):
+    """Completed page opens when the CLI exposes an action URL."""
+    urls = set()
+    for _, kind, item, done in items(stdout):
+        action = item.get('action')
+        if (done and kind in {'web_search','web_search_call'} and isinstance(action,dict)
+                and action.get('type') in {'open_page','openPage'}
+                and item.get('status') not in {'failed','in_progress','inProgress','cancelled','interrupted'}
+                and not item.get('error') and isinstance(action.get('url'),str)):
+            urls.add(action['url'])
+    return urls

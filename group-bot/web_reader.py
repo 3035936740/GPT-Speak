@@ -20,6 +20,7 @@ class PageText(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.stack, self.body, self.main, self.title = [], [], [], []
+        self.links = []
 
     def handle_starttag(self, tag, attrs):
         if tag in {'br', 'hr', 'img', 'meta', 'link', 'input', 'source', 'wbr', 'area', 'embed'}:
@@ -31,6 +32,12 @@ class PageText(HTMLParser):
         hidden = hidden or bool(re.search(r'\b(?:menu|navbar|sidebar|breadcrumb|comments?|advertisement)\b', names, re.I))
         preferred = tag in {'main', 'article'} or bool(re.search(r'\b(?:text-area|item-content|entry-content|article-content)\b', names))
         self.stack.append((tag, hidden, preferred))
+        if tag == 'a' and len(self.links) < 80 and not any(state for _, state, _ in self.stack):
+            href = attrs.get('href') or ''
+            if href and not href.startswith('#'):
+                self.links.append(href)
+        if tag in {'td', 'th'}:
+            self.body.append(' | '); self.main.append(' | ')
         if tag in {'p', 'div', 'li', 'h1', 'h2', 'h3', 'tr'}:
             self.body.append('\n'); self.main.append('\n')
 
@@ -118,14 +125,24 @@ def fetch(url, limit=1800, expect_json=False, timeout_seconds=15):
             except LookupError: text = data.decode('utf-8', errors='replace')
             if expect_json:
                 return {'url': url, 'data': json.loads(text)}
+            links = []
             if 'text/plain' in content_type:
                 title, body = '', text[:limit]
             else:
                 parser = PageText(); parser.feed(text); title, body = parser.result(limit)
+                for href in parser.links:
+                    if not href.startswith(('https://','http://')) or len(href)>300 or href in links:
+                        continue
+                    try: destination = urlsplit(href)
+                    except ValueError: continue
+                    if (destination.hostname and destination.hostname != parsed.hostname
+                            and not destination.username and not destination.password):
+                        links.append(href)
+                        if len(links)>=8: break
             if len(body.strip()) < 20: raise ValueError('empty_or_script_only_page')
             return {'status': 'read', 'url': url[:500], 'title': title, 'body': body,
                 'truncated':len(body)>=limit,
-                'scope': '网页正文；不包含视频播放内容'}
+                'scope': '网页正文；不包含视频播放内容', 'outbound_links': links}
         finally:
             connection.close()
             sock.close()

@@ -80,6 +80,10 @@ async def answer(cfg, target, pages, image_paths, generate_json, runtime):
     payload={'request':target.get('text','')[:600], 'source_pages':available,
         'sent_at':__import__('message_time').formatted(target.get('_time')),'generation_clock':__import__('message_time').clock(),
         'image_count':len(image_paths), 'reply_to':str(target.get('_id','target'))}
+    if image_paths and target.get('_content_reference', {}).get('image_labels'):
+        payload['image_labels'] = target['_content_reference']['image_labels']
+        if target.get('_quoted_message'):
+            payload['quoted_text'] = str(target['_quoted_message'].get('text', ''))[:600]
     style={'group_language_observations':target.get('_learned_style',{}),
         'expression_habits':target.get('_expressions',[])[:3],
         'reply_style':target.get('_reply_style',{})}

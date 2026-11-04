@@ -12,12 +12,49 @@ def assets(item):
     if item.get('_record_only'):
         return {'links':[],'images':[],'files':[],'source_id':item.get('_id'),'image_hashes':[],'image_keys':{}}
     links = urls(item.get('_forward_outer_text','') if item.get('_forward') else item.get('text', ''))
-    images = [u for u in item.get('_images', []) if u]
+    raw_images = item.get('_images', [])
+    images = [u for u in raw_images if u]
+    order = item.get('_attachment_order', [])
+    if order and len(images) != len(raw_images):
+        indexes = {old: new for new, old in enumerate(i for i, url in enumerate(raw_images) if url)}
+        order = [(kind, indexes[index] if kind == 'image' else index)
+                 for kind, index in order if kind != 'image' or index in indexes]
     return {'links': links, 'images': images,'files':item.get('_files',[]), 'source_id': item.get('_id'),
-        'attachment_order':item.get('_attachment_order',[]),
+        'attachment_order':order,
         'image_sizes':item.get('_image_sizes',{}),
         'image_hashes':item.get('_image_hashes',[]) or list(item.get('_image_keys',{}).values()),
         'image_keys': {url: key for url, key in item.get('_image_keys', {}).items() if url in images}}
+
+
+def quoted_assets(target, context):
+    reply_id = target.get('_reply_id')
+    saved = next((row for row in context if reply_id and str(row.get('_id')) == str(reply_id)), {})
+    quote = target.get('_quoted_message') or saved
+    if not quote.get('_images') and saved.get('_images'):
+        quote = saved
+    return assets(quote)
+
+
+def direct_images(target, context):
+    """Select only images explicitly attached to this turn or its quote."""
+    quoted, own = quoted_assets(target, context), assets(target)
+    if not (quoted['images'] or own['images']):
+        return None
+    order = []
+    image_offset = file_offset = 0
+    for source in (quoted, own):
+        for kind, index in source['attachment_order'] or (
+                [('image', i) for i in range(len(source['images']))] +
+                [('file', i) for i in range(len(source['files']))]):
+            order.append((kind, index + (image_offset if kind == 'image' else file_offset)))
+        image_offset += len(source['images'])
+        file_offset += len(source['files'])
+    primary = quoted if quoted['images'] else own
+    return {**primary, 'images': quoted['images'] + own['images'],
+            'files': quoted['files'] + own['files'], 'attachment_order': order,
+            'links': list(dict.fromkeys(quoted['links'] + own['links'])),
+            'image_keys': {**quoted['image_keys'], **own['image_keys']},
+            'image_sizes': {**quoted['image_sizes'], **own['image_sizes']}}
 
 
 def resolve(target, context, *, for_drawing=False):

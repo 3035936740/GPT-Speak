@@ -122,6 +122,27 @@ class SandboxTests(unittest.TestCase):
             self.assertNotEqual(box.uid,0);self.assertEqual(box.name,'gpt-speak-container')
         asyncio.run(run())
 
+    def test_restart_starts_stopped_owned_container_and_verifies_it(self):
+        async def run():
+            with patch('shutil.which',return_value='/usr/bin/docker'):
+                box=sandbox.Sandbox({'large_task_executor':'docker'},'a'*32)
+            row = {'Image':'abc','State':{'Running':False},
+                   'HostConfig':{'NetworkMode':'none','ReadonlyRootfs':True,'CapDrop':['ALL'],
+                                 'CapAdd':['CHOWN'],'SecurityOpt':['no-new-privileges']},
+                   'Config':{'Labels':{'gpt-speak.shared':'true'}}}
+            async def command(*args,**kwargs):
+                return {'info':(0,b'{"OSType":"linux"}'),'inspect':(0,json.dumps([row]).encode()),
+                        'image':(0,b'[{"Id":"abc"}]'),'start':(0,b''),'exec':(0,b'')}[args[0]]
+            box.command=AsyncMock(side_effect=command)
+            await box.ensure(restart=True)
+            self.assertIn(('start',box.name), [call.args for call in box.command.await_args_list])
+            box.command.reset_mock()
+            row['Config']['Labels'].clear()
+            with self.assertRaises(ValueError):
+                await box.ensure(restart=True)
+            self.assertNotIn(('start',box.name),[call.args for call in box.command.await_args_list])
+        asyncio.run(run())
+
     def test_tool_loop_generates_real_files_not_model_tokens_and_keeps_usage_category(self):
         async def run(root):
             import bot

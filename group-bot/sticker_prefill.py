@@ -141,11 +141,10 @@ class StickerPrefill:
                     'label不超过80字，description不超过35字，use_when不超过30字。'
                     + ('附图并排展示同一动图的不同帧，综合理解，不当作多个表情。' if frames>1 else ''))
                 from model_timeouts import vision_config
-                model_cfg=vision_config(cfg)
+                from model_routing import decision_config
+                model_cfg=vision_config(decision_config(cfg,'vision'))
                 for field in ('_developer_instructions','_intervention_ids','_intervention_chars','_web_search_mode'):
                     model_cfg.pop(field,None)
-                for field,value in cfg.get('role_models',{}).get('vision',{}).items():
-                    if field in {'model','reasoning_effort'}:model_cfg[field]=value
                 values=checked(await generate(model_cfg,prompt,spec,[visual]))
             with locked(self.folder/'queue.lock'):
                 if self.get(identity)['status']=='running':

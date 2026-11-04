@@ -122,7 +122,7 @@ def quality_issue(text, target, previous=()):
     if re.search(r'刚才.{0,8}被清空|那条.{0,8}清空|没话留下来', value):
         return 'invented_cache_excuse'
     if (act in {'request','question'} and len(value)<80
-            and re.search(r'(?:给你|我来|我给你).{0,14}(?:捋|整理|总结|精简|讲)|(?:精简版|详细版)[:：]$',value)):
+            and re.search(r'(?:给你|我来|我给你).{0,14}(?:捋|整理|总结|精简|讲)|(?:精简版|详细版|排名|排行榜|名单|榜单|如下)[:：]$',value)):
         return 'promised_answer_without_content'
     if re.search(r'作为AI|主打一个|反差感', value, re.I) or (act not in {'request', 'question'} and
             re.search(r'有什么.{0,8}(需要|帮)|需要我做什么|请提供更多|我可以为你|这图配字', value)):

@@ -23,8 +23,11 @@ FIELDS = {
     'reply_cooldown_seconds': field('private', '私信回复冷却（秒）', '连续消息在冷却后合并处理；0表示不等待。', 'private_reply_cooldown_seconds', 'integer', low=0, high=300),
     'max_reply_chars': field('private', '私信回复字数上限', '每条文字回复的长度上限。', 'private_max_reply_chars', 'integer', low=20, high=2000),
     'model': field('model', '回复模型', '使用本机现有模型接入；只影响私聊回复。', 'model', 'string'),
+    'decision_model': field('model', '决策与执行模型', '用于私聊分工分析与记忆提取。填模型名称，或填 inherit_reply 沿用私聊回复模型。', 'decision_model', 'string', default='inherit_reply'),
+    'decision_reasoning_effort': field('model', '决策思考等级', '独立选择决策模型时使用。', 'decision_reasoning_effort', 'string', default='low', options=['none','minimal','low','medium','high','xhigh','max','ultra']),
+    'decision_fast_mode': field('model', '决策快速服务模式', '默认关闭，单独控制私聊分工分析和记忆提取的 Fast 档位。', 'decision_fast_mode', default=False),
     'reasoning_effort': field('model', '思考等级', '须与所选模型支持的等级匹配。', 'reasoning_effort', 'string', options=['minimal', 'low', 'medium', 'high', 'xhigh']),
-    'fast_mode': field('model', 'Fast 模式', '需要所选模型支持 Fast。', 'fast_mode'),
+    'fast_mode': field('model', '回复快速服务模式', '仅控制私聊回复，所选回复模型须支持 Fast。', 'fast_mode'),
     'text_transport': field('model', '文本模型传输方式', '沿用本机已有登录和模型传输，不填写API密钥。', 'text_transport', 'string', options=['http', 'default']),
     'model_timeout_seconds': field('model', '文字回复超时（秒）', '私聊文字生成的等待时间。', 'model_timeout_seconds', 'integer', low=1, high=7200),
     'use_group_impressions': field('member', '参考此人的群聊印象', '仅参考当前好友本人的有来源印象。', 'private_use_group_impressions'),
@@ -55,7 +58,7 @@ FIELDS = {
     'learning_min_messages': field('memory','私聊记忆学习最少消息数','使用与群聊相同的记忆学习流程，仅学习当前好友的来源。','learning_min_messages','integer',low=2,high=100),
     'learning_interval_seconds': field('memory','私聊记忆学习间隔（秒）','后台学习，不阻塞发送；每次计入私聊模型调用额度。','learning_interval_seconds','integer',low=30,high=86400),
     'multi_role_enabled': field('model','上下文与情绪分工分析','按需开启；使用与群聊相同的分析角色，每个分析计入私聊模型额度。','_private_role_analysis_enabled',default=False),
-    'role_models': field('model','分工角色模型','设置context、emotion、vision的model与reasoning_effort；留空沿用私聊主模型。','role_models','mapping',default={}),
+    'role_models': field('model','分工角色模型','在快速填充设置决策模型、决策思考等级和决策 Fast。上下文、情绪和视觉可分别覆盖这些设置。','role_models','mapping',default={}),
     'model_max_attachments': field('image','模型单次参考附件数','超出时只取前面的附件。','model_max_attachments','integer',low=1,high=50),
     'model_max_file_bytes': field('image','模型单个附件上限（字节）','达到该大小拒收，默认5MiB。','model_max_file_bytes','integer',low=1024,high=104857600),
     'console_max_text_chars': field('debug', '每类显示文本上限（字符）', '聊天和执行日志分别计算，超出窗口的旧记录暂不显示。', 'console_max_text_chars', 'integer', low=500, high=1000000),
@@ -91,9 +94,10 @@ def validate(key, value):
     meta = FIELDS[key]
     kind = meta['type']
     if kind=='mapping':
-        if not isinstance(value,dict) or set(value)-{'context','emotion','vision'}:raise ValueError('分工角色仅支持context、emotion、vision')
+        from model_routing import validate_role_models
+        validate_role_models(value)
         for model in value.values():
-            if not isinstance(model,dict) or set(model)-{'model','reasoning_effort'} or any(not isinstance(v,str) or len(v)>100 for v in model.values()):raise ValueError('角色配置必须是模型与思考等级的映射')
+            if set(model)-{'model','reasoning_effort','fast_mode'} or any(not isinstance(model[k],str) or len(model[k])>101 for k in model.keys()-{'fast_mode'}):raise ValueError('角色配置仅支持模型、思考等级和 Fast')
             if model.get('reasoning_effort') and model['reasoning_effort'] not in {'none','minimal','low','medium','high','xhigh','max','ultra'}:raise ValueError('思考等级无效')
     if kind == 'boolean' and type(value) is not bool:
         raise ValueError('开关必须为布尔值')
@@ -109,28 +113,48 @@ def validate(key, value):
         raise ValueError(meta['label'] + '必须为短文本')
     if meta['options'] and value not in meta['options']:
         raise ValueError('无效选项')
-    if key == 'model' and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,100}', value):
+    if key in {'model', 'decision_model'} and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,100}', value):
         raise ValueError('模型名称无效')
 
 
 def save(root, peer, scope, key, value=None, inherit=False):
+    if type(inherit) is not bool or not isinstance(key, str) or key not in FIELDS:
+        raise ValueError('私聊设置范围或字段无效')
+    if not inherit and value is None:
+        raise ValueError('私聊设置缺少值')
+    return _save_settings(root, peer, scope, {key: None if inherit else value})
+
+
+def save_decision_settings(root, peer, scope, changes):
+    from model_routing import DECISION_SETTINGS
+
+    if not isinstance(changes, dict) or not changes or set(changes) - set(DECISION_SETTINGS):
+        raise ValueError('无效的决策模型设置')
+    return _save_settings(root, peer, scope, changes)
+
+
+def _save_settings(root, peer, scope, changes):
     from console_config import Config
     from private_profiles import profile
     from private_view import contacts
     from private_events import emit
-    if scope not in {'default', 'contact'} or key not in FIELDS or type(inherit) is not bool:
+    if scope not in {'default', 'contact'}:
         raise ValueError('私聊设置范围或字段无效')
-    if scope == 'contact' and (str(peer) not in contacts(root) or FIELDS[key]['shared']):
+    if scope == 'contact' and (str(peer) not in contacts(root) or any(FIELDS[key]['shared'] for key in changes)):
         raise ValueError('该设置只能修改私聊默认，或联系人不在授权群好友列表中')
-    if not inherit:
+    changes = dict(changes)
+    for key, value in changes.items():
+        if value is None:
+            continue
         if FIELDS[key]['type'] == 'qq_list':
             from private_access import normalize_ids
-            value = normalize_ids(value)
-        validate(key, value)
-    if scope=='default' and FIELDS[key]['runtime'].startswith('private_'):
+            changes[key] = normalize_ids(value)
+        validate(key, changes[key])
+    first_key = next(iter(changes))
+    if scope=='default' and FIELDS[first_key]['runtime'].startswith('private_'):
         from console_config import DEFAULTS
-        runtime_key=FIELDS[key]['runtime']
-        selected=DEFAULTS[runtime_key] if inherit else value
+        runtime_key=FIELDS[first_key]['runtime']
+        selected=changes[first_key] if changes[first_key] is not None else DEFAULTS[runtime_key]
         Config(root).set(runtime_key,selected if isinstance(selected,str) else json.dumps(selected))
         return {'ok':True,'message':'私聊默认已保存到配置文件'}
     identity = '*' if scope == 'default' else str(peer)
@@ -138,26 +162,29 @@ def save(root, peer, scope, key, value=None, inherit=False):
         row = profile(db, identity)
         previous = dict(row['settings'])
         next_values = dict(previous)
-        if inherit:
-            next_values.pop(key, None)
-        else:
-            next_values[key] = value
+        for key, value in changes.items():
+            if value is None:
+                next_values.pop(key, None)
+            else:
+                next_values[key] = value
         # Match the existing model validation when a catalog is available.
-        if key in {'model', 'reasoning_effort', 'fast_mode','role_models'}:
+        from model_routing import DECISION_SETTINGS
+        if changes.keys() & {'model', 'reasoning_effort', 'fast_mode', *DECISION_SETTINGS}:
             from configure_launch import validate as validate_model
+            from model_routing import validate_decision_models
             import os
             catalog_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'models_cache.json'
             if catalog_path.exists():
                 effective = values(Config(root).load(), {} if identity == '*' else row['defaults'], next_values)
-                validate_model(json.loads(catalog_path.read_text(encoding='utf-8-sig')),
-                               effective['model'], effective['reasoning_effort'], effective['fast_mode'])
-                for role in effective['role_models'].values():
-                    validate_model(json.loads(catalog_path.read_text(encoding='utf-8-sig')),
-                        role.get('model') or effective['model'],role.get('reasoning_effort') or effective['reasoning_effort'],effective['fast_mode'])
+                catalog = json.loads(catalog_path.read_text(encoding='utf-8-sig'))
+                validate_model(catalog, effective['model'], effective['reasoning_effort'], effective['fast_mode'])
+                validate_decision_models(catalog, effective)
         db.execute('INSERT INTO private_profile_backups VALUES (?,?,?,?)',
                    (identity, 'settings', json.dumps(previous, ensure_ascii=False), time.time()))
         db.execute('INSERT INTO private_profiles(peer,settings) VALUES (?,?) ON CONFLICT(peer) DO UPDATE SET settings=excluded.settings',
                    (identity, json.dumps(next_values, ensure_ascii=False)))
         if identity != '*':
-            emit(db, identity, 'stage', '私聊设置已更新：' + FIELDS[key]['label'], details={'local_only': True})
-    return {'ok': True, 'message': ('私聊默认' if scope == 'default' else '当前好友') + ('已恢复继承' if inherit else '设置已保存')}
+            labels = '、'.join(FIELDS[key]['label'] for key in changes)
+            emit(db, identity, 'stage', '私聊设置已更新：' + labels, details={'local_only': True})
+    restored = all(value is None for value in changes.values())
+    return {'ok': True, 'message': ('私聊默认' if scope == 'default' else '当前好友') + ('已恢复继承' if restored else '设置已保存')}

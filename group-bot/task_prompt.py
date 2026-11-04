@@ -60,7 +60,7 @@ def render(cfg,instructions,data,sources):
     def ordered():
         result={'conversation':draft.get('conversation',[]),
             'context_boundary':{'speaker':'assistant','text':BOUNDARY,'program_inserted':True}}
-        for key in ('context_window','person_references','requester_qq_id','continuation','request_metadata','generation_clock','sandbox_files','task_state','tool_observations'):
+        for key in ('context_window','person_references','requester_qq_id','continuation','request_metadata','generation_clock','sandbox_files','task_state','tool_observations','web_references'):
             if draft.get(key):result[key]=draft[key]
         if result.get('context_window') is not None:
             result['context_window']={**result['context_window'],

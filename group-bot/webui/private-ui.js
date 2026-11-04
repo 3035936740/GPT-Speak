@@ -1,6 +1,8 @@
 import {initPrivateRenderer,renderPrivateContacts,renderPrivateRecords,refreshPrivateAvatarImages} from '/private-chat-renderer.js';
 import {initPrivatePanels,renderPrivatePanels} from '/private-panels.js';
+import {settingSwitch} from '/private-settings.js';
 let opened=false,selected='',sequence=0,busy=false,lastData=null,helpers=null,activeRole='bot',privateKind='all';
+let privateAutoSwitch;
 const $=id=>document.getElementById(id);
 const drafts=new Map(),requests=new Map();
 const attachments=new Map(),replyTargets=new Map();
@@ -22,7 +24,11 @@ function initPrivateControls(){
   document.querySelector('.group-header').append($('private-controls'));$('private-controls').hidden=true;
   const oldToolbar=document.querySelector('.private-toolbar');document.querySelector('.group-heading').append($('private-service-state'));
   $('private-service-state').hidden=true;
-  $('private-controls').append(oldToolbar.querySelector('label'),$('private-refresh'));oldToolbar.remove();
+  const auto=$('private-auto');auto.setAttribute('aria-label','私信自动回复');
+  privateAutoSwitch=settingSwitch(helpers.node,auto);
+  const autoControl=helpers.node('div',undefined,'sticker-master');
+  autoControl.append(helpers.node('span','自动回复'),privateAutoSwitch.state,privateAutoSwitch.track);
+  $('private-controls').append(autoControl,$('private-refresh'));oldToolbar.remove();
   const options=$('private-composer').querySelector('.composer-options'),upload=helpers.node('button','上传图片');upload.id='private-upload';upload.type='button';const files=helpers.node('input');files.type='file';files.multiple=true;files.accept='image/png,image/jpeg,image/gif,image/webp';files.hidden=true;upload.onclick=()=>files.click();files.onchange=()=>{addImages([...files.files]).catch(showError);files.value='';};options.append(upload,files);
   const previews=helpers.node('div',undefined,'composer-attachments');previews.id='private-attachments';$('private-text').after(previews);
   const level=helpers.node('select');level.id='private-level';level.setAttribute('aria-label','筛选私聊警告和错误');for(const [value,text] of [['all','所有记录'],['WARNING','警告和错误'],['ERROR','仅错误']])level.append(new Option(text,value));level.onchange=()=>loadPrivate().catch(showError);document.querySelector('.private-log-toolbar').append(level);
@@ -77,6 +83,7 @@ async function loadPrivate(){
   $('group-subtitle').textContent=peer?'QQ '+peer:'QQ好友的一对一会话';$('session-detail').textContent='';
   $('group-status').textContent=data.enabled?(data.status.online?'私信服务运行中':'私信服务连接中'):'自动回复已关闭';
   $('private-auto').checked=data.enabled;
+  privateAutoSwitch.update();
   $('private-service-state').textContent=data.status.error?'私信连接异常：'+data.status.error:
     data.enabled?'已读取 '+data.contacts.length+' 位好友 · 名单控制自动回复，会话独立保存':'私信服务已关闭，可打开“自动回复”启用';
   if(peer&&data.access_reason)$('private-service-state').textContent=data.access_reason+'；仍可查看和管理该好友';
@@ -137,7 +144,7 @@ export function initPrivateUI(options){
   $('show-groups').onclick=()=>{closePrivateUI();options.restore();};
   $('group-search').addEventListener('input',()=>{if(opened&&lastData)renderContacts(lastData);});
   $('private-refresh').onclick=()=>loadPrivate().catch(showError);
-  $('private-auto').onchange=async()=>{try{await helpers.act({action:'config',key:'private_reply_enabled',value:$('private-auto').checked},$('private-auto'));await loadPrivate();}catch(error){showError(error);}};
+  $('private-auto').onchange=async()=>{const input=$('private-auto');privateAutoSwitch.update();try{await helpers.act({action:'config',key:'private_reply_enabled',value:input.checked},input);await loadPrivate();}catch(error){input.checked=!!lastData?.enabled;privateAutoSwitch.update();showError(error);}};
   $('private-role').onchange=()=>{drafts.set(draftKey(),$('private-text').value);activeRole=$('private-role').value;$('private-text').value=drafts.get(draftKey())||(activeRole==='system'?lastData?.system_instruction||'':'');loadPrivate().catch(showError);};
   $('private-text').addEventListener('input',()=>drafts.set(draftKey(),$('private-text').value));
   $('private-clear-system').onclick=async()=>{if(!selected||busy)return;const peer=selected;busy=true;try{await helpers.act({action:'private_system',peer,text:''},$('private-clear-system'));drafts.delete(peer+':system');if(selected===peer&&activeRole==='system')$('private-text').value='';await loadPrivate();}catch(error){showError(error);}finally{busy=false;}};

@@ -1,4 +1,14 @@
 // Shared collection editor for global, group and private configuration.
+export const decisionDefaults = ['decision_model','decision_reasoning_effort','decision_fast_mode'];
+const roleNames = {context:'上下文',emotion:'情绪',vision:'视觉'};
+const effortOptions = {none:'不思考',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'极高'};
+
+export function roleSettingsSummary(config){
+  const roles = Object.keys(config.role_models || {});
+  const model = config.decision_model === 'inherit_reply' ? '沿用回复模型' : config.decision_model;
+  return [model, config.decision_fast_mode ? '决策 Fast 开启' : '决策 Fast 关闭', `${roles.length} 个角色单独设置`].join(' · ');
+}
+
 export function collectionSummary(value){
   const items=Array.isArray(value)?value:Object.keys(value||{});
   if(!items.length)return '未添加项目';
@@ -33,8 +43,19 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
   body.append(description);
   let pending=false;
   const roleMap=key==='role_models',qqList=itemType==='qq_list'||/^private_user_(white|black)list$/.test(key),numericList=key==='chat_group_whitelist',nameList=itemType==='name_list';
-  const labels={context:'上下文',emotion:'情绪',vision:'视觉',model:'模型',reasoning_effort:'思考等级'};
+  const labels={...roleNames,model:'模型',reasoning_effort:'思考等级',fast_mode:'Fast'};
   const maxItems=numericList?30:key==='member_auto_bot_command_prefixes'?32:qqList?1000:nameList?10:roleMap?3:key==='owner_command_aliases'?100:Infinity;
+  const modelNames = [...(context.models ?? []).map(model=>model.name),
+    context.config?.model, context.config?.decision_model, context.parent?.decision_model];
+  const modelChoices = Object.fromEntries(modelNames.filter(name=>name && name!=='inherit_reply').map(name=>[name,name]));
+  function selectField(label,initial,choices){
+    const input=make('select');input.setAttribute('aria-label',label);
+    const options=Object.entries(choices);
+    if(!Object.hasOwn(choices,initial))options.unshift([initial,initial]);
+    for(const [value,text] of options){const option=make('option',text);option.value=value;input.append(option);}
+    input.value=initial;
+    return input;
+  }
   function scalar(current,path,{kind,optional=false}={}){
     const input=make('input');input.setAttribute('aria-label',path);
     const boolean=typeof current==='boolean',number=(kind==='integer'||typeof current==='number')&&!(qqList&&kind==='root-item');
@@ -60,19 +81,23 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
   }
   function roleValue(current,path){
     const area=make('div',undefined,'collection-role-fields'),fields=[];
-    for(const name of ['model','reasoning_effort',...Object.keys(current).filter(name=>!['model','reasoning_effort'].includes(name))]){
+    const standard=['model','reasoning_effort','fast_mode'];
+    for(const name of [...standard,...Object.keys(current).filter(name=>!standard.includes(name))]){
       const label=make('label',labels[name]||name),initial=current[name]??'';
       let control;
-      if(name==='reasoning_effort'){
-        const input=make('select');input.setAttribute('aria-label',path+' · 思考等级');
-        const choices={'':'沿用主模型设置',none:'不思考',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'极高'};
-        for(const value of new Set([String(initial),...Object.keys(choices)])){const option=make('option',choices[value]||value);option.value=value;input.append(option);}input.value=initial;
+      if(name==='model'){
+        const input=selectField(path+' · 模型',initial,{'':'沿用决策模型',...modelChoices});
         control={el:input,read:()=>input.value};
+      }else if(name==='reasoning_effort'){
+        const input=selectField(path+' · 思考等级',initial,{'':'沿用决策设置',...effortOptions});
+        control={el:input,read:()=>input.value};
+      }else if(name==='fast_mode'){
+        const input=selectField(path+' · Fast',typeof initial==='boolean'?String(initial):'',{'':'沿用决策设置',true:'开启',false:'关闭'});
+        control={el:input,read:()=>input.value===''?undefined:input.value==='true'};
       }else control=initial!==null&&typeof initial==='object'?collection(initial,path+' · '+name,2):scalar(initial,path+' · '+(labels[name]||name),{optional:true});
-      if(name==='model')control.el.placeholder='留空沿用 '+(context.model||'主模型');
       label.append(control.el);area.append(label);fields.push([name,control]);
     }
-    return {el:area,fields,read(){const result=Object.create(null);for(const [name,control] of fields){const next=control.read();if(!['model','reasoning_effort'].includes(name)||next!=='')result[name]=next;}return result;}};
+    return {el:area,fields,read(){const result=Object.create(null);for(const [name,control] of fields){const next=control.read();if(!standard.includes(name)||(next!==''&&next!==undefined))result[name]=next;}return result;}};
   }
   function collection(current,path,depth=0){
     if(depth>6)throw Error('配置嵌套过深，请先缩减到6层以内');
@@ -93,8 +118,8 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
       const nested=initial!==null&&typeof initial==='object';
       const control=isRole?roleValue(initial,path+' · '+(labels[name]||name||'角色')):nested?collection(initial,path+' · '+(name||entries.length+1),depth+1):scalar(initial,path+' · 第 '+(entries.length+1)+' 项',{kind:list&&depth===0?(numericList?'integer':'root-item'):undefined});
       if(isRole){
-        row.append(control.fields[0][1].el,control.fields[1][1].el,remove);
-        if(control.fields.length>2){const extra=make('details',undefined,'collection-role-extra');extra.append(make('summary','其他字段'));for(const [name,field] of control.fields.slice(2)){const label=make('label',labels[name]||name);label.append(field.el);extra.append(label);}row.append(extra);}
+        row.append(...control.fields.slice(0,3).map(([,field])=>field.el),remove);
+        if(control.fields.length>3){const extra=make('details',undefined,'collection-role-extra');extra.append(make('summary','其他字段'));for(const [name,field] of control.fields.slice(3)){const label=make('label',labels[name]||name);label.append(field.el);extra.append(label);}row.append(extra);}
       }else{const valueBox=make('div',undefined,'collection-value');valueBox.append(control.el);row.append(valueBox,remove);}
       rows.append(row);
       const entry={row,remove,index,nameInput,control};entries.push(entry);
@@ -104,16 +129,76 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
     const initialEntries=list?current.map(value=>['',value]):Object.entries(current);
     for(const [name,initial] of initialEntries)append(name,initial);
     add.onclick=()=>{if(!pending){const role=!list&&roleMap&&depth===0;const name=role?['context','emotion','vision'].find(name=>!entries.some(entry=>entry.nameInput.value===name))||'':'';const initial=role?{model:'',reasoning_effort:''}:list&&depth===0&&itemTemplate!==undefined?JSON.parse(JSON.stringify(itemTemplate)):'';append(name,initial,true);}};
-    if(roleMap&&depth===0){const header=make('div',undefined,'collection-role-heading');header.append(make('span','角色'),make('span','模型'),make('span','思考等级'),make('span',''));area.append(header);}
+    if(roleMap&&depth===0){const header=make('div',undefined,'collection-role-heading');header.append(make('span','角色'),make('span','模型'),make('span','思考等级'),make('span','Fast'),make('span',''));area.append(header);}
     area.append(rows,empty,add);sync();
-    return {el:area,read(){
+    return {el:area,fillRoles(defaults){
+      for(const name of Object.keys(roleNames)){
+        let entry=entries.find(entry=>entry.nameInput.value===name);
+        if(!entry&&entries.length<maxItems){append(name,{});entry=entries.at(-1);}
+        if(!entry)continue;
+        for(const [field,control] of entry.control.fields.slice(0,3))control.el.value=String(defaults[field]);
+      }
+    },read(){
       if(list)return entries.map(entry=>entry.control.read());
       const result=Object.create(null);
       for(const entry of entries){const name=entry.nameInput.value.trim();if(!name)throw Error('请填写名称，或点击“−”删除空行');if(Object.hasOwn(result,name))throw Error('名称重复：'+name);if(roleMap&&depth===0&&!['context','emotion','vision'].includes(name))throw Error('角色须为 context、emotion 或 vision');if(key==='owner_command_aliases'&&depth===0&&!/^[^\s/]{1,40}$/.test(name))throw Error('命令别名须为1～40字，不含空白或/');result[name]=entry.control.read();if(key==='owner_command_aliases'&&depth===0&&(typeof result[name]!=='string'||!result[name].trim()))throw Error('请填写“'+name+'”对应的CLI命令');}
       return result;
     }};
   }
-  const editor=collection(value,title);body.append(editor.el);
+  const editor=collection(value,title);
+  let readChanges=()=>editor.read();
+  if(roleMap&&context.config){
+    const {config,parent,overrides={},parentLabel='使用上层设置'}=context;
+    const quick=make('section',undefined,'role-quick-fill');
+    quick.append(make('h3','快速填充'),make('p','这里的值用于通用决策，也供没有单独指定的角色继承。点击下方按钮可将当前值填入三个角色。'));
+    const fields=make('div',undefined,'role-quick-fields');
+    const fastOptions={true:'开启',false:'关闭'};
+    const controls={};
+    const inherited='__inherit__';
+    for(const [key,label,choices] of [
+      ['decision_model','决策模型',{inherit_reply:'沿用回复模型',...modelChoices}],
+      ['decision_reasoning_effort','决策思考等级',effortOptions],
+      ['decision_fast_mode','决策 Fast',fastOptions],
+    ]){
+      const effective=String(config[key]);
+      const initial=parent&&!Object.hasOwn(overrides,key)?inherited:effective;
+      const options={...choices,[effective]:choices[effective]||effective};
+      if(parent)options[inherited]=`${parentLabel}（${choices[parent[key]]||parent[key]}）`;
+      const input=selectField(label,initial,options);
+      controls[key]={input,initial,read:()=>input.value};
+      const field=make('label',label);field.append(input);fields.append(field);
+    }
+    const effective=key=>{const value=controls[key].read();return value===inherited?String(parent[key]):value;};
+    const updateEffort=()=>{
+      const followsReply=effective('decision_model')==='inherit_reply';
+      const input=controls.decision_reasoning_effort.input;
+      input.disabled=followsReply;
+      input.title=followsReply?`当前沿用回复思考等级（${effortOptions[config.reasoning_effort]||config.reasoning_effort}）`:'';
+    };
+    controls.decision_model.input.addEventListener('input',updateEffort);updateEffort();
+    const fill=make('button','填入全部角色');fill.type='button';
+    fill.onclick=()=>{
+      const model=effective('decision_model');
+      const followsReply=model==='inherit_reply';
+      editor.fillRoles({model:followsReply?config.model:model,
+        reasoning_effort:followsReply?config.reasoning_effort:effective('decision_reasoning_effort'),
+        fast_mode:effective('decision_fast_mode')});
+    };
+    quick.append(fields,fill);body.append(quick);
+    let originalRoles;
+    try{originalRoles=JSON.stringify(editor.read());}catch{}
+    readChanges=()=>{
+      const changes={};
+      for(const [key,{input,initial,read}] of Object.entries(controls)){
+        const next=read();
+        if(!input.disabled&&next!==initial)changes[key]=next===inherited?null:key==='decision_fast_mode'?next==='true':next;
+      }
+      const roles=editor.read();
+      if(JSON.stringify(roles)!==originalRoles)changes.role_models=roles;
+      return changes;
+    };
+  }
+  body.append(editor.el);
   const error=make('p','', 'collection-error');error.setAttribute('role','alert');body.append(error);
   const foot=make('div',undefined,'dialog-foot'),hint=make('span','关闭或取消不保存'),actions=make('div',undefined,'store-actions'),cancel=make('button','取消'),save=make('button','保存','primary');cancel.type='button';save.type='submit';actions.append(cancel,save);foot.append(hint,actions);
   form.append(head,body,foot);dialog.append(form);document.body.append(dialog);
@@ -123,7 +208,7 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
   form.addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target.tagName==='INPUT')event.preventDefault();});
   form.onsubmit=async event=>{event.preventDefault();if(pending)return;
     try{
-      const next=editor.read();pending=true;error.textContent='';
+      const next=readChanges();pending=true;error.textContent='';
       const controls=[...form.querySelectorAll('input,select,textarea,button')],disabled=controls.map(input=>input.disabled);for(const input of controls)input.disabled=true;
       save.textContent='保存中…';
       try{const accepted=await onSave(next,save);if(accepted!==false)dialog.close();}
@@ -138,6 +223,16 @@ const drafts=new Map();
 const n=(tag,text,cls)=>helpers.node(tag,text,cls);
 
 export function initPrivateSettings(options){helpers=options;}
+
+export function settingSwitch(create,input){
+  const track=create('label',undefined,'switch');
+  const state=create('span',undefined,'switch-label');
+  const update=()=>{state.textContent=input.checked?'开启':'关闭';};
+  input.setAttribute('role','switch');
+  track.append(input,create('span'));
+  update();
+  return {track,state,update};
+}
 
 export function renderPrivateSettings(data,peer){
   const area=document.getElementById('private-settings-pane');
@@ -161,22 +256,44 @@ export function renderPrivateSettings(data,peer){
   layout.append(index,list);area.append(header,layout);
 
   function row(key,meta){
-    const overridden=Object.hasOwn(overrides,key),locked=local&&meta.shared,identity=scope+':'+(local?peer:'*')+':'+key;
+    const roles=key==='role_models';
+    const overridden=Object.hasOwn(overrides,key)||(roles&&decisionDefaults.some(field=>Object.hasOwn(overrides,field)));
+    const locked=local&&meta.shared,identity=scope+':'+(local?peer:'*')+':'+key;
     const box=n('div',undefined,'setting'+(!overridden?' inherited':'')),label=n('div'),heading=n('div',meta.label,'setting-title');
     heading.append(n('span',locked?'全部私聊共享':overridden?'单独设置':local?'继承私聊默认':'使用原默认','scope-badge'+(overridden?' override':'')));
     label.append(heading,n('p',meta.help,'setting-help'));
     if(['qq_list','name_list','mapping'].includes(meta.type)){
-      const edit=n('div',undefined,'edit collection-setting'),summary=n('span',collectionSummary(values[key]||[]),'collection-summary'),button=n('button','编辑');button.type='button';button.disabled=locked;button.dataset.privateSetting=key;button.setAttribute('aria-label','编辑'+meta.label);
-      button.onclick=()=>openCollectionEditor({title:meta.label,value:values[key]||[],key:meta.runtime,itemType:meta.type,note:meta.help,onSave:async(value,save)=>{await helpers.act({action:'private_setting',peer,scope,key,value,inherit:false},save);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();}});
+      const edit=n('div',undefined,'edit collection-setting'),summary=n('span',roles?roleSettingsSummary(values):collectionSummary(values[key]||[]),'collection-summary'),button=n('button','编辑');button.type='button';button.disabled=locked;button.dataset.privateSetting=key;button.setAttribute('aria-label','编辑'+meta.label);
+      const targetScope=local?'contact':'default';
+      const saveRoles=async(changes,button)=>{
+        if(!Object.keys(changes).length)return;
+        await helpers.act({action:'private_decision_settings',peer,scope:targetScope,changes},button);
+        area.dataset.signature='';await helpers.refresh();
+      };
+      button.onclick=async()=>{
+        let context={};
+        if(roles){
+          button.disabled=true;
+          try{
+            const {models}=await helpers.api('/api/models');
+            if(!button.isConnected||area.closest('[hidden]'))return;
+            context={config:values,parent,overrides,models,parentLabel:local?'继承私聊默认':'使用原默认'};
+          }catch(error){summary.textContent=error.message;return;}
+          finally{button.disabled=locked;}
+        }
+        openCollectionEditor({title:meta.label,value:values[key]||[],key:meta.runtime,itemType:meta.type,note:meta.help,context,
+          onSave:roles?saveRoles:async(value,save)=>{await helpers.act({action:'private_setting',peer,scope:targetScope,key,value,inherit:false},save);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();}});
+      };
       edit.append(summary,button);
-      if(overridden&&!locked){const reset=n('button',local?'恢复私聊默认':'恢复原默认');reset.type='button';reset.onclick=async()=>{try{await helpers.act({action:'private_setting',peer,scope,key,inherit:true},reset);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();}catch(error){summary.textContent=error.message;}};edit.append(reset);}
+      if(Object.hasOwn(overrides,key)&&!locked){const reset=n('button',(roles?'角色':'')+(local?'恢复私聊默认':'恢复原默认'));reset.type='button';reset.onclick=async()=>{try{if(roles)await saveRoles({role_models:null},reset);else{await helpers.act({action:'private_setting',peer,scope:targetScope,key,inherit:true},reset);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();}}catch(error){summary.textContent=error.message;}};edit.append(reset);}
       if(locked){const go=n('button','到私聊默认修改');go.type='button';go.onclick=()=>{scope='default';area.dataset.signature='';renderPrivateSettings(data,peer);};edit.append(go);}
       box.append(label,edit);return box;
     }
     const edit=n('div',undefined,'edit'),input=n(meta.options?'select':['qq_list','name_list','textarea'].includes(meta.type)?'textarea':'input'),save=n('button','保存','primary');save.type='button';
+    let toggle;
     input.dataset.privateSetting=key;input.setAttribute('aria-label',meta.label);
     let read;
-    if(meta.type==='boolean'){input.type='checkbox';input.checked=drafts.has(identity)?drafts.get(identity):!!values[key];read=()=>input.checked;}
+    if(meta.type==='boolean'){input.type='checkbox';input.checked=drafts.has(identity)?drafts.get(identity):!!values[key];read=()=>input.checked;toggle=settingSwitch(n,input);}
     else if(meta.options){const choices=Array.isArray(meta.options)?Object.fromEntries(meta.options.map(value=>[value,value])):meta.options;for(const value of new Set([values[key],...Object.keys(choices)])){const option=n('option',choices[value]||value);option.value=value;input.append(option);}input.value=drafts.get(identity)??values[key];read=()=>input.value;}
     else if(['qq_list','name_list','textarea'].includes(meta.type)){const listType=['qq_list','name_list'].includes(meta.type);input.rows=4;input.maxLength=meta.type==='qq_list'?17000:meta.type==='name_list'?420:1000;input.value=drafts.get(identity)??(listType?(values[key]||[]).join('\n'):values[key]);input.placeholder=meta.type==='qq_list'?'每行一个QQ号；逗号分隔也可以':meta.type==='name_list'?'每行一个称呼；逗号分隔也可以':'';read=()=>input.value;}
     else{input.type=['integer','number'].includes(meta.type)?'number':'text';input.value=drafts.get(identity)??values[key];input.placeholder=String(parent[key]??'');if(meta.min!==null)input.min=meta.min;if(meta.max!==null)input.max=meta.max;input.step=meta.type==='integer'?'1':'any';read=()=>input.type==='number'?Number(input.value):input.value;}
@@ -186,11 +303,12 @@ export function renderPrivateSettings(data,peer){
       try{
         if(!inherit&&input.type==='number'&&(!input.value.trim()||!input.checkValidity()))throw Error('请输入范围内的有效数字');
         const value=['qq_list','name_list'].includes(meta.type)?read().split(meta.type==='qq_list'?/[\s,，、;；]+/:/[,，、;；\n]+/).map(value=>value.trim()).filter(Boolean):read();
-        await helpers.act({action:'private_setting',peer,scope,key,value,inherit},save);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();
-      }catch(error){status.textContent=error.message;}
+        await helpers.act({action:'private_setting',peer,scope,key,value,inherit},toggle?input:save);drafts.delete(identity);area.dataset.signature='';await helpers.refresh();
+      }catch(error){status.textContent=error.message;if(toggle){drafts.delete(identity);input.checked=!!values[key];toggle.update();}}
     }
-    input.oninput=()=>drafts.set(identity,read());input.onchange=()=>{drafts.set(identity,read());if(meta.type==='boolean'||meta.options)persist();};
-    if(meta.type!=='boolean'&&!meta.options){save.onclick=()=>persist();input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();persist();}};edit.append(input,save);}else edit.append(input);
+    input.oninput=()=>drafts.set(identity,read());input.onchange=()=>{drafts.set(identity,read());toggle?.update();if(toggle||meta.options)persist();};
+    if(toggle)edit.append(toggle.state,toggle.track);
+    else if(!meta.options){save.onclick=()=>persist();input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();persist();}};edit.append(input,save);}else edit.append(input);
     if(overridden&&!locked){const reset=n('button',local?'恢复私聊默认':'恢复原默认');reset.type='button';reset.onclick=()=>persist(true);edit.append(reset);}
     if(locked){const go=n('button','到私聊默认修改');go.type='button';go.onclick=()=>{scope='default';area.dataset.signature='';renderPrivateSettings(data,peer);};edit.append(go);}
     edit.append(status);box.append(label,edit);return box;
@@ -198,7 +316,7 @@ export function renderPrivateSettings(data,peer){
   function draw(){
     const query=search.value.trim().toLowerCase();index.replaceChildren();list.replaceChildren();
     for(const [category,title] of data.settings_categories){
-      const fields=Object.entries(data.settings_fields).filter(([key,meta])=>meta.category===category&&(!query||(key+' '+meta.label+' '+meta.help).toLowerCase().includes(query)));
+      const fields=Object.entries(data.settings_fields).filter(([key,meta])=>meta.category===category&&!decisionDefaults.includes(key)&&(!query||(key+' '+meta.label+' '+meta.help+(key==='role_models'?' '+decisionDefaults.join(' '):'')).toLowerCase().includes(query)));
       if(!fields.length)continue;
       const section=n('section',undefined,'setting-group');section.append(n('h3',title));for(const [key,meta] of fields)section.append(row(key,meta));list.append(section);
       const button=n('button');button.type='button';button.append(n('span',title,'settings-index-label'),n('span',String(fields.length),'count'));

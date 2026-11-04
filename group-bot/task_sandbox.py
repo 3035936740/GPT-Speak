@@ -135,7 +135,7 @@ class Sandbox:
         finally:
             if proc.returncode is None:proc.kill();await proc.wait()
 
-    async def ensure(self):
+    async def ensure(self, restart=False):
         code,data=await self.command('info','--format','json')
         if code:raise ValueError('任务沙箱不可用：无法连接容器服务；不会在宿主执行代码')
         info=json.loads(data)
@@ -144,6 +144,7 @@ class Sandbox:
         init=(['--entrypoint=python',self.image,'-I','-u','-c',"import os,time;os.makedirs('/workspace/jobs',exist_ok=True);time.sleep(2147483647)"] if self.runtime=='python' else
             ['--entrypoint=/bin/sh',self.image,'-c','mkdir -p /workspace/jobs && sleep 2147483647'])
         code,_=await self.command('inspect',self.name)
+        existed = not code
         if code:
             await self.command('run','--detach','--pull=never','--name',self.name,
             '--label',self.label,'--network=none','--read-only','--cap-drop=ALL','--cap-add=CHOWN',
@@ -170,7 +171,13 @@ class Sandbox:
         code,image=await self.command('image','inspect',self.image)
         if code or row.get('Image','').removeprefix('sha256:')!=json.loads(image)[0].get('Id','').removeprefix('sha256:'):
             raise ValueError('共享容器镜像与配置不同，请重建容器')
-        if not row.get('State',{}).get('Running'):raise ValueError('共享容器未运行，请重建容器')
+        running = row.get('State',{}).get('Running')
+        if restart and existed:
+            status,_ = await self.command('restart' if running else 'start', self.name, timeout=35)
+            if status:
+                raise ValueError('任务容器重启失败')
+        elif not running:
+            raise ValueError('共享容器未运行，请在任务页重启容器')
         status,_=await self.command('exec','--user=0',self.name,'python' if self.runtime=='python' else '/bin/sh',
             *(['-I','-c',"from pathlib import Path;assert Path('/workspace/jobs').is_dir()"] if self.runtime=='python' else ['-c','test -d /workspace/jobs']))
         if status:raise ValueError('容器解释器或工作目录损坏，请重建容器')
@@ -338,6 +345,15 @@ async def health(cfg):
     finally:
         if box.mode=='per_task':await box.close()
     return {'ok':True,'message':'容器健康：隔离配置、解释器和工作目录正常'}
+
+
+async def restart_container(cfg):
+    box = Sandbox(cfg, uuid.uuid4().hex)
+    if box.mode == 'per_task':
+        result = await health(cfg)
+        return {**result, 'message':'独立容器启动检查通过，检查容器已删除；下次任务会创建新容器'}
+    await box.ensure(restart=True)
+    return {'ok':True,'message':'共享任务容器已启动并通过健康检查'}
 
 
 async def build_image(cfg):

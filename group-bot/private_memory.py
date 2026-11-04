@@ -55,8 +55,9 @@ def prepare_learning(service,peer,cfg):
         import private_profiles
         import private_events
         from bot import generate_json
+        from model_routing import decision_config
         with private_events.trace(service.store,peer):
-            result=await generate_json({**cfg,'_private_context':True,'group_id':0,'_web_search_mode':'disabled'},prompt,service.root/'learning.schema.json')
+            result=await generate_json({**decision_config(cfg),'_private_context':True,'group_id':0,'_web_search_mode':'disabled'},prompt,service.root/'learning.schema.json')
         fresh=private_profiles.effective(service.config(),private_profiles.profile(service.store.db,peer))
         if not service.active(fresh) or not service.can_chat(peer) or not fresh.get('_private_long_memory_enabled',True) or session!=service.store.get('session:'+peer):return
         memory=GroupMemory(path)

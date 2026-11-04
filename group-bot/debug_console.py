@@ -179,7 +179,7 @@ class Console:
         self.draw()
         return url
     def submit_web_action(self,value):
-        if value.get('action') in {'task_sandbox_build','task_cancel'}:return self.web_action(value)
+        if value.get('action') in {'task_sandbox_build','task_sandbox_restart','task_cancel'}:return self.web_action(value)
         future=Future();self.web_requests.put((future,value))
         try:return future.result(timeout=None if value.get('action')=='knowledge' else 40)
         except FutureTimeoutError:
@@ -192,6 +192,17 @@ class Console:
             try:future.set_result(self.web_action(value))
             except Exception as exc:future.set_exception(exc)
     def web_action(self,value):
+        if value.get('action') == 'task_sandbox_restart':
+            import asyncio
+            from large_task_pool import container_maintenance
+            from task_sandbox import restart_container
+            cfg = Config(self.root, int(value.get('group', self.group))).load()
+            if not cfg.get('large_tasks_enabled') or cfg.get('large_task_executor') not in {'docker','podman'}:
+                raise ValueError('当前群未启用 Docker 或 Podman 任务')
+            if value.get('confirmed') is not True:
+                raise ValueError('请确认重启容器')
+            with container_maintenance(self.root):
+                return asyncio.run(restart_container(cfg))
         if value.get('action')=='task_cancel':
             from task_controls import force_cancel
             return force_cancel(self.root,int(value.get('group',self.group)),value.get('id',''))
@@ -246,13 +257,17 @@ class Console:
         try:
             action=value.get('action')
             scope=value.get('scope','global')
-            if action!='private_setting' and scope not in {'global','group'}:raise ValueError('未知配置作用域')
-            if action in {'config','persona','reply_protocol','config_inherit'} and scope=='group':self.config=Config(self.root,group)
+            if action not in {'private_setting','private_decision_settings'} and scope not in {'global','group'}:raise ValueError('未知配置作用域')
+            if action in {'config','persona','reply_protocol','config_inherit','decision_settings'} and scope=='group':self.config=Config(self.root,group)
             if action=='config':
                 key=self.config.key(str(value.get('key','')));item=value.get('value')
                 if key in PROTECTED:raise ValueError('运行路径请停机后修改原文件')
                 text=item if isinstance(item,str) else json.dumps(item,ensure_ascii=False)
                 self.configure('set '+key+' '+text)
+            elif action=='decision_settings':
+                Config(self.root,group if scope=='group' else None).save_decision_settings(value.get('changes'))
+                self.supervisor.sync()
+                self.notice='分工角色模型设置已保存'
             elif action=='receive_only':
                 from receive_mode import set_mode
                 return set_mode(self.root,group,value.get('enabled'))
@@ -332,6 +347,9 @@ class Console:
             elif action=='private_setting':
                 from private_settings import save
                 return save(self.root,str(value.get('peer','')),value.get('scope'),value.get('key'),value.get('value'),value.get('inherit',False))
+            elif action=='private_decision_settings':
+                from private_settings import save_decision_settings
+                return save_decision_settings(self.root,str(value.get('peer','')),scope,value.get('changes'))
             elif action in {'persona','reply_protocol'}:
                 text=value.get('text')
                 if not isinstance(text,str):raise ValueError('提示词必须是文本')

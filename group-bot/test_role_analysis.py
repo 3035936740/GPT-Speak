@@ -17,6 +17,43 @@ VISION={'description':'人物在挥手','visible_text':'hello','confidence':.8,'
 
 
 class RoleAnalysisTests(unittest.TestCase):
+    def test_decisions_and_outgoing_text_use_separate_models(self):
+        async def run():
+            calls = {}
+
+            async def model(cfg, prompt, schema, images=None):
+                kind = schema.name.split('.')[0]
+                calls[kind] = (cfg['model'], cfg['reasoning_effort'], cfg['fast_mode'])
+                if kind == 'reply':
+                    return {'text': '群聊回复'}
+                return {'context': CONTEXT, 'emotion': EMOTION, 'vision': VISION}[kind]
+
+            with tempfile.TemporaryDirectory() as folder:
+                cfg = {**bot.settings(), 'model': 'gpt-6.1-terra', 'reasoning_effort': 'high',
+                       'fast_mode': True, 'decision_model': 'gpt-6-luna', 'decision_reasoning_effort': 'low',
+                       'multi_role_enabled': True, '_reserve_extra_call': lambda: True,
+                       'role_models': {'vision': {'reasoning_effort': 'medium', 'fast_mode': True},
+                                       'emotion': {'fast_mode': False}}}
+                target = {'_id': 'previous', 'text': '看不懂', 'at_bot': True}
+                roles = await analyze(cfg, [], target, [Path(folder)/'image.png'], model, folder)
+                self.assertEqual(set(roles), {'vision', 'context', 'emotion'})
+                with patch.object(bot, 'RUNTIME', Path(folder)), patch.object(bot, 'generate_json', model):
+                    response = await bot.generate_reply_json(cfg, 'reply prompt', target)
+                self.assertEqual(response['text'], '群聊回复')
+                self.assertEqual(calls, {'vision': ('gpt-6-luna', 'medium', True),
+                                         'context': ('gpt-6-luna', 'low', False),
+                                         'emotion': ('gpt-6-luna', 'low', False),
+                                         'reply': ('gpt-6.1-terra', 'high', True)})
+                calls.clear()
+                cfg.update(decision_fast_mode=True, fast_mode=False)
+                await analyze(cfg, [], target, [], model, folder)
+                with patch.object(bot, 'RUNTIME', Path(folder)), patch.object(bot, 'generate_json', model):
+                    await bot.generate_reply_json(cfg, 'reply prompt', target)
+                self.assertEqual(calls['context'], ('gpt-6-luna', 'low', True))
+                self.assertEqual(calls['emotion'], ('gpt-6-luna', 'low', False))
+                self.assertEqual(calls['reply'], ('gpt-6.1-terra', 'high', False))
+        asyncio.run(run())
+
     def test_vision_precedes_parallel_context_emotion_and_only_vision_gets_image(self):
         async def run():
             started=[]; reservations=[]

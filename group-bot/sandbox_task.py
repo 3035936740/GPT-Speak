@@ -73,6 +73,8 @@ async def generate(cfg,target,pages,model,runtime,context):
         if state.get('base'):
             old=state['base'];base.update(conversation=old.get('conversation',[]),person_references=old.get('person_references',[]))
             base['request']=old.get('request',base['request'])
+        if target.get('_task_research') or state.get('base',{}).get('web_references'):
+            base['web_references'] = target.get('_task_research') or state['base']['web_references']
         if target.get('_resume_files'):
             base['sandbox_files'].extend({'path':work+'/'+name,'bytes':len(raw),'restored':True} for name,raw in target['_resume_files'])
         schema={'type':'object','properties':{'action':{'type':'string','enum':['run','python','run_and_finish','done']},'code':{'type':'string','maxLength':20000},

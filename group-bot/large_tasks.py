@@ -40,7 +40,10 @@ def requested(text):
     if re.search(r'^(?:怎么|如何|怎样|为什么|什么是)|(?:有多难|有啥区别|有什么区别|是什么意思)[吗?？]*$',text):return False
     if not cancelled(text) and re.search(r'(?:编排|编曲|修改|转换|制作|导出|生成).{0,180}(?:midi|\bmid\b|zip|docx|xlsx)',text,re.I):return True
     prefix=r'^(?:你)?(?:(?:请(?:你)?|麻烦(?:你)?|能不能|可不可以|可以|帮我|给我|帮忙|随便|随意|直接|随手|现在|就|先|再|也|那|自由发挥)[，,\s]*)*'
-    formats=r'文件|文档|报告|html|csv|json|markdown|pdf|docx?|xlsx?|pptx?|midi|\bmid\b|zip'
+    formats=r'文件|文档|报告|html|csv|json|markdown|pdf|docx?|\bword\b|xlsx?|pptx?|midi|\bmid\b|zip'
+    if (not cancelled(text) and re.search(r'(?:写|生成|制作|做成|整理成|导出).{0,20}(?:\bword\b|\bdocx\b)',text,re.I)
+            and re.search(r'发(?:到|给|进)?(?:群|我)|交付|上传',text)):
+        return True
     # Natural delivery requests may put the format before "发群里", not after it.
     delivery=re.search(prefix+r'(?:(?:把|将|根据|按照|基于|参考).{0,120}?)?(?:做|解答|解完|解|算|完成|分析|整理|总结|修改|转换|导出|生成|制作|写).{0,240}',text,re.I)
     if (delivery and re.search(formats,text,re.I) and re.search(r'发(?:到|给|进)?(?:群(?:里|中|聊)?|我)|交付|导出|输出|写成|整理成|保存成|做成|生成',text) and not cancelled(text)):return True
@@ -166,6 +169,10 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
             result,state=None,{'status':'sandbox_unavailable','reason':'容器程序未安装'}
         if state.get('status')!='sandbox_unavailable':return result,state
         from task_history import update
+        if re.search(r'(?i)\bdocx\b|(?<![A-Za-z])word(?![A-Za-z])|(?:成|发|给|生成|导出).{0,12}pdf', request):
+            update(runtime,target['_task_trace_id'],sandbox_warning=state.get('reason'))
+            return None,{'allowed':False,'status':'sandbox_unavailable',
+                         'reason':'任务容器未就绪，无法交付要求的文件格式。'+str(state.get('reason') or '')}
         update(runtime,target['_task_trace_id'],stage='容器不可用，使用单文本文件兼容模式',sandbox_warning=state.get('reason'))
         target['_sandbox_fallback']=True
         if any(row.get('binary') for row in target.get('_task_inputs',[])):
@@ -192,6 +199,8 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
         'request_metadata':{'message_id':str(target.get('_id','')),'sender':str(target.get('sender',''))[:80],
             'qq_id':str(target.get('_uid','')),'sent_at':__import__('message_time').formatted(target.get('_time'))},
         'context_window':{'window_messages':len(conversation),'chat_char_limit':cfg.get('console_max_text_chars',12800)}}
+    if target.get('_task_research'):
+        data['web_references'] = target['_task_research']
     prefix+='主题或风格未指定时自行决定并直接交付完整成品，不只追问或承诺。conversation为当前群对话窗口，仅作背景，不重新执行历史请求。\n'
     if people:
         from person_context import fit,INSTRUCTION as person_instruction
@@ -210,7 +219,8 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
     prompt=bounded_prompt(data)
     from task_history import update
     public=json.loads(prompt);update(runtime,target['_task_trace_id'],person_references=public.get('person_references',[]),source_files=public.get('source_files',[]),request=public['request'],status='generating')
-    directory=Path(runtime)/'generated-files'/target['_task_trace_id'];directory.mkdir(parents=True,exist_ok=False)
+    directory=Path(runtime)/'generated-files'/target['_task_trace_id']
+    directory.mkdir(parents=True,exist_ok=bool(target.get('_sandbox_fallback')))
     schema_path=directory/'result.schema.json';schema_path.write_text(json.dumps(schema),encoding='utf-8')
     chunks=[target['_resume_content']] if target.get('_resume_content') else [];filename=target.get('_resume_filename','');deadline=time.monotonic()+cfg.get('large_task_timeout_seconds',600)
     content=''.join(chunks)
