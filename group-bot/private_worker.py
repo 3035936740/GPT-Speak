@@ -52,7 +52,8 @@ async def run(check=False):
             try:
                 await service.tick()
             except Exception as exc:
-                service.status(False, type(exc).__name__)
+                from napcat_errors import QQAccountMismatch
+                service.status(False, str(exc) if isinstance(exc,QQAccountMismatch) else type(exc).__name__)
             # Wake promptly on console stop even if a reply is generating.
             for _ in range(6):
                 if not service.active():

@@ -23,7 +23,7 @@ export function renderPrivateContacts(area,data,peer,term,onSelect){
     const signature=JSON.stringify([row.name,data.settings_defaults?.show_avatars]);
     if(button.dataset.signature!==signature){button.dataset.signature=signature;const avatar=privateAvatar(row.id,row.id,row.name,data.settings_defaults?.show_avatars!==false);avatar.classList.add('group-avatar');const text=n('span');text.append(n('span',row.name,'group-name'),n('span',row.last_text,'group-sub'));button.replaceChildren(avatar,text);}
     button.classList.toggle('active',peer===row.id);button.setAttribute('aria-current',String(peer===row.id));button.title=row.name+' · '+row.id;nodes.push(button);
-    button.querySelector('.group-sub').textContent=row.last_text;
+    button.querySelector('.group-sub').textContent=row.unavailable_reason||row.last_text;
   }
   reconcile(area,nodes);if(!nodes.length)area.append(n('div',term?'没有匹配的联系人':'暂无授权群好友，点击“刷新好友列表”重新获取','empty'));
 }

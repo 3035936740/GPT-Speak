@@ -18,7 +18,7 @@ const titles={bot_name:'人格名字',bot_aliases:'点名识别别名',model:'�
 const settingsGroups=[
   ['基础设置',
     ['identity','Bot 身份与接入','设置 Bot 的名字、运行状态和授权群聊。',
-      ['', 'enabled receive_only bot_name chat_group_whitelist']],
+      ['', 'enabled receive_only bot_name expected_self_id chat_group_whitelist']],
     ['model','模型与分工','设置日常回复模型和内部判断所用的模型。',
       ['回复模型', 'model reasoning_effort fast_mode text_transport model_timeout_seconds'],
       ['决策与角色分工', 'multi_role_enabled role_models role_timeout_seconds']],
@@ -510,13 +510,13 @@ $('detail-close').onclick=closeDetail;
 
 function chips(value){const box=node('div',undefined,'stat-chips'),entries=Object.entries(value||{});if(!entries.length)return node('span','—');for(const [key,count] of entries)box.append(node('span',key+' '+(typeof count==='object'?JSON.stringify(count):count)));return box;}
 function clock(value){if(!value)return '—';const date=typeof value==='number'?new Date(value*1000):new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString('zh-CN',shanghai);}
-function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(s.worker_running===false&&s.pid)return ['后台未运行','warn'];if(s.last_poll&&Date.now()-Date.parse(s.last_poll)>120000)return ['刷新停滞','warn'];if(!s.online)return ['等待 QQ 连接','warn'];if(s.session_paused||group?.session_paused)return ['会话暂停','warn'];if(s.receive_only||group?.receive_only)return ['仅接收','warn'];return ['运行中','ok'];}
+function groupState(s,group){if(s.enabled===false||group?.enabled===false)return ['未启用','warn'];if(group?.stopped||s.stopped)return ['已暂停','warn'];if(s.not_in_group)return ['不在此群','warn'];if(s.error)return ['运行异常','bad'];if(s.waiting_for_qq)return ['等待 QQ 登录','warn'];if(!s.pid&&!s.online)return ['等待启动','warn'];if(s.worker_running===false&&s.pid)return ['后台未运行','warn'];if(s.last_poll&&Date.now()-Date.parse(s.last_poll)>120000)return ['刷新停滞','warn'];if(!s.online)return ['等待 QQ 连接','warn'];if(s.session_paused||group?.session_paused)return ['会话暂停','warn'];if(s.receive_only||group?.receive_only)return ['仅接收','warn'];return ['运行中','ok'];}
 const avatarRefreshVersions=new Map();
 function renderStatus(){if(isPrivateOpen())return;$('task-tab-button').hidden=!snapshot.status.tasks_enabled;if(currentTab==='tasks'&&!snapshot.status.tasks_enabled){switchTab('logs');return;}const s=snapshot.status,group=snapshot.groups.find(group=>group.id===selected),[stateText,stateTone]=groupState(s,group),global=['system','stickers'].includes(currentTab);
   $('group-title').textContent=global?(currentTab==='system'?'所有群总览':'共享表情库'):group?.name||String(selected);
   $('group-actions').hidden=global;$('group-tabs').hidden=global;document.querySelector('.group-meta').hidden=global;
   $('task-container-restart').hidden=!s.task_container_mode;
-  $('group-status').textContent=stateText;$('group-status').className='status-pill '+stateTone;$('group-status').title=s.enabled===false||group?.enabled===false?'前往行为设置 → Bot 身份与接入，启用机器人':s.error||'';
+  $('group-status').textContent=stateText;$('group-status').className='status-pill '+stateTone;$('group-status').title=s.enabled===false||group?.enabled===false?'前往行为设置 → Bot 身份与接入，启用机器人':s.connection_error||s.error||'';
   $('group-subtitle').textContent='群号 '+selected;$('session-detail').textContent=s.model+' · '+s.effort+(s.fast?' · Fast':'')+(s.no_cooldown?' · 无冷却':'');
   $('pause').hidden=Boolean(group?.stopped)||s.enabled===false||group?.enabled===false||!s.pid;$('restart').textContent=group?.stopped?'恢复运行':s.pid?'重启':'启动';$('restart').disabled=s.enabled===false||group?.enabled===false;$('restart').title=$('restart').disabled?'请先在行为设置中启用机器人':'';
   $('session-stop').textContent=s.session_paused?'恢复当前会话':'终止当前会话';$('session-stop').setAttribute('aria-pressed',String(Boolean(s.session_paused)));
@@ -988,6 +988,7 @@ $('knowledge-file').onchange=async()=>{
 
 $('session-stop').onclick=async()=>{try{await act({action:'session',mode:snapshot?.status?.session_paused?'resume':'stop',group:selected},$('session-stop'));}catch{}};
 $('receive-only').onclick=()=>act({action:'receive_only',enabled:!snapshot?.status?.receive_only,group:selected},$('receive-only')).catch(()=>{});
+$('group-directory-refresh').onclick=()=>act({action:'group_directory_refresh'},$('group-directory-refresh')).catch(()=>{});
 $('avatar-refresh').onclick=async()=>{const button=$('avatar-refresh');button.disabled=true;try{const failed=await refreshVisibleAvatars(true);toast(failed?'部分头像未能更新，已保留原头像；请稍后重试':'头像已刷新',Boolean(failed));}catch(error){toast(error.message,true);}finally{button.disabled=false;}};
 $('settings-export').onclick=async()=>{
   const button=$('settings-export');button.disabled=true;

@@ -242,15 +242,25 @@ class PrivateChat:
 
     async def refresh(self, cfg):
         from private_directory import load
-        self.self_id,self.friends,self.members,groups=await load(self.root,self.api,cfg)
+        own,friends,members,groups=await load(self.root,self.api,cfg)
+        if self.self_id and self.self_id!=own:
+            tasks=[*self.pending.values(),*self.learning.values()]
+            for task in tasks:task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
+            self.pending.clear()
+            self.learning.clear()
+        self.self_id,self.friends,self.members=own,friends,members
         self.refreshed=self.clock();self.directory_groups=tuple(groups)
 
     def can_chat(self, peer):
         if peer not in self.friends or peer == self.self_id:
             return False
+        cfg=self.config()
+        if self.self_id and str(self.self_id)!=str(cfg['expected_self_id']):
+            return False
         if not self.common_groups(peer):
             return False
-        if not private_access.allowed(private_access.config(self.root, self.config(), self.store.db), peer):
+        if not private_access.allowed(private_access.config(self.root, cfg, self.store.db), peer):
             return False
         if private_profiles.profile(self.store.db, peer)['blocked']:
             return False
@@ -547,7 +557,7 @@ class PrivateChat:
             self.store.db.commit()
             self.pruned_at = self.clock()
         groups = tuple(g for g in cfg['chat_group_whitelist'] if Config(self.root, g).load()['enabled'])
-        if (self.clock() - self.refreshed >= 600 or groups != self.directory_groups or not self.self_id
+        if (self.clock() - self.refreshed >= 60 or groups != self.directory_groups or str(self.self_id)!=str(cfg['expected_self_id'])
                 or (self.folder/'directory-refresh.json').exists()):
             await self.refresh(cfg)
             (self.folder/'directory-refresh.json').unlink(missing_ok=True)

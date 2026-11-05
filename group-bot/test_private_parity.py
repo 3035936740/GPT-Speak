@@ -103,7 +103,11 @@ class PrivateParityTests(unittest.IsolatedAsyncioTestCase):
             if action=='get_group_member_list':return [{'user_id':11111},{'user_id':33333}]
             raise AssertionError(action)
         await load(self.root,api,self.service.config())
-        data=view(self.root,'11111');self.assertEqual(len(data['contacts']),2)
+        data=view(self.root,'11111')
+        self.assertEqual({row['id'] for row in data['contacts'] if not row['unavailable_reason']},{'11111','33333'})
+        archived=view(self.root,'22222')
+        self.assertFalse(archived['can_chat'])
+        self.assertIn('不在当前账号好友列表',archived['access_reason'])
         self.assertIn('33333',[row['id'] for row in data['contacts']]);self.assertEqual(data['name'],'新昵称')
         self.assertEqual(self.service.store.known('11111'),{'existing'});self.assertFalse(self.fixture.sent)
 

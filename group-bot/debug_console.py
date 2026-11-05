@@ -333,6 +333,12 @@ class Console:
             elif action=='private_refresh':
                 from private_directory import refresh
                 return refresh(self.root)
+            elif action=='group_directory_refresh':
+                for group_id in Config(self.root).load()['chat_group_whitelist']:
+                    folder=runtime(self.root,group_id)
+                    folder.mkdir(exist_ok=True)
+                    (folder/'group-directory-refresh').touch()
+                return {'ok':True,'message':'已请求刷新白名单群聊列表'}
             elif action=='private_reconnect':
                 from napcat_reconnect import reconnect_private
                 return reconnect_private(self,value.get('mode','napcat'))

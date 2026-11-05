@@ -34,9 +34,15 @@ def view(root, peer='', kind='all'):
     if kind not in {'all', 'chat', 'flow', 'system'}:
         raise ValueError('未知私信记录筛选')
     allowed = contacts(root)
-    if peer and peer not in allowed:
-        raise ValueError('该联系人不在当前授权群好友列表中')
     folder = root / 'runtime-private'
+    directory=read_json(folder/'directory.json')
+    unavailable=dict(directory.get('unavailable_contacts',{}))
+    if directory.get('self_id') and str(directory['self_id'])!=str(cfg['expected_self_id']):
+        unavailable.update({uid:{**row,'groups':[],'unavailable_reason':'等待刷新当前账号好友列表'}
+                            for uid,row in directory.get('contacts',{}).items()})
+    visible={**unavailable,**allowed}
+    if peer and peer not in visible:
+        raise ValueError('该联系人不在当前授权群好友列表中')
     state = read_json(folder / 'state.json')
     state['online'] = bool(state.get('online') and pid_alive(state.get('pid')))
     result = {'contacts': [], 'selected': peer, 'messages': [], 'impression': {}, 'requests': [], 'system_instruction': '',
@@ -59,18 +65,21 @@ def view(root, peer='', kind='all'):
         else:
             result['settings_defaults'] = private_settings.values(cfg)
         naming_cfg=private_access.config(root,cfg,db)
-        for uid, contact in allowed.items():
+        for uid, contact in visible.items():
             last = db.execute('SELECT text,stamp FROM messages WHERE peer=? ORDER BY stamp DESC,rowid DESC LIMIT 1', (uid,)).fetchone() if db else None
             result['contacts'].append({'id': uid, 'name': contact.get('name') or uid,
+                'unavailable_reason':contact.get('unavailable_reason',''),
                 'last_text': last['text'][:60] if last else '还没有私信记录', 'stamp': last['stamp'] if last else 0})
         result['contacts'].sort(key=lambda row: (-row['stamp'], row['name']))
         if peer:
-            result['name'] = allowed[peer].get('name') or peer
+            result['name'] = visible[peer].get('name') or peer
+            result['access_reason']=visible[peer].get('unavailable_reason','')
             if db:
                 local = private_profiles.profile(db, peer)
                 effective = private_profiles.effective(cfg, local)
                 result['profile'] = local
-                result['access_reason'] = private_access.reason(private_access.config(root, cfg, db), peer)
+                if peer in allowed:
+                    result['access_reason'] = private_access.reason(private_access.config(root, cfg, db), peer)
                 if local['blocked']:
                     result['access_reason'] = '已在联系人标记中屏蔽私聊'
                 result['can_chat'] = not result['access_reason']
@@ -104,7 +113,7 @@ def view(root, peer='', kind='all'):
                             event['user_id']=result['self_id'] if event['kind']=='sent' else peer
                 result['runtime'] = {'model': effective['model'], 'reasoning_effort': effective['reasoning_effort'],
                     'pid':state.get('pid'),'last_poll':state.get('last_poll'),'directory_updated':result['directory_updated'],
-                    'active_conversations':state.get('active_conversations',0),'enabled_groups':len(allowed[peer]['groups']),
+                    'active_conversations':state.get('active_conversations',0),'enabled_groups':len(visible[peer]['groups']),
                     'fast_mode':effective.get('fast_mode',False),'transport':effective.get('text_transport'),
                     'model_timeout_seconds':effective['model_timeout_seconds'],'vision_timeout_seconds':effective['vision_timeout_seconds'],
                     'context_messages':effective['context_messages'],'max_prompt_chars':effective['max_prompt_chars'],
@@ -117,7 +126,7 @@ def view(root, peer='', kind='all'):
                     'queued_manual':db.execute("SELECT count(*) FROM outbox WHERE peer=? AND status='queued'",(peer,)).fetchone()[0],
                     'delivery_states': {r[0]: r[1] for r in db.execute('SELECT status,count(*) FROM deliveries WHERE peer=? GROUP BY status', (peer,))}}
             if result.get('contact_settings',{}).get('use_group_impressions',cfg['private_use_group_impressions']):
-                result['impression'] = impression(root, peer, allowed[peer]['groups'])
+                result['impression'] = impression(root, peer, visible[peer]['groups'])
         return result
     finally:
         if db:

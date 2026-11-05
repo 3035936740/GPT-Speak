@@ -226,7 +226,7 @@ class DebugWebUI:
                 'receive_only':bool(Config(self.root,group).load().get('receive_only')),
                 'session_paused':bool(read_json(runtime(self.root,group)/'session-control.json').get('paused')),
                 'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
-                'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
+                'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),'not_in_group':bool(state.get('not_in_group')),'connection_error':state.get('connection_error',''),
                 'last_poll':state.get('last_poll')})
         selected=int(query.get('group',[groups[0]['id']])[0])
         if selected not in cfg['chat_group_whitelist']:raise ValueError('该群不在白名单内')
@@ -277,7 +277,7 @@ class DebugWebUI:
             'online':bool(state.get('online')),'receive_only':bool(cfg.get('receive_only')),'session_paused':bool(read_json(folder/'session-control.json').get('paused')),
             'stickers_enabled':cfg.get('stickers_enabled',True),
             'avatar_refresh':read_json(folder/'avatar-refresh.json').get('created',0),'worker_running':instance_locked(folder),'pid':state.get('pid'),'last_poll':state.get('last_poll'),
-            'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),
+            'error':state.get('error',''),'waiting_for_qq':bool(state.get('waiting_for_qq')),'not_in_group':bool(state.get('not_in_group')),'connection_error':state.get('connection_error',''),
             'records':len(records),'shown_records':len(filtered),'text_chars':stored_text_chars,
             'chat_text_chars':chat_text_chars,'flow_text_chars':flow_text_chars,
             'text_limit':cfg['console_max_text_chars'],'prompt_limit':cfg['max_prompt_chars'],
@@ -320,7 +320,7 @@ class DebugWebUI:
         for group in cfg['chat_group_whitelist']:
             folder=runtime(self.root,group,cfg);state=read_json(folder/'state.json');effective=Config(self.root,group).load()
             groups.append({'id':group,'name':read_json(folder/'debug-group.json').get('name',str(group)),
-                'enabled':bool(effective['enabled']),'waiting_for_qq':bool(state.get('waiting_for_qq')),
+                'enabled':bool(effective['enabled']),'waiting_for_qq':bool(state.get('waiting_for_qq')),'not_in_group':bool(state.get('not_in_group')),'connection_error':state.get('connection_error',''),
                 'receive_only':bool(effective.get('receive_only')),
                 'online':bool(state.get('online')),'stopped':bool(state.get('stopped')),'pid':state.get('pid'),
                 'worker_running':instance_locked(folder),

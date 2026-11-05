@@ -188,10 +188,13 @@ class FollowupTests(unittest.TestCase):
                     if attempts == 1:
                         raise OSError('QQ offline')
                     return {'user_id': 169901502}
+                if action == 'get_group_list':
+                    return [] if attempts==2 else [{'group_id':985569438}]
                 return {'group_id': 985569438}
             async def tick(seconds):
                 saved = json.loads((bot.RUNTIME / 'state.json').read_text(encoding='utf-8'))
-                self.assertTrue(saved['waiting_for_qq'])
+                self.assertEqual(saved['waiting_for_qq'],attempts==1)
+                self.assertEqual(saved['not_in_group'],attempts==2)
                 self.assertEqual(saved['model_calls_today'], 7)
                 await originals[2](0)
             with tempfile.TemporaryDirectory() as folder:
@@ -202,7 +205,7 @@ class FollowupTests(unittest.TestCase):
                     login, group = await bot.wait_for_qq(None, None, bot.settings())
                     self.assertEqual(login['user_id'], 169901502)
                     self.assertEqual(group['group_id'], 985569438)
-                    self.assertEqual(attempts, 2)
+                    self.assertEqual(attempts, 3)
                 finally:
                     bot.RUNTIME, bot.api, bot.asyncio.sleep = originals
         asyncio.run(scenario())

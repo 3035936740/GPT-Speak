@@ -23,7 +23,7 @@ import uuid
 from urllib.parse import urlsplit
 import warnings
 import debug_events
-from console_config import DEFAULTS as CONSOLE_DEFAULTS, deleted_ids, Config, prompt_path
+from console_config import DEFAULTS as CONSOLE_DEFAULTS, deleted_ids, Config, prompt_path, read_json
 
 import httpx
 from dotenv import dotenv_values
@@ -38,7 +38,7 @@ from manual_outbox import ManualOutbox
 from runtime_paths import project_path,resolve_codex_executable
 from emoji_library import EmojiLibrary, ReplyText, selected_media
 from message_delivery import delivery_plan, deliver_burst, attach_market_fallbacks, DeliveryAborted
-from napcat_errors import NapCatAPIError
+from napcat_errors import NapCatAPIError, QQAccountMismatch, QQNotInGroup, check_account, group_directory
 from storage_io import atomic_write_text, file_busy
 from reply_behavior import allowed_media, preferences, reply_chunks, reply_segments, delivery_preferences, reaction_only, restrict_visual_reaction
 from group_memory import GroupMemory
@@ -1125,6 +1125,17 @@ async def classify_audience(client, env, item, history, self_id, focus):
     return audience(item, history, self_id,settings())
 
 
+async def verify_group_membership(client,env,group):
+    try:
+        groups=await api(client,env,'get_group_list')
+    except (NapCatAPIError, AssertionError):
+        return
+    directory=group_directory(groups)
+    if directory is not None:
+        if str(group) not in directory:raise QQNotInGroup('不在此群')
+        return directory[str(group)]
+
+
 async def wait_for_qq(client, env, cfg):
     try:
         previous_state = json.loads((RUNTIME / 'state.json').read_text(encoding='utf-8'))
@@ -1135,18 +1146,19 @@ async def wait_for_qq(client, env, cfg):
             current=settings()
             if isinstance(env,dict):env.update({key:value for key,value in dotenv_values(current['mcp_env_file']).items() if value is not None})
             login = await api(client, env, 'get_login_info')
-            if str(login.get('user_id')) != str(cfg.get('expected_self_id', '169901502')):
-                raise ValueError('Configured bot account is not logged in')
+            check_account(login, current['expected_self_id'])
+            await verify_group_membership(client,env,cfg['group_id'])
             group = await api(client, env, 'get_group_info', {'group_id': cfg['group_id']})
-            save_state({**{key:value for key,value in previous_state.items() if key not in {'error','connection_error'}},
+            save_state({**{key:value for key,value in previous_state.items() if key not in {'error','connection_error','not_in_group'}},
                 'pid':os.getpid(),'online':True,'stopped':False,'waiting_for_qq':False,
                 'group_id':cfg['group_id'],'last_poll':datetime.now().isoformat()})
             return login, group
         except Exception as exc:
-            log.warning('Waiting for bot QQ login: %s', type(exc).__name__)
+            detail=str(exc) if isinstance(exc,(QQAccountMismatch,QQNotInGroup)) else type(exc).__name__
+            log.warning('QQ connection: %s', detail)
             save_state({**previous_state, 'pid': os.getpid(), 'online': False,
-                'stopped': False, 'waiting_for_qq': True, 'group_id': cfg['group_id'],
-                'connection_error':type(exc).__name__,
+                'stopped': False, 'waiting_for_qq': not isinstance(exc,QQNotInGroup), 'group_id': cfg['group_id'],
+                'not_in_group':isinstance(exc,QQNotInGroup),'connection_error':detail,'error':'',
                 'last_poll': datetime.now().isoformat()})
             await asyncio.sleep(10)
     return None
@@ -2513,8 +2525,13 @@ async def _run(smoke=False):
             checkpoint_pending()
             log.info('Connection lost; cancelled unfinished AI work; awaiting fresh inbox baseline')
         known_excluded=blocked_accounts(RUNTIME)
+        membership_checked=time.monotonic()
+        refresh_groups=RUNTIME/'group-directory-refresh'
         while not (RUNTIME / 'STOP').exists():
             cfg = settings()
+            if str(cfg['expected_self_id'])!=str(self_id):
+                await discard_disconnected_work()
+                break
             if manual_reply and not any(job['target'].get('_manual_reply_started') == manual_reply['_manual_reply_started']
                     for job in active_jobs.values()):
                 finish_manual_task(RUNTIME,manual_reply,'done',reply=True)
@@ -2586,6 +2603,15 @@ async def _run(smoke=False):
                 await dispatch_large_task(manual_task,cfg,manual_work,lambda status:finish_manual_task(RUNTIME,manual_task,status))
             poll_succeeded = False
             try:
+                if recovery_pending or time.monotonic()-membership_checked>=30 or refresh_groups.exists():
+                    refresh_groups.unlink(missing_ok=True)
+                    login=await api(client,env,'get_login_info')
+                    check_account(login,cfg['expected_self_id'])
+                    membership=await verify_group_membership(client,env,cfg['group_id'])
+                    name=(membership or {}).get('group_name')
+                    if name and debug_events.CURRENT and name!=read_json(RUNTIME/'debug-group.json').get('name'):
+                        debug_events.CURRENT.metadata(name)
+                    membership_checked=time.monotonic()
                 if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
                 result = await message_feed.poll(api,client,env,cfg['group_id'])
                 poll_succeeded = True
@@ -3150,7 +3176,10 @@ async def _run(smoke=False):
                     await discard_disconnected_work()
                 save_state({'pid': os.getpid(), 'online': not connection_failed, 'group_id': cfg['group_id'],
                     'last_poll': datetime.now().isoformat(), 'day': day,
-                    'model_calls_today': daily_calls, 'reply_times': list(reply_times), 'recent_bot_replies': list(own_replies), 'image_attempt_times': list(image_attempt_times), 'error': str(exc)[:300]})
+                    'model_calls_today': daily_calls, 'reply_times': list(reply_times), 'recent_bot_replies': list(own_replies), 'image_attempt_times': list(image_attempt_times),
+                    'not_in_group':isinstance(exc,QQNotInGroup),'waiting_for_qq':isinstance(exc,QQAccountMismatch),
+                    'connection_error':str(exc)[:300] if isinstance(exc,(QQNotInGroup,QQAccountMismatch)) else '',
+                    'error':'' if isinstance(exc,(QQNotInGroup,QQAccountMismatch)) else str(exc)[:300]})
             await asyncio.sleep(cfg['poll_seconds'])
         session_watcher.cancel();await asyncio.gather(session_watcher,return_exceptions=True)
         if sticker_prefill_task and not sticker_prefill_task.done():

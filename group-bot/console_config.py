@@ -19,6 +19,7 @@ MAX_WINDOW_CHARS = 2147483647
 
 DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['GPT','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
+    'expected_self_id':'169901502',
     'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
     'model_avatar_query_enabled':True,'model_profile_query_enabled':True,'profile_query_cache_seconds':300,
     'tool_workflow_enabled':True,'tool_workflow_max_steps':4,'web_answer_max_chars':300,
@@ -79,6 +80,7 @@ from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
 DEFAULTS.update(LARGE_TASK_DEFAULTS)
 DEFAULTS.update(EMBEDDING_DEFAULTS)
 GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','sticker_admission_rule','sticker_ignore_market_faces','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | set(EMBEDDING_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+GLOBAL_ONLY.add('expected_self_id')
 
 
 def pid_alive(pid):
@@ -182,6 +184,8 @@ class Config:
         from private_access import validate as validate_access
         from owner_commands import validate as validate_commands
         validate_connection(cfg);validate_access(cfg);validate_commands(cfg)
+        if not re.fullmatch(r'[1-9][0-9]{4,14}',str(cfg['expected_self_id'])):
+            raise ValueError('Bot QQ 号须为 5～15 位数字')
         if set(cfg)-set(current):raise ValueError('未知配置字段：'+str(set(cfg)-set(current)))
         for key,value in cfg.items():
             if key in PROTECTED and value!=current[key]:raise ValueError('运行路径/主群编号请停机后修改原配置文件')

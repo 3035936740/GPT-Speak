@@ -2,6 +2,25 @@
 import re
 
 
+class QQAccountMismatch(ValueError):
+    pass
+
+
+class QQNotInGroup(ValueError):
+    pass
+
+
+def check_account(login, expected):
+    if str(login.get('user_id')) != str(expected):
+        raise QQAccountMismatch(f'Bot QQ 号不匹配，配置为 {expected}，NapCat 登录为 {login.get("user_id") or "未知"}')
+
+
+def group_directory(groups):
+    if isinstance(groups, list) and all(isinstance(row, dict) and 'group_id' in row for row in groups):
+        return {str(row['group_id']):row for row in groups}
+    return None
+
+
 class NapCatAPIError(RuntimeError):
     def __init__(self, action, result):
         from debug_events import safe_log

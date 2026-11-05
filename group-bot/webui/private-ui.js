@@ -81,7 +81,8 @@ async function loadPrivate(){
   $('group-title').textContent=peer?(data.name||peer):'私信';
   document.querySelector('.group-meta').hidden=false;
   $('group-subtitle').textContent=peer?'QQ '+peer:'QQ好友的一对一会话';$('session-detail').textContent='';
-  $('group-status').textContent=data.enabled?(data.status.online?'私信服务运行中':'私信服务连接中'):'自动回复已关闭';
+  const unavailable=data.contacts.find(row=>row.id===peer)?.unavailable_reason;
+  $('group-status').textContent=unavailable||(data.enabled?(data.status.online?'私信服务运行中':'私信服务连接中'):'自动回复已关闭');
   $('private-auto').checked=data.enabled;
   privateAutoSwitch.update();
   $('private-service-state').textContent=data.status.error?'私信连接异常：'+data.status.error:
@@ -90,7 +91,7 @@ async function loadPrivate(){
   for(const button of $('private-controls').querySelectorAll('button'))button.disabled=!peer&&button.id!=='private-friends-refresh'&&!button.dataset.privateService;
   $('private-session-stop').textContent=data.session?.paused?'恢复当前会话':'终止当前会话';
   $('private-receive-only').textContent=data.contact_settings?.reply_enabled===false?'恢复AI处理':'仅接收消息';
-  const system=activeRole==='system',canSend=!!peer&&(system||data.enabled&&data.status.online&&data.can_chat);
+  const system=activeRole==='system',canSend=!!peer&&!unavailable&&(system||data.enabled&&data.status.online&&data.can_chat);
   $('private-text').disabled=!canSend;$('private-send').disabled=!canSend||busy;
   $('private-send').textContent=system?'保存系统提示词':'发送私信';
   $('private-system-lifetime').hidden=!system;renderAttachments();$('private-upload').hidden=system;
