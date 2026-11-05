@@ -14,11 +14,13 @@ def connect(folder, reply=False):
     db.execute('CREATE TABLE IF NOT EXISTS requests(message_id TEXT PRIMARY KEY,target TEXT,state TEXT,stamp REAL)')
     db.commit();return db
 
-def enqueue(root,group,message_id,*,reply=False):
+def enqueue(root,group,message_id,*,reply=False,image=False):
+    reply=reply or image
     group=int(group)
     cfg=Config(root,group).load();folder=runtime(root,group)
     if group not in cfg['chat_group_whitelist']:raise ValueError('该群不在白名单内')
     if not cfg['enabled'] or cfg.get('receive_only'):raise ValueError('请先开启本群 AI 处理')
+    if image and not cfg.get('image_generation_enabled'):raise ValueError('请先开启本群图片生成')
     if not reply and not cfg.get('large_tasks_enabled'):raise ValueError('请先开启本群任务')
     from session_control import state
     if state(folder).get('paused'):raise ValueError('请先恢复当前会话')
@@ -38,6 +40,7 @@ def enqueue(root,group,message_id,*,reply=False):
     if reply:
         target['_manual_reply_started']=now
         target.pop('_historical',None)
+        if image:target.update(_image_request=True,_manual_image_request=True,_delivery_quote=True)
     else:
         target.update(_force_file_task=True,_manual_task_started=now)
     with closing(connect(folder,reply)) as db,db:
@@ -50,7 +53,7 @@ def enqueue(root,group,message_id,*,reply=False):
             old=None
         if old and old[0] in {'queued','claimed','accepted'}:return {'ok':True,'message':'该消息已提交任务，请查看任务列表'}
         db.execute("INSERT OR REPLACE INTO requests VALUES (?,?,'queued',?)",(str(message_id),json.dumps(target,ensure_ascii=False),now))
-    return {'ok':True,'message':'已提交 AI 回复，将在群里引用原消息' if reply else '已提交手动任务，仍受并发和每日上限限制'}
+    return {'ok':True,'message':'已提交图片生成任务' if image else '已提交 AI 回复，将在群里引用原消息' if reply else '已提交手动任务，仍受并发和每日上限限制'}
 
 def claim(folder,*,reply=False):
     if not queue_path(folder,reply).exists():return None

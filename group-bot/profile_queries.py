@@ -54,6 +54,9 @@ def person_request(target,context=()):
 
 def query_intent(target,context=()):
     avatar,profile=intent(target.get('text',''))
+    if avatar and target.get('_drawing_reference_images'):
+        text=target.get('text','')
+        avatar=bool(re.search(r'QQ\s*头像|(?:我的|你的|他的|她的|当前|现在的|本人|机器人|bot)\s*头像|(?:读取|查看|查询|获取|下载|提取)\s*(?:一下)?(?:.{0,10}的)?头像|@\d+\s*的?头像',text,re.I))
     return avatar,profile or person_request(target,context)
 
 

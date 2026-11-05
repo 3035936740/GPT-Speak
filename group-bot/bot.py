@@ -445,6 +445,9 @@ def wants_image(target):
     prefix = r'^(?:你)?(?:请(?:你)?|麻烦(?:你)?|能不能|可不可以|可以)?(?:帮我|给我|帮忙)?'
     imperative = re.search(prefix + r'(?:画|绘制|重画)(?![了过])', text)
     produce = re.search(prefix + r'(?:生成|制作|做|整|弄|来)(?![了过]).{0,60}(图|表情|头像|插画|壁纸|贴纸|海报)', text)
+    produce = produce or re.search(prefix+r'(?:给|用|以|按)(?:你(?:自己)?的?|自己(?:的)?)(?:形象|人设|角色|样子).{0,20}(?:生成|画|制作|做).{0,60}(?:头像|插画|表情|壁纸|图片|海报)',text)
+    if re.search(r'(?:做成|写成|导出|交付|输出)\s*(?:一个|一份|单个)?\s*(?:HTML|SVG|PDF|Word|PPT|网页|文档|代码|脚本|文件)',text,re.I):
+        return False
     if re.fullmatch(r'(?:请|帮我)?生图[!！。\s]*', text):
         produce = True
     explicit = imperative or produce
@@ -553,6 +556,12 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
             original_images = True
     from model_attachments import select as select_attachments,limits as attachment_limits,notice as attachment_notice
     urls,files,omitted=select_attachments(reference,cfg)
+    archive_keys = reference.get('image_hashes', []) if as_image and not urls else []
+    if archive_keys:
+        available=max(0,attachment_limits(cfg)[0]-len(files))
+        omitted+=max(0,len(archive_keys)-available)
+        archive_keys=archive_keys[:available]
+        urls=[None]*len(archive_keys)
     attachment_status=([{'status':'omitted','count':omitted,'reason':'超出单次模型参考附件数量上限，只处理前'+str(attachment_limits(cfg)[0])+'个'}] if omitted else [])
     file_pages=[]
     if files:
@@ -574,6 +583,8 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
     avatar_labels = []
     from profile_queries import lookup as lookup_profiles,same_access,query_intent,request_target
     profile_target=target
+    if as_image and (urls or archive_keys):
+        profile_target={**target,'_drawing_reference_images':True}
     if file_route and file_route['anchor'] is not target and not [uid for uid in target.get('_at_ids',[]) if str(uid)!=str(target.get('_self_id'))]:
         anchor=file_route['anchor']
         profile_target={**target,'text':file_route['request'],'_at_ids':anchor.get('_at_ids',[]),
@@ -618,6 +629,23 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
         avatar_start = len(urls) - len(avatar_labels) if original_images else 0
         for index, url in enumerate(urls[:image_limit]):
             from model_attachments import too_large
+            if url is None:
+                try:
+                    archive=cfg.get('_image_archive')
+                    source=archive.get(archive.digest(archive_keys[index],archive_keys[index])) if archive else None
+                    if source is None:
+                        raise ValueError('Archived image unavailable')
+                    if too_large(source.stat().st_size,cfg):
+                        attachment_status.append(attachment_notice(index+1,cfg));continue
+                    path=Path(folder)/(str(index)+source.suffix)
+                    path.write_bytes(source.read_bytes())
+                except (OSError,ValueError):
+                    attachment_status.append(attachment_notice(index+1,cfg,'unavailable'));continue
+                paths.append(path)
+                attached_labels.append(f'[图片{index+1}]')
+                cache_inputs.append(None)
+                path_indexes.append(index+1)
+                continue
             if too_large(reference.get('image_sizes',{}).get(url),cfg):
                 attachment_status.append(attachment_notice(index+1,cfg));continue
             path = Path(folder) / (str(index) + '.jpg')
@@ -661,7 +689,7 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
                         continue
                 paths.append(path)
                 attached_labels.append(avatar_labels[avatar_index] if avatar else
-                    f'[图片{index + 1}]' if original_images else '群消息图片')
+                    f'[图片{index + 1}]' if original_images or as_image else '群消息图片')
                 if avatar:
                     for row in target.get('_profile_context',[]):
                         if row.get('qq_id')==avatars[avatar_index][0]:row['avatar_status']='attached';row['image_index']=len(paths)
@@ -910,13 +938,19 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
         if as_image:
             if any(row.get('avatar_status') in {'disabled','unavailable'} or row.get('status') in {'ambiguous_subject','unavailable'} for row in target.get('_profile_context',[])):
                 raise ValueError('Requested public avatar/profile unavailable; image generation cancelled')
-            if (urls or reference.get('image_hashes') or target.get('_reply_id') and re.search(r'图|表情',str((target.get('_quoted_message') or {}).get('text','')))) and not paths:
+            if (urls or reference.get('image_hashes') or target.get('_reply_id') and
+                    (not reference.get('source_id') or str(reference.get('source_id'))!=str(target.get('_reply_id'))
+                     or re.search(r'图|表情',str((target.get('_quoted_message') or {}).get('text',''))))) and not paths:
                 adjusted['_media_choices']=[]
                 adjusted['_reply_style']={**adjusted.get('_reply_style',{}),'sticker_policy':'text_only','delivery_mode':'words'}
                 adjusted['_image_response_mode']='answer'
                 adjusted.pop('_accepted_plan',None)
                 return await generate({**cfg,'image_generation_enabled':False},context,trigger+'；参考附件未读取，本轮只说明原因，不凭空绘图',adjusted,[])
             request = target['text']
+            quote=target.get('_quoted_message') or next((row for row in context if target.get('_reply_id')
+                and str(row.get('_id'))==str(target['_reply_id'])),{})
+            if paths and quote.get('text') and reference.get('source_id')==quote.get('_id'):
+                request += '\n被引用消息的文字（用于理解本次需求）：' + quote['text'][:600]
             if target.get('_render_request'):
                 request += '\n绘图意图：' + target['_render_request'][:400]
             if roles.get('vision'):
@@ -2763,18 +2797,22 @@ async def _run(smoke=False):
                 pending_mentions = deque(m for m in pending_mentions if now - m.get('_queued_at', m.get('_time', 0)) < 600)
                 checkpoint_pending()
                 passive.observe(incoming,now)
-                if allowed and not manual_reply and 'text' not in active_jobs:
+                if allowed and not manual_reply and 'text' not in active_jobs and 'image' not in active_jobs:
                     manual_reply=claim_manual_task(RUNTIME,reply=True)
                     if manual_reply:
                         key=str(manual_reply['_id'])
                         in_progress=any(key in job['target'].get('_source_ids',[job['target'].get('_id')])
                             for job in active_jobs.values())
-                        if key in deleted_ids(RUNTIME) or is_blocked(manual_reply,excluded) or not session_allows(RUNTIME,manual_reply) or in_progress:
+                        if (key in deleted_ids(RUNTIME) or is_blocked(manual_reply,excluded)
+                                or not session_allows(RUNTIME,manual_reply) or in_progress
+                                or manual_reply.get('_manual_image_request') and not cfg.get('image_generation_enabled')):
                             finish_manual_task(RUNTIME,manual_reply,'cancelled',reply=True)
                             manual_reply=None
                         else:
                             pending_mentions=deque(item for item in pending_mentions if key not in item.get('_source_ids',[item.get('_id')]))
-                            target,trigger=manual_reply,'WebUI 手动 AI 回复'
+                            if manual_reply.get('_manual_image_request'):
+                                await classify_audience(client,env,manual_reply,history,self_id,focus)
+                            target,trigger=manual_reply,('WebUI 手动图片生成' if manual_reply.get('_manual_image_request') else 'WebUI 手动 AI 回复')
                 if target is None and allowed and pending_mentions:
                     for item in pending_mentions:
                         if now < item.get('_not_before',0):continue

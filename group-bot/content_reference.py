@@ -82,6 +82,8 @@ def resolve(target, context, *, for_drawing=False):
                 found['source_id']=quoted.get('_reply_to_id')
                 found['original_request']=quoted.get('_reply_to_text','')[:600]
         return found
+    if for_drawing and target.get('_reply_id'):
+        return own
     words = re.sub(r'@\d+|\[[^\]]*\]|\s+', '', target.get('text', ''))
     if for_drawing and not re.search(
             r'这(?:个|张|幅)?图|这张|上(?:面|一张)?(?:的)?图|刚(?:才|刚).{0,8}图|'

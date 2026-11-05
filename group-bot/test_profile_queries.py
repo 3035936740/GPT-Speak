@@ -31,6 +31,14 @@ class ProfileQueries(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await self.lookup(target={**self.target,'text':text}),([],[]))
         self.assertEqual(self.calls,[])
 
+    async def test_attached_avatar_drawing_only_queries_a_public_avatar_when_requested(self):
+        target={**self.target,'_drawing_reference_images':True,'text':'给你的形象生成一张图二的这个头像'}
+        self.assertEqual(await self.lookup(target=target),([],[]))
+        self.assertEqual(self.calls,[])
+        rows,avatars=await self.lookup(target={**target,'text':'根据你的QQ头像和这两张图生成头像'})
+        self.assertEqual(avatars[0][0],self.target['_self_id'])
+        self.assertEqual(rows[0]['avatar_status'],'requested')
+
     async def test_public_fields_are_allowlisted_and_missing_is_not_nonexistent(self):
         rows,avatars=await self.lookup()
         self.assertEqual(rows[0]['description'],'公开的签名');self.assertEqual(avatars,[])

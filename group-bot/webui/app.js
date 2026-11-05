@@ -504,6 +504,10 @@ const aiReply=$('detail-ai-reply');
 aiReply.hidden=!valid||row.kind!=='received';
 aiReply.disabled=!!row.blocked;
 aiReply.onclick=()=>act({action:'ai_reply',group:selected,message_id:row.message_id},aiReply).catch(()=>{});
+const imageTask=$('detail-image-task');
+imageTask.hidden=!valid||row.kind!=='received'||!snapshot.status.image_generation_current_enabled;
+imageTask.disabled=!!row.blocked;
+imageTask.onclick=()=>act({action:'image_force',group:selected,message_id:row.message_id},imageTask).catch(()=>{});
 $('detail-task').hidden=!valid||row.kind!=='received'||!snapshot.status.tasks_current_enabled;$('detail-task').disabled=!!row.blocked;$('detail-task').onclick=()=>act({action:'task_force',group:selected,message_id:row.message_id},$('detail-task')).catch(()=>{});$('detail-reply').onclick=()=>selectManualReply(row);$('detail-mention').onclick=()=>{try{const key=prepareManualTarget();insertManualMention({id:row.user_id,name:row.sender||row.user_id},{key});}catch(error){toast(error.message,true);}};$('copy-id').disabled=contextID(row)==='—';$('copy-id').onclick=async()=>{try{await navigator.clipboard.writeText(contextID(row));toast('已复制 ID：'+contextID(row));}catch{toast('浏览器不允许复制，请在“原始数据”里手动选中 ID',true);}};$('delete-event').onclick=()=>{if(confirm('删除这条本地记录和 Bot 上下文？\nQQ 里的原消息不会撤回；当前群会短暂停止后自动恢复。'))act({action:'delete',message_id:row.message_id},$('delete-event')).catch(()=>{});};}
 function closeDetail(){selectedEvent=null;document.querySelectorAll('#records [role=option]').forEach(item=>{item.classList.remove('selected');item.setAttribute('aria-selected','false');});renderDetail(null);}
 $('detail-close').onclick=closeDetail;

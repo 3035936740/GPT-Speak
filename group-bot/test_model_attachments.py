@@ -21,6 +21,31 @@ from debug_references import message_metadata
 class AttachmentTests(unittest.IsolatedAsyncioTestCase):
     def target(self,**kw):return {'_id':'101','_uid':'11111','_self_id':'169901502','_time':time.time(),'at_bot':True,'text':'娘化这个表情包',**kw}
 
+    async def test_archived_avatar_drawing_uses_both_originals_without_public_profile_lookup(self):
+        from image_archive import ImageArchive
+        with tempfile.TemporaryDirectory() as folder:
+            archive=ImageArchive(folder)
+            originals=[]
+            keys=['a'*64,'b'*64]
+            for key,color in zip(keys,['blue','white']):
+                output=io.BytesIO()
+                Image.new('RGB',(2,2),color).save(output,format='PNG')
+                originals.append(output.getvalue())
+                archive.put(originals[-1],key)
+            target=self.target(text='给你的形象生成一张图二的这个头像',
+                _image_hashes=keys,_image_count=2,_attachment_order=[['image',0],['image',1]])
+            async def image(cfg,runtime,request,paths):
+                self.assertEqual([p.read_bytes() for p in paths],originals)
+                self.assertIn('[图片1]、[图片2]',request)
+                return 'generated'
+            with patch.object(bot,'RUNTIME',Path(folder)),patch.object(bot,'api',AsyncMock()) as api, \
+                    patch.object(bot,'download_image',AsyncMock()) as download, \
+                    patch.object(bot,'create_image',image),patch.object(bot,'analyze_roles',AsyncMock(return_value={})):
+                cfg={**bot.settings(),'_image_archive':archive}
+                self.assertEqual(await bot.generate_for_message(None,cfg,[],'手动生图',target,as_image=True),'generated')
+                api.assert_not_awaited()
+                download.assert_not_awaited()
+
     async def test_two_quoted_images_are_bound_to_the_original_message_and_reach_generator(self):
         urls=['https://gchat.qpic.cn/a','https://gchat.qpic.cn/b']
         quote=self.target(_id='100',_images=urls);target=self.target(_reply_id='100',_quoted_message=quote)

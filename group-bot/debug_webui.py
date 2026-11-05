@@ -266,6 +266,7 @@ class DebugWebUI:
             and term in (' '.join(str(row.get(key,'')) for key in ('text','message_id','reply_id','sender','context_id','trace_id','request_id','role','kind','level'))+' '+json.dumps(row.get('quote',{}),ensure_ascii=False)).lower()]
         return {'ui_revision':2,'features':['avatars','system_interventions','manual_send','manual_images','manual_targets','intervention_delete','image_management','sticker_ai_prefill'],'groups':groups,'selected':selected,'events':filtered,'status':{
             'tasks_current_enabled':bool(cfg.get('large_tasks_enabled')),
+            'image_generation_current_enabled':bool(cfg.get('image_generation_enabled')),
             'task_container_mode':cfg.get('large_task_container_mode','shared') if cfg.get('large_tasks_enabled') and cfg.get('large_task_executor') in {'docker','podman'} else None,
             'tasks_enabled':any(Config(self.root,g).load().get('large_tasks_enabled') for g in self.config.load()['chat_group_whitelist']),'enabled':bool(cfg['enabled']),
             'manual_send_ready':bool(state.get('pid')) and read_json(folder/'manual-worker.json').get('pid')==state.get('pid'),

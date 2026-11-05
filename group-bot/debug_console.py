@@ -327,9 +327,9 @@ class Console:
             elif action=='private_send':
                 from private_view import enqueue
                 return enqueue(self.root,str(value.get('peer','')),value.get('text'),value.get('request_id'),value.get('images'),value.get('reply_id'))
-            elif action in {'task_force','ai_reply'}:
+            elif action in {'task_force','ai_reply','image_force'}:
                 from manual_task_requests import enqueue
-                return enqueue(self.root,group,str(value.get('message_id','')),reply=action=='ai_reply')
+                return enqueue(self.root,group,str(value.get('message_id','')),reply=action=='ai_reply',image=action=='image_force')
             elif action=='private_refresh':
                 from private_directory import refresh
                 return refresh(self.root)
