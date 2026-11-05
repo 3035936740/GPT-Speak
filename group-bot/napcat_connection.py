@@ -1,16 +1,33 @@
 """Shared forward OneBot connection settings and non-replaying API transport."""
 import asyncio
 import json
+import logging
+import time
 import uuid
+from collections import Counter
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from napcat_errors import NapCatAPIError
 
+_activity=Counter()
+_activity_since=time.monotonic()
+
+
+def record_activity(action):
+    global _activity_since
+    _activity[str(action)]+=1
+    now=time.monotonic()
+    if now-_activity_since>=60:
+        logging.getLogger('qq-group-bot').info('NapCat request activity; seconds=%s; actions=%s',
+            round(now-_activity_since),json.dumps(dict(_activity),sort_keys=True))
+        _activity.clear()
+        _activity_since=now
+
 
 DEFAULTS = {'napcat_connection_mode': 'current', 'napcat_host': '', 'napcat_port': 0,
     'napcat_path': '', 'napcat_secure': False, 'napcat_token': '',
-    'napcat_timeout_seconds': 30, 'napcat_mcp_url': '', 'napcat_mcp_token': ''}
+    'napcat_timeout_seconds': 60, 'napcat_mcp_url': '', 'napcat_mcp_token': ''}
 
 
 def validate_url(url):
@@ -77,19 +94,27 @@ class ForwardWebSocket:
     async def request(self, action, params):
         # Serialize send+receive so concurrent API calls cannot consume each other's echoes.
         async with self.lock:
+            sent=False
             try:
                 async def exchange():
+                    nonlocal sent
                     if self.socket is None:
                         from websockets.asyncio.client import connect
                         self.socket = await connect(self.url, additional_headers={'Authorization': 'Bearer ' + self.token} if self.token else {},
                             open_timeout=self.timeout, close_timeout=2, proxy=None, max_size=16 * 1024 * 1024)
                     echo = uuid.uuid4().hex
                     await self.socket.send(json.dumps({'action': action, 'params': params or {}, 'echo': echo}))
+                    sent=True
                     while True:
                         result = json.loads(await self.socket.recv())
                         if isinstance(result, dict) and result.get('echo') == echo:
                             return result
                 return await asyncio.wait_for(exchange(), self.timeout)
+            except (asyncio.TimeoutError,TimeoutError,asyncio.CancelledError):
+                # recv cancellation is safe. Keep the connection for late replies,
+                # which the next request discards by echo. Never replay a send.
+                if not sent:await self.close()
+                raise
             except BaseException:
                 # A write may have reached QQ: reconnect on the NEXT call, never replay this one.
                 await self.close()
@@ -103,6 +128,7 @@ class NapCatHTTPClient(httpx.AsyncClient):
 
 
 async def request(client, env, action, params=None, cfg=None):
+    record_activity(action)
     url, token, timeout = connection(cfg or {}, env)
     if urlsplit(url).scheme in {'ws', 'wss'}:
         transports = getattr(client, '_onebot_sockets', None)

@@ -17,25 +17,26 @@ def message_position(row):
         return int(sequence),str(key)
 
 
-async def history_rows(api,client,env,group,count,cursor=0):
+async def history_rows(api,client,env,group,count,cursor=0,*,timeout=60):
     data=await asyncio.wait_for(api(client,env,'get_group_msg_history',
-        {'group_id':group,'count':count,'message_seq':cursor,'reverseOrder':not cursor}),5)
+        {'group_id':group,'count':count,'message_seq':cursor,'reverseOrder':not cursor}),timeout+1)
     rows=data.get('messages') or []
     if not isinstance(rows,list):
         raise ValueError('Invalid message history')
     return rows
 
 
-async def bootstrap(api,client,env,group,*,has_archive=False):
+async def bootstrap(api,client,env,group,*,has_archive=False,timeout=60):
     try:
-        return {'messages':await history_rows(api,client,env,group,20 if has_archive else 100)}
+        return {'messages':await history_rows(api,client,env,group,20 if has_archive else 100,timeout=timeout)}
     except Exception as exc:
         log.warning('Startup history skipped; latest polling continues; error_type=%s',type(exc).__name__)
         return {'messages':[]}
 
 
 class LatestMessages:
-    def __init__(self):
+    def __init__(self,timeout=60):
+        self.timeout=timeout
         self.reset()
 
     def reset(self):
@@ -53,7 +54,7 @@ class LatestMessages:
         sequence,anchor=self.cursor
         try:
             # NapCat includes the anchor in the forward page.
-            rows=await history_rows(api,client,env,group,HISTORY_BATCH+1,anchor)
+            rows=await history_rows(api,client,env,group,HISTORY_BATCH+1,anchor,timeout=self.timeout)
         except NapCatAPIError as exc:
             if exc.action!='get_group_msg_history' or not re.search(
                 r'消息.*不存在|(?:message|msg).*(?:not found|does not exist)',exc.detail,re.I):
@@ -71,7 +72,7 @@ class LatestMessages:
         if not new_rows and now>=self.next_probe:
             self.next_probe=now+30
             try:
-                head=await history_rows(api,client,env,group,1)
+                head=await history_rows(api,client,env,group,1,timeout=self.timeout)
             except Exception as exc:
                 log.debug('Latest message check unavailable; error_type=%s',type(exc).__name__)
             else:
@@ -87,7 +88,7 @@ class LatestMessages:
                 return result
         rows=[];failure=None;now=time.monotonic()
         try:
-            rows=await history_rows(api,client,env,group,HISTORY_BATCH)
+            rows=await history_rows(api,client,env,group,HISTORY_BATCH,timeout=self.timeout)
         except Exception as exc:failure=exc;rows=[]
         newest=max((float(row.get('time',0)) for row in rows),default=0)
         if newest>self.latest and failure is None:
@@ -95,7 +96,7 @@ class LatestMessages:
         elif now>=self.next_probe:
             self.next_probe=now+30
             try:
-                contacts=await asyncio.wait_for(api(client,env,'get_recent_contact',{'count':100}),3)
+                contacts=await asyncio.wait_for(api(client,env,'get_recent_contact',{'count':100}),self.timeout+1)
                 if not isinstance(contacts,list):contacts=[]
                 for contact in contacts:
                     if str(contact.get('chatType'))!='2' or str(contact.get('peerUin'))!=str(group):continue
@@ -106,7 +107,7 @@ class LatestMessages:
                     # to, or refer to an event NapCat cannot parse as a message.
                     # This optional recovery must not turn that into a poll error.
                     try:
-                        message=await asyncio.wait_for(api(client,env,'get_msg',{'message_id':identity}),3)
+                        message=await asyncio.wait_for(api(client,env,'get_msg',{'message_id':identity}),self.timeout+1)
                     except NapCatAPIError as exc:
                         if exc.action=='get_msg' and re.search(r'消息为空|消息不存在|已被撤回|(?:message|msg).*(?:empty|not found|does not exist|recalled|deleted)',exc.detail,re.I):
                             log.debug('Latest message skipped; reason=empty_or_unavailable; retcode=%s',exc.retcode)

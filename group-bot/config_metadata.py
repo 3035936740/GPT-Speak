@@ -34,7 +34,7 @@ FIELDS = {
     'napcat_path':('NapCat连接路径','留空沿用当前路径；例如WebSocket / 或 /api，HTTP代理可填写基础路径'),
     'napcat_secure':('NapCat使用TLS','显式http/ws模式下启用HTTPS/WSS；current保留原URL协议'),
     'napcat_token':('NapCat访问令牌','留空沿用当前napcat.env令牌；仅作连接鉴权，不传给模型'),
-    'napcat_timeout_seconds':('NapCat API超时秒数','默认30，范围1～300；发送超时不自动重发，后续请求重新连接'),
+    'napcat_timeout_seconds':('NapCat API超时秒数','默认60，范围1～300；启动历史和消息轮询也使用此超时。WS请求发出后超时仍保留连接并丢弃迟到结果；发送结果不确定时不自动重发'),
     'napcat_mcp_url':('NapCat MCP独立连接地址','默认留空，跟随Bot当前连接。需要单独连接时填写http(s)或ws(s)完整URL；外部MCP宿主需使用动态入口并重连'),
     'napcat_mcp_token':('NapCat MCP独立访问令牌','默认留空，跟随Bot当前令牌；设置后只用于MCP连接'),
     'receive_only':('仅接收消息','保留群连接与聊天存档，停止所有AI回复、识图、绘图、学习及消息发送；恢复后只处理新消息。支持按群设置，不移出白名单'),

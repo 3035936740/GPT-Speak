@@ -163,5 +163,20 @@ class LatestMessageTests(unittest.TestCase):
             self.assertEqual(cancelled,[True])
         asyncio.run(run())
 
+    def test_history_uses_configured_timeout_instead_of_five_seconds(self):
+        async def run():
+            real_wait=asyncio.wait_for
+            limits=[]
+            async def api(*args):return {'messages':[]}
+            async def wait(task,seconds):
+                limits.append(seconds)
+                return await real_wait(task,seconds)
+            from latest_messages import history_rows
+            with patch('latest_messages.asyncio.wait_for',new=wait):
+                await bootstrap(api,None,None,1,timeout=60)
+                await history_rows(api,None,None,1,40,timeout=12)
+            self.assertEqual(limits,[61,13])
+        asyncio.run(run())
+
 
 if __name__=='__main__':unittest.main()

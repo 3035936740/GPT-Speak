@@ -116,4 +116,34 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         socket=Mock();socket.send=AsyncMock();socket.recv=AsyncMock(side_effect=TimeoutError);socket.close=AsyncMock()
         transport=ForwardWebSocket('ws://local.test','',1);transport.socket=socket
         with self.assertRaises(TimeoutError):await transport.request('send_group_msg',{'text':'once'})
-        socket.send.assert_awaited_once();socket.close.assert_awaited_once();self.assertIsNone(transport.socket)
+        socket.send.assert_awaited_once();socket.close.assert_not_awaited();self.assertIs(transport.socket,socket)
+        await transport.close()
+
+    async def test_timeout_keeps_socket_and_late_echo_cannot_answer_the_next_request(self):
+        from websockets.asyncio.server import serve
+        for external in (False,True):
+            release=asyncio.Event()
+            calls=[]
+            async def handler(ws):
+                async for frame in ws:
+                    payload=json.loads(frame);calls.append(payload['action'])
+                    if len(calls)==1:await release.wait()
+                    await ws.send(json.dumps({'retcode':0,'data':payload['action'],'echo':payload['echo']}))
+            async with serve(handler,'127.0.0.1',0) as server:
+                port=server.sockets[0].getsockname()[1]
+                transport=ForwardWebSocket('ws://127.0.0.1:'+str(port),'',1 if external else .05)
+                try:
+                    with self.assertRaises(asyncio.TimeoutError):
+                        call=transport.request('send_group_msg',{'text':'only once'})
+                        if external:await asyncio.wait_for(call,.05)
+                        else:await call
+                    socket=transport.socket
+                    self.assertIsNotNone(socket)
+                    release.set();transport.timeout=1
+                    result=await transport.request('get_login_info',{})
+                    self.assertEqual(result['data'],'get_login_info')
+                    self.assertIs(transport.socket,socket)
+                    self.assertEqual(calls,['send_group_msg','get_login_info'])
+                finally:
+                    release.set()
+                    await transport.close()
