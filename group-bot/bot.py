@@ -2155,7 +2155,8 @@ async def _run(smoke=False):
         from forward_messages import ForwardMessages
         forward_reader=ForwardMessages(RUNTIME)
         message_feed=LatestMessages()
-        old = await bootstrap(api,client,env,cfg['group_id'])
+        old = await bootstrap(api,client,env,cfg['group_id'],has_archive=bool(history))
+        message_feed.seed(old.get('messages',[]))
         old['messages']=await forward_reader.batch([m for m in old.get('messages',[]) if message_key(m) not in deleted_ids(RUNTIME)],lambda action,params:api(client,env,action,params),cfg)
         for row in history:remember(str(row.get('_id','')))
         for msg in sorted(old.get('messages', []),key=lambda row:row.get('time',0)):
@@ -3173,6 +3174,7 @@ async def _run(smoke=False):
                 log.error('%s: %s', 'NapCat API failure' if connection_failed else 'Bot processing failure', str(exc))
                 if connection_failed and not recovery_pending:
                     recovery_pending=True
+                    message_feed.reset()
                     await discard_disconnected_work()
                 save_state({'pid': os.getpid(), 'online': not connection_failed, 'group_id': cfg['group_id'],
                     'last_poll': datetime.now().isoformat(), 'day': day,

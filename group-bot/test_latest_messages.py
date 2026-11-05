@@ -53,6 +53,70 @@ class LatestMessageTests(unittest.TestCase):
             self.assertEqual((await LatestMessages().poll(api,None,None,1))['messages'][0]['message_id'],'new')
         asyncio.run(run())
 
+    def test_forward_poll_skips_history_and_keeps_messages_in_the_same_second(self):
+        async def run():
+            anchor={'message_id':21,'real_seq':'120','time':10}
+            later={'message_id':16,'real_seq':'121','time':10}
+            newest={'message_id':44,'real_seq':'122','time':10}
+            feed=LatestMessages()
+            feed.seed([anchor])
+            calls=[]
+
+            async def api(c,e,action,params):
+                self.assertEqual(action,'get_group_msg_history')
+                self.assertFalse(params['reverseOrder'])
+                calls.append(params['message_seq'])
+                if len(calls)==1:return {'messages':[newest,anchor,later]}
+                return {'messages':[newest]}
+
+            self.assertCountEqual((await feed.poll(api,None,None,1))['messages'],[later,newest])
+            self.assertEqual(await feed.poll(api,None,None,1),{'messages':[]})
+            self.assertEqual(calls,['21','44'])
+        asyncio.run(run())
+
+    def test_missing_anchor_recovers_once_and_reseeds_from_latest(self):
+        async def run():
+            current={'message_id':75,'real_seq':'130','time':20}
+            feed=LatestMessages()
+            feed.seed([{'message_id':21,'real_seq':'120','time':10}])
+            calls=[]
+
+            async def api(c,e,action,params):
+                self.assertEqual(action,'get_group_msg_history')
+                cursor=params['message_seq']
+                calls.append(cursor)
+                if cursor=='21':
+                    raise NapCatAPIError(action,{'retcode':1200,'message':'消息21不存在'})
+                return {'messages':[current]}
+
+            self.assertEqual(await feed.poll(api,None,None,1),{'messages':[current]})
+            self.assertEqual(await feed.poll(api,None,None,1),{'messages':[]})
+            feed.reset()
+            self.assertEqual(await feed.poll(api,None,None,1),{'messages':[current]})
+            self.assertEqual(calls,['21',0,'75',0])
+        asyncio.run(run())
+
+    def test_stalled_cursor_checks_only_one_latest_message_before_recovery(self):
+        async def run():
+            anchor={'message_id':21,'real_seq':'120','time':10}
+            head={'message_id':75,'real_seq':'130','time':20}
+            feed=LatestMessages()
+            feed.seed([anchor])
+            feed.next_probe=0
+            counts=[]
+
+            async def api(c,e,action,params):
+                self.assertEqual(action,'get_group_msg_history')
+                counts.append(params['count'])
+                if params['message_seq']=='21':return {'messages':[anchor]}
+                if params['count']==1:return {'messages':[head]}
+                return {'messages':[anchor,head]}
+
+            self.assertEqual(await feed.poll(api,None,None,1),{'messages':[anchor,head]})
+            await bootstrap(api,None,None,1,has_archive=True)
+            self.assertEqual(counts,[41,1,40,20])
+        asyncio.run(run())
+
     def test_stale_history_recovers_latest_one_without_backfill(self):
         async def run():
             calls=[]
