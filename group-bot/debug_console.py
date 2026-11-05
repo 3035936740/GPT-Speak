@@ -600,7 +600,8 @@ class Console:
             self.notice=self.config.prompt_path(field).read_text(encoding='utf-8') if field in {'persona','reply_protocol'} else str(self.config.load().get(field));return
         if action=='set':
             pair=value.split(maxsplit=1)
-            if len(pair)==1 and pair[0] in {'webui_key','key','sticker_admission_rule','member_prompt_human','member_prompt_owner','member_prompt_AI','member_prompt_bot'}:pair.append('')
+            # Preserve cleared text fields from WebUI/CLI; Config validates which may be empty.
+            if len(pair)==1 and isinstance(self.config.load().get(self.config.key(pair[0])),str):pair.append('')
             if len(pair)!=2:raise ValueError('/config set 字段 值')
             key,value=pair
         elif action=='edit':

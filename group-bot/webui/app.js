@@ -22,9 +22,9 @@ const settingsGroups=[
     ['model','模型与分工','设置日常回复模型和内部判断所用的模型。',
       ['回复模型', 'model reasoning_effort fast_mode text_transport model_timeout_seconds'],
       ['决策与角色分工', 'multi_role_enabled role_models role_timeout_seconds']],
-    ['connection','NapCat 连接','管理 QQ 消息连接、轮询和 MCP 接入。',
+    ['connection','连接设置','管理 NapCat 消息连接和 GPT Speak MCP 接入。',
       ['消息连接', 'napcat_connection_mode napcat_host napcat_port napcat_path napcat_secure napcat_token napcat_timeout_seconds poll_seconds'],
-      ['MCP 连接', 'napcat_mcp_url napcat_mcp_token']]],
+      ['GPT Speak MCP', '@gpt_speak_mcp']]],
   ['聊天行为',
     ['participation','群聊触发与节奏','控制 Bot 何时回应点名、参与聊天或主动开话题。',
       ['点名与冷却', 'cooldown bot_aliases name_match_sensitivity at_context_sensitivity mention_cooldown_seconds'],
@@ -701,7 +701,7 @@ function cooldownRow(){const box=node('div',undefined,'setting'),label=node('div
 function renderConfig(){
   const term=$('config-search').value.trim().toLowerCase(),area=$('settings'),index=$('settings-index');
   const scroll=area.scrollTop,indexScroll=index.scrollTop;
-  const remaining=new Set(Object.keys(configData.config).filter(key=>!decisionDefaults.includes(key)));
+  const remaining=new Set(Object.keys(configData.config).filter(key=>!decisionDefaults.includes(key)&&!['napcat_mcp_url','napcat_mcp_token'].includes(key)));
   area.replaceChildren();
   index.replaceChildren();
 
@@ -713,6 +713,7 @@ function renderConfig(){
     let count=0;
     for(const [subtitle,keys] of blocks){
       const visible=keys.trim().split(/\s+/).filter(key=>{
+        if(key==='@gpt_speak_mcp')return [title,subtitle,'GPT Speak MCP stdio Codex'].join(' ').toLowerCase().includes(term);
         if(key!=='cooldown'&&!remaining.delete(key))return false;
         const meta=configData.fields[key];
         const labels=key==='cooldown'?'回复冷却 冷却模式':meta.label+' '+meta.help;
@@ -721,7 +722,21 @@ function renderConfig(){
       });
       if(!visible.length)continue;
       if(subtitle)section.append(node('h4',subtitle,'setting-subheading'));
-      for(const key of visible)section.append(key==='cooldown'?cooldownRow():settingRow(key));
+      for(const key of visible){
+        if(key==='@gpt_speak_mcp'){
+          const info=configData.mcp_integration||{},card=node('div',undefined,'mcp-integration'),header=node('div',undefined,'mcp-integration-header');
+          const check=node('button','检查连接');check.type='button';check.setAttribute('aria-label','检查 GPT Speak MCP 连接');check.onclick=()=>checkSpeakMCP(check).catch(error=>toast(error.message,true));
+          header.append(node('span','本地 stdio 接入','mcp-transport'),check);
+          card.append(header,node('p','Codex 通过 GPT Speak 读取本地记录并提交发送请求，无需配置地址或令牌。','mcp-description'));
+          if(info.command||info.entrypoint){
+            const details=node('details',undefined,'mcp-connection-details'),paths=node('dl',undefined,'mcp-paths');
+            details.append(node('summary','连接详情'));
+            for(const [label,value] of [['Python',info.command],['入口',info.entrypoint]])if(value)paths.append(node('dt',label),node('dd',value,'code'));
+            details.append(paths);card.append(details);
+          }
+          card.append(node('p','检查会建立临时会话；Codex 中的现有连接需在 Codex 内重连。','mcp-note'));section.append(card);
+        }else section.append(key==='cooldown'?cooldownRow():settingRow(key));
+      }
       count+=visible.length;
     }
     if(!count)return;
@@ -776,7 +791,12 @@ $('white-form').onsubmit=event=>{event.preventDefault();const id=$('white-id').v
 $('white-remove').onclick=()=>{if(confirm('把这个群移出白名单，并停止这个群的 Bot？'))act({action:'whitelist',mode:'remove',group_id:String(selected)},$('white-remove')).catch(()=>{});};
 $('pause').onclick=()=>act({action:'pause'},$('pause')).catch(()=>{});$('restart').onclick=()=>act({action:'restart'},$('restart')).catch(()=>{});
 $('reconnect-napcat').onclick=()=>act({action:'reconnect',mode:'napcat'},$('reconnect-napcat')).catch(()=>{});
-$('reconnect-mcp').onclick=()=>act({action:'reconnect',mode:'mcp'},$('reconnect-mcp')).catch(()=>{});
+async function checkSpeakMCP(button){
+  const info=await api('/api/config');
+  if(!info.mcp_integration)throw Error('请先重启 GPT Speak 控制台，加载新的 GPT Speak MCP 检查功能');
+  return act({action:'reconnect',mode:'mcp'},button);
+}
+$('reconnect-mcp').onclick=()=>checkSpeakMCP($('reconnect-mcp')).catch(error=>toast(error.message,true));
 $('task-container-restart').onclick=()=>{
   const mode=snapshot?.status?.task_container_mode;
   if(!mode)return;

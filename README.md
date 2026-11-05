@@ -8,7 +8,7 @@
 
 基于 NapCat / OneBot 的 QQ 群聊 AI Bot，包含 CLI、WebUI、图片理解、共享表情库、群记忆、知识库和按群覆盖的配置。
 
-项目名称为 **GPT Speak**。默认采用 GPT 白龙娘设定，参考部署者的“白色大肥龙”配置：角色名 GPT，银白长发、白色弯角、淡紫眼睛、膜翼与白鳞长尾，语气自然清淡、略带慵懒；句尾通常不用句号。默认显示名“白色大肥龙”，支持GPT、白龙娘等别名。角色设定不替代实际模型选择，模型仍由配置决定。
+项目名称为 **GPT Speak**。默认采用 GPT 6 Luna 白龙娘设定，参考部署者的“白色大肥龙”配置：角色名 Luna／露娜，银白长发、白色弯角、淡紫眼睛、膜翼与白鳞长尾，语气自然清淡、略带慵懒；句尾通常不用句号。默认显示名“白色大肥龙”，支持 Luna、GPT 6 Luna、露娜、白龙娘等别名。角色设定不替代实际模型选择，模型仍由配置决定。
 
 项目地址：[3035936740/GPT-Speak](https://github.com/3035936740/GPT-Speak)。WebUI左侧“命令行”下方的“关于”可查看项目介绍并打开GitHub项目页。
 
@@ -93,7 +93,7 @@ NapCat 安装来源遵循 [官方安装说明](https://napneko.github.io/guide/b
 
 1. 在 NapCat WebUI `http://127.0.0.1:6099/webui` 登录 QQ，开启 OneBot HTTP，配置访问令牌。Docker 模式在容器内监听 `0.0.0.0:3000`，主机仅映射 `127.0.0.1:3000`；WebUI 和 WS 端口也仅映射到本机。随机 WebUI 令牌保存在本地 `runtime/napcat-docker/compose.json`。
 2. 新安装填写 `group-bot/napcat.env` 的 `NAPCAT_HOST` 和 `NAPCAT_TOKEN`。已有安装继续使用 `settings.json` 的 `mcp_env_file`，例如 `../qq-mcp/.env`，不替换既有连接凭据。
-3. 修改 `group-bot/settings.json` 的 `group_id`、`chat_group_whitelist`、账号和模型，确认后开启 `enabled`。安装模板默认禁用回复；缺少的人设从 `persona-default.txt` 初始化为GPT白龙娘，回复规则从 `reply_protocol-default.txt` 初始化，已有个人/群级人设保留。
+3. 修改 `group-bot/settings.json` 的 `group_id`、`chat_group_whitelist`、账号和模型，确认后开启 `enabled`。安装模板默认禁用回复；缺少的人设从 `persona-default.txt` 初始化为GPT 6 Luna白龙娘，回复规则从 `reply_protocol-default.txt` 初始化，已有个人/群级人设保留。
 4. Windows 运行 `Start-QQ-Group-Bot.cmd`；Linux/macOS 运行 `sh ./Start-QQ-Group-Bot.sh`。启动 CLI 并打开 WebUI，终端也会显示地址。无图形界面时使用终端地址。
 
 启动参数：
@@ -107,6 +107,8 @@ NapCat 安装来源遵循 [官方安装说明](https://napneko.github.io/guide/b
 | `-DryRun` | `--dry-run` | 仅显示计划，不安装、不启动 |
 
 启动器从项目根目录定位文件，不依赖当前工作目录。优先使用 `.venv`，兼容已有 `qq-mcp/.venv`；也可用 `QQ_BOT_PYTHON` 指定解释器。PowerShell 入口支持 Windows PowerShell 5.1 / PowerShell 7；Linux/macOS 可用 `.sh` 或已安装的 PowerShell 7。
+
+Bot 启动器按实际 OneBot 连接地址决定是否自动启动本地 NapCat：仅 `localhost`、`127.0.0.1` 等回环地址及 `::1` 可以自动启动；远程 IP/域名会跳过本地 Windows、WSL 或 Docker 启动，避免连接远程 QQ 时误启动旧实例。`current` 模式读取所配置 `.env` 的地址；无法确认地址时也跳过。可在 `launch.local.json` 的 `napcat` 对象内设置 `"auto_start": false` 永久关闭伴随启动；显式运行 `Start-QQ-NapCat` 仍按本机启动配置执行。`-DryRun` / `--dry-run` 会显示实际判断结果。
 
 ## 数据与目录
 
@@ -148,7 +150,7 @@ CLI 保留短命令匹配和 Tab 补全。常用命令：
 | `/help` | 从顶部显示完整命令清单，↑↓或PgUp/PgDn翻页，Esc返回；`/help config`、`/help member`、`/help system`查看详细参数，CLI与WebUI共用说明 |
 | `/status` | 查看运行、队列与记录状态 |
 | `/reconnect napcat` | 保存并重启当前群的HTTP连接，恢复暂停状态；不会重启QQ或其他群 |
-| `/reconnect mcp` | 新建stdio MCP会话并读取当前群信息，验证MCP到NapCat链路；其他应用持有的MCP会话仍需在其宿主重连 |
+| `/reconnect mcp` | 检查 GPT Speak MCP 临时 stdio 会话并读取本地群状态；Codex 已有连接需在 Codex 内重连 |
 | `/usage`、`/usage all` | 查询当前Codex账号5小时/1周额度、北京时间重置时间，以及当前群/全部群的实测token统计；60秒查询缓存 |
 | `/config` | 查看或调整配置 |
 | `/whitelist` | 管理授权群 |
@@ -159,7 +161,7 @@ CLI 保留短命令匹配和 Tab 补全。常用命令：
 
 关闭浏览器页签不会退出后台。需要更新代码时，先 `/exit` 再手动启动；避免重复运行多个后台写入同一数据目录。
 
-群页右上角提供“重连 NapCat”和“重连 NapCat MCP”。群Bot直接使用NapCat HTTP，MCP是另一条独立链路；单群暂停、群权限失败或启动中的状态，不代表QQ整体离线。重新连接当前群会先保存并停止其工作进程，再重新读取配置启动；其他群继续运行。MCP检查只新建本次验证会话并读取群信息，不重启QQ、不重启或接管其他客户端的MCP服务。意外退出的群后台延迟5秒重试；有STOP停止标记的退出仍保持暂停，不能自动恢复人工暂停。
+群页右上角提供“重连 NapCat”和“检查 GPT Speak MCP”。群 Bot 直接使用 NapCat HTTP/WS；Codex 的 MCP 入口读取 GPT Speak 本地记录。重新连接当前群会先保存并停止其工作进程，再重新读取配置启动；其他群继续运行。MCP 检查只建立临时 stdio 会话并读取本地群状态，不直接访问 NapCat，也不接管 Codex 中已有的连接。私聊页提供相同的 GPT Speak MCP 检查。意外退出的群后台延迟5秒重试；有STOP停止标记的退出仍保持暂停，不能自动恢复人工暂停。
 
 ## 配置保存与继承
 
@@ -199,7 +201,7 @@ token来自本项目 Codex CLI 的 `turn.completed.usage`，持久化于 `runtim
 - 记忆和表达学习保存在本地运行数据中；学习群内表达时保留核心人设。
 - 默认回复失败只记后台日志，不向群里发送兜底套话；可通过配置调整。
 - 分析与回复共用话题上下文选择：显式引用优先；同账号的接续追问可在会话状态有效期内保留上一轮问答，避免被大群闲聊挤掉。它只是理解背景，不重放旧请求；重连历史不参与自动接续，屏蔽、指令和视频仅记录的边界继续生效。分析输入超预算时先移除无关闲聊，再压缩保护消息正文。
-- 公共身份规则跟随当前选定人物卡：默认GPT白龙娘可按设定说明自己的角色身份；旧yonagi人设仍按自己的身份/性别表达偏好工作。角色专属限制只从操作员人设文件读取，不从群友聊天提取；已有个人设置不会被自动重写。
+- 公共身份规则跟随当前选定人物卡：默认GPT 6 Luna白龙娘可按设定说明自己的角色身份；旧yonagi人设仍按自己的身份/性别表达偏好工作。角色专属限制只从操作员人设文件读取，不从群友聊天提取；已有个人设置不会被自动重写。
 - 群聊繁忙时，当前回复生成与分段发送完成前继续积累新消息；下一轮将待接话的文字请求与普通新发言合成一次对话交给模型，不再逐条追赶。批次保留发送者、时间和消息ID，按总输入预算保留较新的内容，消费过的消息不会再逐条触发。独立绘图请求仍使用原来的绘图通道。后台积压图片优先自动读取最新一张，较早图片保留记录，需要时可通过当前请求或引用读取。
 - QQ链接卡片（JSON、XML、share）转换为标明“转发文本：链接卡片”的标题、摘要和链接，卡片封面不送去识图。原生视频显示为“[视频]”，群聊和私聊仅保存记录，即使附带@也不读取视频、不触发指令、识图、学习或自动回复；合并聊天记录内部的视频同样只保留占位。
 - NapCat断线时取消当前群尚未完成的回复、识图和学习任务；重连成功的首批消息及延迟补回的旧消息只写入历史存档，不执行旧指令、不补回复或识图。此后新到的消息才恢复AI处理；不会自动恢复已手动暂停的会话。聊天快照使用原子替换并对Windows短暂文件占用进行有限重试。
@@ -507,9 +509,21 @@ WebUI中的数组和映射配置使用“编辑”按钮打开子窗口：数组
 
 ## NapCat正向HTTP / WebSocket与MCP
 
-`napcat_connection_mode="current"` 默认沿用本机 `napcat.env` 的连接地址和令牌，不改变已有连接。可设置 `http` 或 `ws`，通过 `napcat_host`（IP/IPv6/域名）、`napcat_port`、`napcat_path`、`napcat_secure` 和 `napcat_token` 自定义连接。主机/路径/令牌留空、端口为0时继承当前配置；API超时 `napcat_timeout_seconds` 默认30秒。需在NapCat开启匹配的HTTP或WebSocket服务端。本项目主动连接NapCat，WebSocket以echo匹配API响应并跳过推送事件；连接中断后下一次请求重新连接，不重放失败请求。[OneBot正向WebSocket协议](https://github.com/botuniverse/onebot-11/blob/master/communication/ws.md)
+NapCat 连接默认使用 `http`，主机 `localhost`，端口 `3000`，路径为空，对应 `http://localhost:3000`。路径可留空，直接连接服务根路径。可通过 `napcat_host`（IP/IPv6/域名）、`napcat_port`、`napcat_path`、`napcat_secure` 和 `napcat_token` 自定义连接；选择 `current` 可继承 `napcat.env`。API 超时 `napcat_timeout_seconds` 默认 60 秒。需在 NapCat 开启匹配的 HTTP 或 WebSocket 服务端。选择 `ws` 时，通过实时事件连接接收群聊和私聊消息，API 响应按 echo 匹配，发送结果不确定时不会自动重放请求。[OneBot正向WebSocket协议](https://github.com/botuniverse/onebot-11/blob/master/communication/ws.md)
 
-NapCat MCP默认跟随Bot当前连接；`napcat_mcp_url`、`napcat_mcp_token` 默认留空，可显式覆盖。CLI `/reconnect mcp` 使用这组配置建立新会话；外部MCP宿主可将stdio启动入口配置为使用QQ MCP虚拟环境的Python运行项目根目录 `tools/napcat_mcp_stdio.py`，每次启动重新读取配置及授权群。外部应用已经运行的MCP连接需要在其宿主重连。
+Codex 推荐接入 GPT Speak MCP：使用已安装依赖的 Python 运行 `tools/gpt_speak_mcp_stdio.py`（stdio），可选 `--root` 指定 Bot 配置目录。独立安装依赖用 `python -m pip install -r requirements-mcp.txt`。该入口读取 GPT Speak 的本地聊天存档、连接状态、任务与用量缓存，不直接连接 NapCat，不开启额外轮询，不启动 Bot。群聊/私聊发送进入 GPT Speak 原有发送队列，沿用白名单、屏蔽、仅接收和发送结果不确定时不重发的检查；返回排队结果不代表发送成功。重复请求须复用同一 `request_id`。
+
+Codex 的 `config.toml` 示例（路径改为实际安装位置），保存后重连 MCP 或重启 Codex：
+
+```toml
+[mcp_servers.gpt-speak]
+command = 'D:\MCP\qqmcp\qq-mcp\.venv\Scripts\python.exe'
+args = ['D:\MCP\qqmcp\tools\gpt_speak_mcp_stdio.py']
+startup_timeout_sec = 20
+tool_timeout_sec = 45
+```
+
+迁移旧接入时，将 `[mcp_servers.qq-napcat]` 的 `enabled` 设为 `false`，使用上述 `gpt-speak` 入口。旧文件名 `tools/napcat_mcp_stdio.py` 现在转到 GPT Speak MCP；`/reconnect mcp` 也检查 GPT Speak MCP。旧的 `napcat_mcp_url`、`napcat_mcp_token` 仅保留配置读取兼容，界面隐藏，新 MCP 不使用它们。stdio 不需要独立 URL 或访问令牌；行为设置显示入口和检查按钮。QQ MCP 虚拟环境可继续作为 Python 依赖环境，已不加载其原 MCP 服务。
 
 WebUI按钮与CLI对应：仅接收 `/receive on|off`，刷新头像 `/avatar refresh`，重连 `/reconnect napcat|mcp`，终止/恢复 `/session stop|resume`，清空上下文 `/session clear`。`/help`、Tab补全及 `/status` 同步更新。更新代码后手动退出并重新启动控制台以加载Python和私聊后台；本次接入参考了提交包的私聊实现，未接入独立主人称呼或原有的全局清理记忆指令。
 
@@ -557,4 +571,4 @@ Python3镜像构建目录为 `group-bot/task-sandbox`；Ubuntu Podman构建命�
 
 本项目原创代码和文档采用 [MIT License](LICENSE)，Copyright (c) **2026 BingAlpha**。本授权不覆盖第三方程序、参考源码、模型服务或用户图片。
 
-感谢 MaiBot 的群聊交互设计参考、NapCat 的 QQ 接口和 QQ NapCat MCP 的工具接口。第三方许可证原文、版本与来源见 [licenses/README.md](licenses/README.md)：MaiBot 为 GPLv3，NapCat 使用其自定义许可证；当前核对的 QQ NapCat MCP 版本未提供独立 LICENSE，已附情况说明，不能将其视为本项目 MIT 授权。
+感谢 MaiBot 的群聊交互设计参考与 NapCat 的 QQ 接口。第三方许可证原文、版本与来源见 [licenses/README.md](licenses/README.md)：MaiBot 为 GPLv3，NapCat 使用其自定义许可证。GPT Speak MCP 为本项目自行实现的本地工具入口。

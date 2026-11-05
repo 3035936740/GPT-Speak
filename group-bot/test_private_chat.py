@@ -404,6 +404,44 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(*self.service.pending.values())
         self.assertEqual(len(self.sent), 2)
 
+    async def test_http_poll_never_reads_unrelated_recent_group_sessions(self):
+        calls=[]
+        async def api(action,params=None):
+            calls.append((action,params))
+            self.assertEqual(action,'get_friend_msg_history')
+            self.assertEqual(params['count'],1)
+            self.assertEqual({key:params[key] for key in ('quick_reply','parse_mult_msg','disable_get_url')},
+                {'quick_reply':True,'parse_mult_msg':False,'disable_get_url':True})
+            self.assertIn(str(params['user_id']),{'11111','22222'})
+            return {'messages':[message('new',uid=str(params['user_id']),stamp=self.now)]}
+        self.service.api=api
+        contacts=await self.service.http_contacts()
+        self.assertEqual([c['peerUin'] for c in contacts],['11111','22222'])
+        self.assertEqual(len(calls),2)
+        self.service.members={}
+        self.assertEqual(await self.service.http_contacts(),[])
+        self.assertEqual(len(calls),2)
+
+    async def test_http_poll_rotates_friends_and_contact_errors_have_backoff(self):
+        from napcat_errors import NapCatAPIError
+        self.service.friends={'11111','22222','33333'}
+        calls=[]
+        async def api(action,params=None):
+            peer=str(params['user_id']);calls.append(peer)
+            if peer=='11111':raise NapCatAPIError(action,{'message':'not a friend'})
+            return {'messages':[]}
+        self.service.api=api
+        await self.service.http_contacts();await self.service.http_contacts()
+        self.assertEqual(calls,['11111','22222','33333','22222'])
+        self.now+=61
+        await self.service.http_contacts()
+        self.assertEqual(calls[-2:],['33333','11111'])
+
+    async def test_http_disconnect_reaches_worker_backoff(self):
+        async def api(action,params=None):raise httpx.ConnectError('offline')
+        self.service.api=api
+        with self.assertRaises(httpx.ConnectError):await self.service.http_contacts()
+
     async def test_private_knowledge_has_contact_scope_and_real_retrieval(self):
         directory = self.root / 'runtime-private/directory.json'
         data = json.loads(directory.read_text(encoding='utf-8'))

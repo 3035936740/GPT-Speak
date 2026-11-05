@@ -5,7 +5,7 @@ HELP = {
     'receive':('/receive on|off','当前群仅接收模式：on继续保存聊天但停止全部AI处理和发送，off恢复并只处理新消息。不移出白名单，设置重启保留。'),
     'session':('/session stop|resume|clear','stop终止当前群当前任务并持续暂停接话；resume恢复并只处理新消息；clear取消当前任务并清空当前群短期上下文，保持当前暂停状态。保留聊天存档、群记忆和知识库，其他群不受影响。'),
     'knowledge':('/knowledge [查询内容]','查看当前群及共享知识；带查询内容时预览本地检索片段，不调用模型、不发群消息。新增、导入TXT、Markdown、YAML、JSON、INI等文本（不限文件大小与正文字数）、编辑、停用和删除请打开WebUI的“知识库”。/config knowledge_enabled off可关闭回复检索。'),
-    'reconnect':('/reconnect napcat|mcp','napcat：保存并重启当前群连接，恢复暂停群，其他群不受影响；mcp：建立新stdio MCP会话并读取当前群信息，不重启QQ或其他应用。其他应用已有MCP会话需在其宿主重连。'),
+    'reconnect':('/reconnect napcat|mcp','napcat：保存并重启当前群连接，恢复暂停群，其他群不受影响；mcp：检查GPT Speak MCP临时stdio会话并读取本地群状态，不直接调用NapCat。Codex已有连接需在Codex内重连。'),
     'usage':('/usage [refresh] [all]','查看5小时/1周账号额度与本项目token统计；refresh只读查询当前Codex登录的额度（60秒缓存），all统计全部群，默认当前群。账号额度不是固定token总量；旧调用无usage记录不能补算。'),
     'status':('/status','运行总览：QQ连接、模型、超时、调用额度、对话窗口、屏蔽数量和后台状态。密钥隐藏；Esc返回聊天。'),
     'config':('/config [local|global] [show|get|set|edit|inherit|字段=值]',

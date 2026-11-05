@@ -72,6 +72,12 @@ class ConsoleTests(unittest.TestCase):
         self.ui.refresh();self.assertIn(self.ui.group,[200,300])
         self.ui.execute('/wh r 200')
         with self.assertRaises(ValueError):self.ui.execute('/wh r 300')
+    def test_config_set_empty_string_uses_field_validation(self):
+        self.ui.execute('/config set napcat_path /api')
+        self.ui.execute('/config set napcat_path')
+        self.assertEqual(Config(self.root).load()['napcat_path'],'')
+        for command in ('/config set bot_name','/config set napcat_port'):
+            with self.subTest(command=command),self.assertRaises(ValueError):self.ui.execute(command)
     def test_model_validation_failure_does_not_modify_file(self):
         previous=(self.root/'settings.json').read_bytes()
         with patch('console_config.validate_model',side_effect=ValueError('invalid model')):

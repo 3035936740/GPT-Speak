@@ -69,9 +69,13 @@ class IntegrationTests(unittest.TestCase):
         ui=Console(self.root,Supervisor(self.root,start=False));drain(ui)
         self.assertFalse((runtime(self.root,100)/'session-control.json').exists())
 
-    def test_connection_defaults_inherit_current_and_mcp_overrides(self):
+    def test_connection_defaults_empty_path_and_current_mcp_overrides(self):
         env={'NAPCAT_HOST':'http://old.test:3456/base','NAPCAT_TOKEN':'old'}
-        self.assertEqual(connection({},env)[:2],(env['NAPCAT_HOST'],'old'))
+        self.assertEqual(connection({},env)[:2],('http://localhost:3000','old'))
+        self.assertEqual(connection({'napcat_connection_mode':'current'},env)[:2],(env['NAPCAT_HOST'],'old'))
+        self.assertEqual(connection({'napcat_connection_mode':'ws','napcat_path':''},env)[0],'ws://localhost:3000')
+        Config(self.root).set('napcat_path','')
+        self.assertEqual(Config(self.root).load()['napcat_path'],'')
         cfg={'napcat_connection_mode':'ws','napcat_host':'::1','napcat_port':6700,'napcat_path':'api','napcat_token':'new'}
         self.assertEqual(connection(cfg,env)[:2],('ws://[::1]:6700/api','new'))
         self.assertEqual(connection(cfg,env,mcp=True),connection(cfg,env))

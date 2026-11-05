@@ -1,5 +1,8 @@
 """Installer plans and platform boundaries; never install software or contact QQ."""
 import importlib.util
+import argparse
+import contextlib
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -47,6 +50,67 @@ class PortableLaunchTests(unittest.TestCase):
                 manage.initialize()
             self.assertEqual((bot/'persona.txt').read_text(),'custom persona')
             self.assertEqual((bot/'settings.json').read_text(),'{"keep":123}')
+
+    def test_autostart_uses_effective_onebot_host_for_http_ws_and_inherited_env(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,bot=self.fixture(folder)
+            env=root/'remote.env';env.write_text('NAPCAT_HOST=ws://192.168.0.105:3001\nNAPCAT_TOKEN=secret\n',encoding='utf-8')
+            cases=[
+                ({'napcat_connection_mode':'http','napcat_host':'192.168.0.105'},False),
+                ({'napcat_connection_mode':'ws','napcat_host':'qq.example.test'},False),
+                ({'napcat_connection_mode':'current'},False),
+                ({'napcat_connection_mode':'http','napcat_host':''},False),
+                ({'napcat_connection_mode':'ws','napcat_host':'::1'},True),
+                ({'napcat_connection_mode':'http','napcat_host':'[::1]'},True),
+                ({'napcat_connection_mode':'current','napcat_host':'127.0.0.1'},True),
+                ({'napcat_connection_mode':'http','napcat_host':'localhost'},True),
+            ]
+            with patch.object(manage,'ROOT',root),patch.object(manage,'napcat_ready') as probe,patch.object(manage.subprocess,'run') as run:
+                for cfg,expected in cases:
+                    with self.subTest(cfg=cfg):
+                        (bot/'settings.json').write_text(json.dumps({**cfg,'mcp_env_file':'../remote.env'}),encoding='utf-8')
+                        enabled,reason=manage.napcat_autostart(bot)
+                        self.assertEqual(enabled,expected)
+                        self.assertNotIn('secret',reason)
+                probe.assert_not_called();run.assert_not_called()
+
+    def test_remote_bot_launch_does_not_probe_or_start_old_local_wsl_instance(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,bot=self.fixture(folder)
+            (bot/'settings.json').write_text(json.dumps({'napcat_connection_mode':'http','napcat_host':'192.168.0.105'}),encoding='utf-8')
+            (root/'launch.local.json').write_text(json.dumps({'napcat':{'mode':'wsl','distribution':'Ubuntu-22.04','service':'yonagi-napcat.service'}}),encoding='utf-8')
+            args=argparse.Namespace(dry_run=False,cli=True,skip_napcat=False,model=None,effort=None,fast=None,cooldown=None)
+            with patch.object(manage,'ROOT',root),patch.object(manage,'napcat_ready') as probe,patch.object(manage.subprocess,'run') as run,patch.object(manage.subprocess,'Popen') as popen,patch.object(manage.subprocess,'call',return_value=0) as call:
+                with self.assertRaises(SystemExit) as stopped:manage.start_bot(args,[])
+                self.assertEqual(stopped.exception.code,0)
+                probe.assert_not_called();run.assert_not_called();popen.assert_not_called()
+                self.assertIn(str(bot/'debug_console.py'),call.call_args.args[0])
+
+    def test_autostart_opt_out_and_unreadable_settings_are_safe(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,bot=self.fixture(folder)
+            with patch.object(manage,'ROOT',root):
+                (root/'launch.local.json').write_text('{"napcat":{"auto_start":false}}')
+                self.assertFalse(manage.napcat_autostart(bot)[0])
+                (root/'launch.local.json').write_text('{}')
+                self.assertFalse(manage.napcat_autostart(bot,skip=True)[0])
+                (bot/'settings.json').write_text('{broken')
+                self.assertFalse(manage.napcat_autostart(bot)[0])
+                (bot/'settings.json').write_text('{"napcat_connection_mode":"current","mcp_env_file":"missing.env"}')
+                self.assertFalse(manage.napcat_autostart(bot)[0])
+
+    def test_bot_dry_run_reports_remote_skip_without_side_effects(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root,bot=self.fixture(folder)
+            (bot/'settings.json').write_text('{"napcat_connection_mode":"ws","napcat_host":"192.168.0.105"}')
+            before=sorted(str(p.relative_to(root)) for p in root.rglob('*'))
+            args=argparse.Namespace(dry_run=True,cli=False,skip_napcat=False)
+            output=io.StringIO()
+            with patch.object(manage,'ROOT',root),patch.object(manage,'napcat_ready') as probe,patch.object(manage.subprocess,'run') as run,patch.object(manage.subprocess,'call') as call,contextlib.redirect_stdout(output):
+                manage.start_bot(args,[])
+            self.assertFalse(json.loads(output.getvalue())['auto_napcat'])
+            probe.assert_not_called();run.assert_not_called();call.assert_not_called()
+            self.assertEqual(before,sorted(str(p.relative_to(root)) for p in root.rglob('*')))
 
     def test_existing_launch_config_blocks_reinstallation(self):
         with tempfile.TemporaryDirectory() as folder,patch.object(manage.subprocess,'run') as run:

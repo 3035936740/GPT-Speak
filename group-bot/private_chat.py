@@ -15,6 +15,7 @@ from console_config import Config, atomic, read_json
 from model_input_budget import input_budget
 from member_impressions import impression, person_allowed
 from runtime_paths import project_path
+from napcat_errors import NapCatAPIError
 import private_events
 import private_profiles
 import private_vision
@@ -216,6 +217,12 @@ class NapCat:
     async def close(self):
         await self.client.aclose()
 
+    async def events(self):
+        cfg=Config(self.root).load()
+        env=dotenv_values(project_path(cfg['mcp_env_file'],self.root))
+        from napcat_events import poll
+        return await poll(self.client,cfg,env)
+
 
 class PrivateChat:
     def __init__(self, root, api, responder, clock=time.time):
@@ -229,6 +236,9 @@ class PrivateChat:
         self.pending = {}
         self.learning = {}
         self.errors = {}
+        self.event_contacts = {}
+        self.http_poll_cursor = ''
+        self.http_retry_at = {}
         self.pruned_at = clock()
         self.log_handler = private_events.ModelLogHandler(lambda: self.store)
         logging.getLogger('qq-group-bot').addHandler(self.log_handler)
@@ -249,6 +259,8 @@ class PrivateChat:
             await asyncio.gather(*tasks,return_exceptions=True)
             self.pending.clear()
             self.learning.clear()
+            self.http_retry_at.clear()
+            self.http_poll_cursor=''
         self.self_id,self.friends,self.members=own,friends,members
         self.refreshed=self.clock();self.directory_groups=tuple(groups)
 
@@ -546,6 +558,35 @@ class PrivateChat:
             self.store.delivery(peer, incoming, 'failed', error=type(exc).__name__)
             self.errors[peer] = type(exc).__name__
 
+    async def http_contacts(self):
+        # get_recent_contact parses the last message of *every* session inside
+        # NapCat, including groups we never use here. Poll only eligible friends,
+        # two per tick, so inactive/unauthorized groups cannot cause quote fetches.
+        peers=sorted(peer for peer in self.friends if peer!=self.self_id
+            and peer.isdecimal() and self.common_groups(peer) and peer not in self.pending
+            and self.clock()>=self.http_retry_at.get(peer,0))
+        if not peers:return []
+        start=next((i for i,peer in enumerate(peers) if peer>self.http_poll_cursor),0)
+        contacts=[]
+        for peer in (peers[start:]+peers[:start])[:2]:
+            self.http_poll_cursor=peer
+            # Network errors must reach the worker's connection backoff. A
+            # contact-specific OneBot error must not starve the other friends.
+            try:
+                result=await self.api('get_friend_msg_history',{'user_id':int(peer),'count':1,
+                    'quick_reply':True,'parse_mult_msg':False,'disable_get_url':True})
+            except NapCatAPIError as exc:
+                self.errors[peer]=type(exc).__name__
+                self.http_retry_at[peer]=self.clock()+60
+                continue
+            self.http_retry_at.pop(peer,None)
+            rows=result.get('messages') or []
+            if not rows:continue
+            latest=max(rows,key=message_order)
+            contacts.append({'chatType':1,'peerUin':peer,'msgId':message_key(latest),
+                'msgTime':latest.get('time',0)})
+        return contacts
+
     async def tick(self):
         cfg = self.config()
         if not self.active(cfg):
@@ -562,7 +603,20 @@ class PrivateChat:
             await self.refresh(cfg)
             (self.folder/'directory-refresh.json').unlink(missing_ok=True)
         await self.send_manual()
-        contacts = await self.api('get_recent_contact', {'count': 100})
+        try:
+            events=await self.api.events() if isinstance(self.api,NapCat) else None
+        except Exception:
+            self.event_contacts.clear()
+            raise
+        if events is None:
+            contacts = await self.http_contacts()
+        else:
+            self.event_contacts={peer:row for peer,row in self.event_contacts.items()
+                if peer in self.friends and self.clock()-float(row.get('time',0))<=300}
+            self.event_contacts.update({str(row.get('user_id')):row for row in events
+                if row.get('message_type')=='private' and str(row.get('user_id')) in self.friends})
+            contacts=[{'chatType':1,'peerUin':peer,'msgId':message_key(row),'msgTime':row.get('time',0)}
+                for peer,row in self.event_contacts.items()]
         from member_labels import MemberLabels
         owners = {uid for uid,row in MemberLabels(self.folder).facts().items() if row.get('manual_label')=='owner' and not row.get('blocked')}
         contacts = sorted(contacts, key=lambda contact: str(contact.get('peerUin', '')) not in owners)

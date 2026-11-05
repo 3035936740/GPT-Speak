@@ -40,7 +40,7 @@ class ReconnectArchiveTests(unittest.TestCase):
             clock=[int(time.time())+10]
             started=asyncio.Event();cancelled=asyncio.Event()
             generated=[];sent=[];polls=0;original_sleep=asyncio.sleep
-            cfg={**bot.settings(),'poll_seconds':0,'mention_cooldown_seconds':0,
+            cfg={**bot.settings(),'expected_self_id':'169901502','poll_seconds':0,'mention_cooldown_seconds':0,
                 'memory_enabled':False,'style_learning_enabled':False,'passive_probability':0,
                 'proactive_topics_enabled':False}
             def raw(key, stamp, text, image=False):

@@ -53,14 +53,28 @@ class ReconnectTests(unittest.TestCase):
     def test_wait_reloads_env_and_clears_stale_paused_state_after_verified_login(self):
         folder=runtime(self.root,100);folder.mkdir(exist_ok=True)
         env_file=self.root/'napcat.env';env_file.write_text('NAPCAT_HOST=http://new.test\nNAPCAT_TOKEN=local-test\n')
-        cfg={**bot.settings(),'enabled':True,'group_id':100,'mcp_env_file':str(env_file)}
+        cfg={**bot.settings(),'enabled':True,'group_id':100,'mcp_env_file':str(env_file),'expected_self_id':'169901502'}
         atomic(folder/'state.json',{'online':False,'stopped':True})
         env={'NAPCAT_HOST':'http://old.test'}
-        api=AsyncMock(side_effect=[{'user_id':169901502},{'group_id':100}])
+        api=AsyncMock(side_effect=[{'user_id':169901502},[{'group_id':100}],{'group_id':100}])
         with patch.object(bot,'RUNTIME',folder),patch.object(bot,'settings',return_value=cfg),patch.object(bot,'api',api):
             asyncio.run(bot.wait_for_qq(None,env,cfg))
         self.assertEqual(env['NAPCAT_HOST'],'http://new.test');self.assertTrue(read_json(folder/'state.json')['online'])
         self.assertFalse(read_json(folder/'state.json')['stopped']);self.assertFalse(read_json(folder/'state.json')['waiting_for_qq'])
+
+    def test_absent_group_waits_a_minute_without_querying_chat_history(self):
+        folder=runtime(self.root,100);folder.mkdir(exist_ok=True)
+        cfg={**bot.settings(),'enabled':True,'group_id':100,'expected_self_id':'169901502'}
+        api=AsyncMock(side_effect=[{'user_id':169901502},[]]);seconds=[]
+        async def tick(delay):
+            seconds.append(delay)
+            if sum(seconds)>=60:(folder/'STOP').touch()
+        with patch.object(bot,'RUNTIME',folder),patch.object(bot,'settings',return_value=cfg), \
+                patch.object(bot,'api',api),patch('napcat_retry.asyncio.sleep',new=AsyncMock(side_effect=tick)):
+            self.assertIsNone(asyncio.run(bot.wait_for_qq(None,{},cfg)))
+        self.assertEqual(sum(seconds),60)
+        self.assertEqual([c.args[2] for c in api.await_args_list],['get_login_info','get_group_list'])
+        self.assertTrue(read_json(folder/'state.json')['not_in_group'])
 
 
 if __name__=='__main__':unittest.main()

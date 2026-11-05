@@ -28,15 +28,13 @@ FIELDS = {
     'private_max_model_calls_per_day':('全部私聊每日模型调用上限','默认200，所有好友共享，范围1～10000，保存到配置文件'),
     'private_reply_cooldown_seconds':('私聊回复冷却秒数','默认8秒，范围0～300；连续消息在冷却后合并处理。可按联系人覆盖'),
     'private_max_reply_chars':('私聊回复字数上限','默认600字，范围20～2000字；可按联系人单独覆盖'),
-    'napcat_connection_mode':('NapCat连接方式','current默认沿用当前napcat.env；http为正向HTTP，ws为正向WebSocket。NapCat端需开启对应服务端'),
-    'napcat_host':('NapCat主机IP或域名','留空沿用当前NAPCAT_HOST。支持IPv4、IPv6和域名，不填写协议、路径或端口'),
-    'napcat_port':('NapCat连接端口','0沿用当前端口；可填写1～65535，需与NapCat服务端配置一致'),
-    'napcat_path':('NapCat连接路径','留空沿用当前路径；例如WebSocket / 或 /api，HTTP代理可填写基础路径'),
+    'napcat_connection_mode':('NapCat连接方式','默认http，正向HTTP；ws为正向WebSocket；current沿用napcat.env。NapCat端需开启对应服务端'),
+    'napcat_host':('NapCat主机IP或域名','默认localhost。支持IPv4、IPv6和域名，不填写协议、路径或端口；留空沿用NAPCAT_HOST中的主机'),
+    'napcat_port':('NapCat连接端口','默认3000；可填写1～65535，需与NapCat服务端配置一致；0沿用NAPCAT_HOST中的端口'),
+    'napcat_path':('NapCat连接路径','默认空，可留空直接连接服务根路径；例如WebSocket / 或 /api，HTTP代理可填写基础路径；current模式留空沿用napcat.env路径'),
     'napcat_secure':('NapCat使用TLS','显式http/ws模式下启用HTTPS/WSS；current保留原URL协议'),
     'napcat_token':('NapCat访问令牌','留空沿用当前napcat.env令牌；仅作连接鉴权，不传给模型'),
     'napcat_timeout_seconds':('NapCat API超时秒数','默认60，范围1～300；启动历史和消息轮询也使用此超时。WS请求发出后超时仍保留连接并丢弃迟到结果；发送结果不确定时不自动重发'),
-    'napcat_mcp_url':('NapCat MCP独立连接地址','默认留空，跟随Bot当前连接。需要单独连接时填写http(s)或ws(s)完整URL；外部MCP宿主需使用动态入口并重连'),
-    'napcat_mcp_token':('NapCat MCP独立访问令牌','默认留空，跟随Bot当前令牌；设置后只用于MCP连接'),
     'receive_only':('仅接收消息','保留群连接与聊天存档，停止所有AI回复、识图、绘图、学习及消息发送；恢复后只处理新消息。支持按群设置，不移出白名单'),
     'high_eq_enabled':('高情商接话','默认开启，支持按群关闭。结合连续发言理解夸奖、批评和倾诉；避免被吐槽后自夸顶嘴、说教或客服式道歉。保留正常玩梗与事实纠正，不新增固定模型调用'),
     'knowledge_enabled':('启用知识库','默认开启；回复前检索当前群和共享知识，只提供相关片段。不自动把群聊收录为知识，不额外调用模型'),
@@ -190,7 +188,7 @@ FIELDS = {
 }
 
 
-HIDDEN_FIELDS={'generated_image_cleanup_interval_hours'}
+HIDDEN_FIELDS={'generated_image_cleanup_interval_hours','napcat_mcp_url','napcat_mcp_token'}
 HIDDEN_FIELDS.add('large_task_host_acknowledged')
 FIELDS.update({
     'large_task_executor':('任务执行环境','默认兼容单文本文件输出；Docker或Podman在无网络、无宿主目录挂载的Python3容器内处理二进制与多文件。连接失败退回单文本模式，二进制不在宿主执行'),

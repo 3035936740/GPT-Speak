@@ -114,6 +114,27 @@ class WebUITests(unittest.TestCase):
         self.headers={'X-QQ-Debug-Key':self.server.token}
         self.catalog=patch('console_config.validate_model');self.catalog.start()
     def tearDown(self):self.draw.stop();self.catalog.stop();self.client.close();self.server.close();self.temp.cleanup()
+    def test_cli_refresh_preserves_busy_group_and_retries_next_time(self):
+        from storage_io import read_text
+
+        busy_path=runtime(self.root,100)/'debug-events.jsonl'
+        previous=self.console.rows[100]
+        for group in (100,200):
+            events=DebugEvents(runtime(self.root,group),group)
+            events.emit('stage',text='刷新后的新日志')
+
+        def read_with_one_busy_group(path):
+            if path==busy_path:
+                raise PermissionError(13,'Permission denied',str(path))
+            return read_text(path)
+
+        with patch('storage_io.read_text',side_effect=read_with_one_busy_group):
+            self.console.refresh()
+        self.assertEqual(self.console.rows[100],previous)
+        self.assertTrue(any(row['text']=='刷新后的新日志' for row in self.console.rows[200]))
+        self.console.refresh()
+        self.assertTrue(any(row['text']=='刷新后的新日志' for row in self.console.rows[100]))
+
     def test_assets_cli_style_and_api_requires_auth(self):
         response=self.client.get('/')
         self.assertEqual(response.status_code,200);self.assertIn('id="command-form"',response.text)
@@ -242,6 +263,13 @@ class WebUITests(unittest.TestCase):
         self.assertEqual(invalid.status_code,400);self.assertEqual(Config(self.root).load()['passive_probability'],.4)
         blocked=self.client.post('/api/action',json={'action':'config','key':'codex_exe','value':'bad','group':100},headers=self.headers)
         self.assertEqual(blocked.status_code,400)
+    def test_config_can_clear_napcat_path_through_web_action(self):
+        Config(self.root).set('napcat_path','/api')
+        response=self.client.post('/api/action',json={'action':'config','key':'napcat_path','value':'','scope':'global','group':100},headers=self.headers)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(Config(self.root).load()['napcat_path'],'')
+        public=self.client.get('/api/config',headers=self.headers).json()
+        self.assertEqual(public['config']['napcat_path'],'')
     def test_persona_whitelist_and_local_delete(self):
         response=self.client.post('/api/action',json={'action':'persona','text':'新的完整设定\n下一行','group':100},headers=self.headers)
         self.assertEqual(response.status_code,200);self.assertIn('下一行',(self.root/'persona.txt').read_text(encoding='utf-8'))

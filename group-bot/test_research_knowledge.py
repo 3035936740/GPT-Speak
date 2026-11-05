@@ -73,6 +73,45 @@ class ResearchKnowledgeTests(unittest.TestCase):
                 await bot.generate_reply_json({**self.cfg,'_knowledge_fallback':True},'reply',self.target)
         asyncio.run(run())
 
+    def test_image_fallback_works_without_knowledge_and_excludes_sticker_sheet(self):
+        async def run():
+            source=self.root/'source.png';source.write_bytes(b'image')
+            sheet=self.root/'available-stickers.jpg';sheet.write_bytes(b'sheet')
+            async def answer(cfg,context,trigger,target,images=None):
+                self.assertEqual(images,[source]);self.assertTrue(cfg['_knowledge_fallback'])
+                return bot.ReplyText('图中文字可以解释，真假尚未核实')
+            with patch.object(bot,'ROOT',self.root),patch.object(bot,'generate',answer):
+                result=await bot.knowledge_after_web_failure({**self.cfg,'knowledge_enabled':False},[],
+                    '被@',dict(self.target),[source,sheet])
+            self.assertIn('尚未核实',result)
+        asyncio.run(run())
+
+    def test_reply_selected_search_preserves_image_and_summary_through_failure(self):
+        async def run():
+            for name in ('reply.schema.json','reply.mention.schema.json'):
+                (self.root/name).write_bytes(Path(bot.__file__).with_name(name).read_bytes())
+            source=self.root/'source.png';source.write_bytes(b'image')
+            target={**self.target,'_cached_vision':[{'visible_text':'Friday At Ten Local Time'}],
+                    '_content_reference':{'image_count':1,'source_id':'screenshot','image_labels':['图片1']}}
+            planned={'reply_to':'current','should_reply':True,'conversation':'direct','quote_reply':False,
+                'at_message_ids':[],'text':'','text_parts':[],'reply_mode':'text','media_kind':'none',
+                'media_id':'','action':'web_search','search_query':'verify screenshot','image_request':'','media_observations':[]}
+            async def web(cfg,query):
+                self.assertEqual(cfg['_research_images'],[source])
+                self.assertIn('Friday',cfg['_research_cached_vision'][0]['visible_text'])
+                raise RuntimeError('Live research produced no web tool evidence')
+            async def answer(cfg,context,trigger,target,images=None):
+                self.assertEqual(images,[source])
+                prompt=bot.build_prompt(cfg,context,trigger,target)
+                self.assertIn('Friday',prompt);self.assertIn('attached',prompt)
+                return bot.ReplyText('能看懂图里的说法，但未联网核实')
+            original=bot.generate
+            with patch.object(bot,'ROOT',self.root),patch.object(bot,'generate_json',return_value=planned), \
+                    patch.object(bot,'researched_reply',web),patch.object(bot,'generate',answer):
+                result=await original(self.cfg,[],'被@',target,[source])
+            self.assertIn('未联网核实',result)
+        asyncio.run(run())
+
 
 class ResearchEvidenceTests(unittest.TestCase):
     def encode(self,*events):return '\n'.join(json.dumps(event) for event in events).encode()

@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import bot
 from conversation_focus import ConversationFocus
@@ -202,7 +203,8 @@ class FollowupTests(unittest.TestCase):
                     bot.RUNTIME = Path(folder)
                     (bot.RUNTIME / 'state.json').write_text(json.dumps({'model_calls_today': 7, 'reply_times': [123]}), encoding='utf-8')
                     bot.api, bot.asyncio.sleep = fake_api, tick
-                    login, group = await bot.wait_for_qq(None, None, bot.settings())
+                    with patch.object(bot,'settings',return_value={**bot.settings(),'expected_self_id':'169901502','group_id':985569438}):
+                        login, group = await bot.wait_for_qq(None, None, bot.settings())
                     self.assertEqual(login['user_id'], 169901502)
                     self.assertEqual(group['group_id'], 985569438)
                     self.assertEqual(attempts, 3)

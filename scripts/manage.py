@@ -1,6 +1,7 @@
 """Shared stdlib launcher. Paths are relative to this checkout, never the cwd."""
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -101,6 +103,42 @@ def napcat_ready():
     except (OSError,urllib.error.URLError):return False
 
 
+def napcat_autostart(bot, skip=False):
+    """Only auto-launch for a verified loopback OneBot endpoint, never a remote bot.
+
+    Resolve the same settings/env as the runtime before probing a local WebUI.
+    Dependencies are loaded lazily so installation/dry-run remains safe before setup.
+    """
+    if skip:return False,'disabled by --skip-napcat'
+    try:
+        if launch_settings().get('napcat',{}).get('auto_start') is False:
+            return False,'disabled by launch.local.json'
+        path=bot/'settings.json'
+        cfg=read(path if path.is_file() else bot/'settings.example.json')
+        original_path=list(sys.path)
+        try:
+            sys.path.insert(0,str(bot))
+            from dotenv import dotenv_values
+            from napcat_connection import connection
+            from runtime_paths import project_path
+            env_path=project_path(cfg.get('mcp_env_file') or 'napcat.env',bot)
+            if (cfg.get('napcat_connection_mode')=='current' or cfg.get('napcat_host')=='') and not env_path.is_file():
+                return False,'inherited NapCat endpoint unavailable; local auto-start skipped'
+            url,_,_=connection(cfg,dotenv_values(env_path))
+        finally:
+            sys.path[:]=original_path
+        host=urlsplit(url).hostname or ''
+        loopback=host.rstrip('.').lower()=='localhost'
+        if not loopback:
+            try:loopback=ipaddress.ip_address(host).is_loopback
+            except ValueError:pass
+        if not loopback:return False,'remote OneBot endpoint; local NapCat auto-start skipped'
+        return True,'local loopback OneBot endpoint'
+    except (ImportError,OSError,ValueError,TypeError,AttributeError):
+        # Unknown configuration must never start another QQ instance accidentally.
+        return False,'NapCat endpoint could not be verified; local auto-start skipped'
+
+
 def start_napcat(quiet=False,dry_run=False):
     if not dry_run and napcat_ready():
         print('NapCat WebUI is already running: http://127.0.0.1:6099/webui');return
@@ -180,7 +218,8 @@ def install_napcat(backend,dry_run=False):
 def start_bot(args,extra):
     bot=bot_root()
     if args.dry_run:
-        print(json.dumps({'bot':str(bot),'webui':not args.cli,'auto_napcat':not args.skip_napcat,'arguments':extra}));return
+        auto_napcat,reason=napcat_autostart(bot,args.skip_napcat)
+        print(json.dumps({'bot':str(bot),'webui':not args.cli,'auto_napcat':auto_napcat,'napcat_reason':reason,'arguments':extra}));return
     initialize()
     if args.model or args.effort or args.fast:
         cfg=read(bot/'settings.json')
@@ -193,7 +232,9 @@ def start_bot(args,extra):
             path=bot/('runtime' if group==cfg['group_id'] else 'runtime-'+str(group))/'NO_COOLDOWN'
             if args.cooldown=='off':path.parent.mkdir(parents=True,exist_ok=True);path.touch()
             else:path.unlink(missing_ok=True)
-    if not args.skip_napcat:start_napcat(quiet=True)
+    auto_napcat,reason=napcat_autostart(bot,args.skip_napcat)
+    if auto_napcat:start_napcat(quiet=True)
+    else:print('NapCat: '+reason)
     command=[sys.executable,'-X','utf8',str(bot/'debug_console.py'),'--root',str(bot)]
     if not args.cli:command.append('--webui')
     command+=extra

@@ -544,3 +544,14 @@ dialog::backdrop{background:#0d111a66}
 .knowledge-tools{min-height:44px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .knowledge-result{padding:12px 0;border-bottom:1px solid var(--line)}
 .knowledge-result p{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.mcp-integration{min-width:0;padding:12px 0 16px;border-bottom:1px solid var(--line)}
+.mcp-integration-header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.mcp-transport{font-size:13px;font-weight:500;color:var(--ink-2)}
+.mcp-integration .mcp-description{margin:10px 0;font-size:13px;line-height:1.7;color:var(--ink-2)}
+.mcp-connection-details{margin:10px 0;font-size:13px;color:var(--ink-2)}
+.mcp-connection-details summary{cursor:pointer;width:fit-content}
+.mcp-paths{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px 12px;margin:12px 0}
+.mcp-paths dt{color:var(--ink-3)}
+.mcp-paths dd{min-width:0;margin:0;font-size:12px;line-height:1.7;white-space:normal;overflow-wrap:anywhere}
+.mcp-integration .mcp-note{margin:10px 0 0;font-size:12px;line-height:1.7;color:var(--ink-3)}
+@media(max-width:480px){.mcp-paths{grid-template-columns:minmax(0,1fr);gap:3px}.mcp-paths dd+dt{margin-top:7px}}

@@ -25,7 +25,7 @@ def record_activity(action):
         _activity_since=now
 
 
-DEFAULTS = {'napcat_connection_mode': 'current', 'napcat_host': '', 'napcat_port': 0,
+DEFAULTS = {'napcat_connection_mode': 'http', 'napcat_host': 'localhost', 'napcat_port': 3000,
     'napcat_path': '', 'napcat_secure': False, 'napcat_token': '',
     'napcat_timeout_seconds': 60, 'napcat_mcp_url': '', 'napcat_mcp_token': ''}
 
@@ -61,6 +61,8 @@ def validate(cfg):
 
 
 def connection(cfg, env=None, mcp=False):
+    if cfg.get('napcat_connection_mode')=='current':
+        cfg={'napcat_host':'','napcat_port':0,**cfg}
     cfg = {**DEFAULTS, **cfg}; env = env or {}
     old = validate_url(env.get('NAPCAT_HOST') or 'http://127.0.0.1:3000')
     mode = cfg['napcat_connection_mode']
@@ -69,7 +71,7 @@ def connection(cfg, env=None, mcp=False):
     authority = '[' + host + ']' if ':' in host else host
     port = cfg['napcat_port'] or old.port
     if port: authority += ':' + str(port)
-    path = cfg['napcat_path'] or old.path
+    path = (cfg['napcat_path'] or old.path) if mode=='current' else cfg['napcat_path']
     url = urlunsplit((scheme, authority, '/' + path.lstrip('/') if path else '', '', ''))
     token = cfg['napcat_token'] or env.get('NAPCAT_TOKEN', '') or ''
     if mcp:
@@ -122,14 +124,21 @@ class ForwardWebSocket:
 
 
 class NapCatHTTPClient(httpx.AsyncClient):
+    async def __aexit__(self,*args):
+        # httpx's context exit closes its own transports directly, bypassing
+        # an overridden aclose. Include the OneBot sockets and event reader.
+        await self.aclose()
+
     async def aclose(self):
+        inbox=getattr(self,'_onebot_event_inbox',None)
+        if inbox:await inbox.close()
         for transport in getattr(self, '_onebot_sockets', {}).values(): await transport.close()
         await super().aclose()
 
 
 async def request(client, env, action, params=None, cfg=None):
     record_activity(action)
-    url, token, timeout = connection(cfg or {}, env)
+    url, token, timeout = connection({'napcat_connection_mode':'current'} if cfg is None else cfg, env)
     if urlsplit(url).scheme in {'ws', 'wss'}:
         transports = getattr(client, '_onebot_sockets', None)
         if transports is None:

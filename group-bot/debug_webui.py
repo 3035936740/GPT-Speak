@@ -299,13 +299,14 @@ class DebugWebUI:
             'no_cooldown':(folder/'NO_COOLDOWN').exists()}}
     def public_config(self,query=None):
         from knowledge_embedding import read_key
+        from gpt_speak_mcp import integration
         query=query or {};group=int(query.get('group',[self.config.load()['group_id']])[0])
         scope=query.get('scope',['global'])[0]
         if scope not in {'global','group'}:raise ValueError('未知配置作用域')
         scoped=Config(self.root,group if scope=='group' else None)
         cfg=scoped.load()
         public={key:value for key,value in cfg.items() if key not in PROTECTED|HIDDEN_FIELDS}
-        return {'config':public,'fields':metadata(public),
+        return {'config':public,'fields':metadata(public),'mcp_integration':integration(self.root),
             'ui_revision':2,
             'scope':scope,'group':group,'overrides':scoped.overrides(),
             'global_config':{key:value for key,value in self.config.load().items() if key not in PROTECTED|HIDDEN_FIELDS},

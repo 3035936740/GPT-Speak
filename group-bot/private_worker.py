@@ -42,6 +42,7 @@ async def generate(prompt, cfg):
 async def run(check=False):
     api = NapCat(ROOT)
     service = PrivateChat(ROOT, api, generate)
+    failures=0
     try:
         if check:
             await service.refresh(Config(ROOT).load())
@@ -51,9 +52,16 @@ async def run(check=False):
         while service.active():
             try:
                 await service.tick()
+                failures=0
             except Exception as exc:
                 from napcat_errors import QQAccountMismatch
                 service.status(False, str(exc) if isinstance(exc,QQAccountMismatch) else type(exc).__name__)
+                from napcat_retry import retry_delay,wait_retry
+                failures+=1
+                reason=await wait_retry(service.folder,service.config(),service.config,retry_delay(failures),
+                                        refresh_name='directory-refresh.json')
+                if reason=='refresh':service.refreshed=0
+                continue
             # Wake promptly on console stop even if a reply is generating.
             for _ in range(6):
                 if not service.active():

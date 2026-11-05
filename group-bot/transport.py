@@ -11,4 +11,5 @@ def text_transport_args(cfg):
         '-c', 'model_providers.qq-http.name="OpenAI HTTP"',
         '-c', 'model_providers.qq-http.wire_api="responses"',
         '-c', 'model_providers.qq-http.requires_openai_auth=true',
+        '-c', 'model_providers.qq-http.supports_standalone_web_search=true',
         '-c', 'model_providers.qq-http.supports_websockets=false']
