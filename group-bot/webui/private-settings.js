@@ -1,5 +1,12 @@
 // Shared collection editor for global, group and private configuration.
 export const decisionDefaults = ['decision_model','decision_reasoning_effort','decision_fast_mode'];
+export function nonebotClientURL(config, browserHost){
+  let host=config.nonebot_listen_host;
+  if(['0.0.0.0','::','[::]'].includes(host))host=browserHost;
+  host=host.replace(/^\[|\]$/g,'');
+  if(host.includes(':'))host='['+host+']';
+  return 'ws://'+host+':'+config.nonebot_port+'/onebot/v11/ws';
+}
 const roleNames = {context:'上下文',emotion:'情绪',vision:'视觉'};
 const effortOptions = {none:'不思考',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'最高',ultra:'极高'};
 

@@ -1,80 +1,39 @@
-import asyncio
-import json
+"""Reverse bridge cursors are private to each worker and reset after failure."""
 import unittest
-from unittest.mock import patch
-from websockets.asyncio.server import serve
+import httpx
 from napcat_connection import NapCatHTTPClient
 from napcat_events import poll
+from nonebot_bridge import DEFAULTS
 
 
 class EventsTests(unittest.IsolatedAsyncioTestCase):
-    async def test_events_are_received_while_no_api_request_is_in_flight(self):
-        connected=asyncio.Event()
-        emit=asyncio.Event()
-        sent=asyncio.Event()
-        received_paths=[]
-        async def handler(socket):
-            received_paths.append(socket.request.path)
-            self.assertEqual(socket.request.headers['Authorization'],'Bearer test')
-            connected.set()
-            await emit.wait()
-            for message in ({'message_id':1,'message_type':'group','group_id':10},
-                            {'message_id':2,'message_type':'private','user_id':20}):
-                await socket.send(json.dumps({'post_type':'message','self_id':123,**message}))
-            sent.set()
-            await socket.wait_closed()
-        async with serve(handler,'127.0.0.1',0) as server:
-            port=server.sockets[0].getsockname()[1]
-            cfg={'expected_self_id':123,'napcat_connection_mode':'ws','napcat_host':'127.0.0.1',
-                 'napcat_port':port,'napcat_path':'/api','napcat_token':'test'}
-            async with NapCatHTTPClient() as client:
-                self.assertEqual(await poll(client,cfg,{}),[])
-                await connected.wait()
-                emit.set()
-                await sent.wait()
-                for _ in range(100):
-                    if len(client._onebot_event_inbox.rows)==2:break
-                    await asyncio.sleep(.001)
-                messages=await poll(client,cfg,{})
-                self.assertEqual([row['message_id'] for row in messages],[1,2])
-                self.assertEqual(await poll(client,cfg,{}),[])
-                self.assertEqual(received_paths,['/'])
-            self.assertIsNone(client._onebot_event_inbox.reader)
+    async def test_fast_reconnect_invalidates_inflight_work_without_replaying_events(self):
+        cfg = {**DEFAULTS, 'nonebot_access_token': 'test'}
+        replies = iter([
+            {'epoch':'old','cursor':1,'messages':[]},
+            {'epoch':'new','cursor':8,'messages':[]},
+            {'epoch':'new','cursor':9,'messages':[{'message_id':9}]},
+        ])
+        async with NapCatHTTPClient(transport=httpx.MockTransport(lambda request:httpx.Response(200,json=next(replies)))) as client:
+            self.assertEqual(await poll(client,cfg,{}),[])
+            with self.assertRaises(ConnectionError):await poll(client,cfg,{})
+            self.assertEqual(await poll(client,cfg,{}),[{'message_id':9}])
 
-    async def test_http_keeps_existing_polling_behavior(self):
-        async with NapCatHTTPClient() as client:
-            self.assertIsNone(await poll(client,{'napcat_connection_mode':'http'},{}))
-
-    async def test_connected_but_silent_stream_periodically_allows_history_fallback(self):
-        async def handler(socket):
-            await socket.wait_closed()
-        async with serve(handler,'127.0.0.1',0) as server:
-            cfg={'expected_self_id':123,'napcat_connection_mode':'ws','napcat_host':'127.0.0.1',
-                 'napcat_port':server.sockets[0].getsockname()[1]}
-            async with NapCatHTTPClient() as client:
-                await poll(client,cfg,{})
-                inbox=client._onebot_event_inbox
-                start=inbox.last_probe_at
-                with patch('napcat_events.time.monotonic',return_value=start+61):
-                    self.assertIsNone(await poll(client,cfg,{}))
-                    self.assertEqual(await poll(client,cfg,{}),[])
-                with patch('napcat_events.time.monotonic',return_value=start+122):
-                    self.assertIsNone(await poll(client,cfg,{}))
-                    inbox.rows.append({'message_id':99})
-                    self.assertEqual(await poll(client,cfg,{}),[{'message_id':99}])
-
-    async def test_disconnect_discards_pending_events_and_reports_failure(self):
-        disconnected=asyncio.Event()
-        async def handler(socket):
-            await socket.send(json.dumps({'post_type':'message','self_id':123,'message_id':1}))
-            await socket.close()
-            disconnected.set()
-        async with serve(handler,'127.0.0.1',0) as server:
-            cfg={'expected_self_id':123,'napcat_connection_mode':'ws','napcat_host':'127.0.0.1',
-                 'napcat_port':server.sockets[0].getsockname()[1]}
-            async with NapCatHTTPClient() as client:
-                await poll(client,cfg,{})
-                await disconnected.wait()
-                await client._onebot_event_inbox.reader
-                with self.assertRaises(ConnectionError):await poll(client,cfg,{})
-                self.assertEqual(len(client._onebot_event_inbox.rows),0)
+    async def test_cursor_and_failure_baseline(self):
+        cfg = {**DEFAULTS, 'nonebot_access_token': 'test'}
+        calls = []
+        def handler(request):
+            self.assertEqual(request.headers['authorization'], 'Bearer test')
+            calls.append(dict(request.url.params))
+            if len(calls) == 3:
+                return httpx.Response(503)
+            return httpx.Response(200, json={'epoch': 'session', 'cursor': len(calls), 'messages': []})
+        async with NapCatHTTPClient(transport=httpx.MockTransport(handler)) as client:
+            self.assertEqual(await poll(client, cfg, {}), [])
+            self.assertEqual(await poll(client, cfg, {}), [])
+            with self.assertRaises(httpx.HTTPStatusError):
+                await poll(client, cfg, {})
+            self.assertEqual(await poll(client, cfg, {}), [])
+        self.assertEqual(calls[0]['epoch'], '')
+        self.assertEqual(calls[1]['cursor'], '1')
+        self.assertEqual(calls[3]['epoch'], '')

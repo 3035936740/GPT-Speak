@@ -26,7 +26,7 @@ class BundleTests(unittest.TestCase):
 
     def test_round_trip_all_settings_and_inherited_prompts(self):
         bundle=export_bundle(self.root)
-        self.assertEqual(bundle['connection']['NAPCAT_TOKEN'],'secret')
+        self.assertEqual(bundle['connection'],{})
         self.assertNotIn('UNRELATED',bundle['connection'])
         self.assertEqual(bundle['groups']['200']['prompts']['persona'],'本群人设')
         self.assertIsNone(bundle['groups']['200']['prompts']['reply_protocol'])
@@ -49,13 +49,13 @@ class BundleTests(unittest.TestCase):
         atomic(self.root/'runtime-shared/member-labels.json',{'members':{'12345':{'manual_label':'owner','aliases':['name']}}})
         bundle=export_bundle(self.root)
         self.assertEqual(bundle['global_members']['12345']['manual_label'],'owner')
-        bundle['settings']['napcat_host']='new.test'
+        bundle['settings']['nonebot_bridge_url']='http://new.test:8080'
         summary=preview(self.root,bundle)
         apply_bundle(self.root,bundle,summary['expected'])
-        self.assertEqual(Config(self.root).load()['napcat_host'],'')
+        self.assertEqual(Config(self.root).load()['nonebot_bridge_url'],'http://127.0.0.1:8080')
         summary=preview(self.root,bundle,True)
         apply_bundle(self.root,bundle,summary['expected'],True)
-        self.assertEqual(Config(self.root).load()['napcat_host'],'new.test')
+        self.assertEqual(Config(self.root).load()['nonebot_bridge_url'],'http://new.test:8080')
 
     def test_per_account_global_scope_survives_settings_transfer(self):
         from member_labels import MemberLabels
@@ -70,11 +70,13 @@ class BundleTests(unittest.TestCase):
 
 
     def test_connection_requires_explicit_option_and_preserves_other_env(self):
-        bundle=export_bundle(self.root);bundle['connection']['NAPCAT_TOKEN']='replacement'
+        bundle=export_bundle(self.root);bundle['settings']['nonebot_access_token']='replacement'
         apply_bundle(self.root,bundle,preview(self.root,bundle)['expected'])
         self.assertIn('secret',(self.root/'napcat.env').read_text())
+        self.assertNotEqual(Config(self.root).load()['nonebot_access_token'],'replacement')
         apply_bundle(self.root,bundle,preview(self.root,bundle,True)['expected'],True)
-        content=(self.root/'napcat.env').read_text();self.assertIn('replacement',content);self.assertIn('UNRELATED=value',content)
+        self.assertEqual(Config(self.root).load()['nonebot_access_token'],'replacement')
+        content=(self.root/'napcat.env').read_text();self.assertIn('secret',content);self.assertIn('UNRELATED=value',content)
 
     def test_invalid_package_is_rejected_without_writes(self):
         bundle=export_bundle(self.root);before=(self.root/'settings.json').read_bytes()

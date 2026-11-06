@@ -6,7 +6,7 @@
 
 形象及本项目衍生 Logo 依 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans) 非商业使用，二创同协议授权。该形象授权与项目代码许可分开，详见 [形象署名与授权](assets/ATTRIBUTION.md)。
 
-基于 NapCat / OneBot 的 QQ 群聊 AI Bot，包含 CLI、WebUI、图片理解、共享表情库、群记忆、知识库和按群覆盖的配置。
+基于 NoneBot2 / OneBot v11 反向 WebSocket 的 QQ 群聊 AI Bot，包含 CLI、WebUI、GPT Speak MCP、图片理解、共享表情库、群记忆、知识库和按群覆盖的配置。
 
 项目名称为 **GPT Speak**。默认采用 GPT 6 Luna 白龙娘设定，参考部署者的“白色大肥龙”配置：角色名 Luna／露娜，银白长发、白色弯角、淡紫眼睛、膜翼与白鳞长尾，语气自然清淡、略带慵懒；句尾通常不用句号。默认显示名“白色大肥龙”，支持 Luna、GPT 6 Luna、露娜、白龙娘等别名。角色设定不替代实际模型选择，模型仍由配置决定。
 
@@ -18,7 +18,6 @@
 
 当前群顶部“仅接收消息 / 恢复AI处理”或CLI `/receive on|off` 控制 `receive_only`，默认关闭。仅接收时保留NapCat群连接和聊天记录，跳过AI回复、图片识别/生成、学习、主动话题和消息发送；切换时取消当前生成、待回复和待发送队列。恢复后只处理后续新消息，期间收到的内容仅作历史背景，不补答。该设置按群保存，重启保留，也随完整设置包导出；不改变白名单、其他群或群启用状态。
 
-“行为设置”顶部提供完整设置JSON的导入/导出：包含全局行为配置、人设与回复规则、群白名单与启用开关、每群独立配置/提示词、群友类型/昵称/说明/屏蔽标记和无冷却开关。导入先预览，点击保存并确认才应用；恢复继承的提示词会移除原群独立文件。应用前备份到 `config-backups/bundle-*/`，失败自动回滚；预览后设置变动须重新预览。文件包含WebUI密钥与NapCat连接凭据，请妥善保管。连接地址/令牌默认保留本机值，可在导入预览中选择恢复；仅恢复NAPCAT_HOST/NAPCAT_TOKEN，不覆盖.env其他内容。本机主群编号、Codex路径和.env路径保留，避免群运行数据关联错位；聊天存档、记忆数据库、知识库和表情文件不属于设置包。导入后退出并重启控制台加载完整设置。
 
 重启恢复的消息只作为已读历史存档，不重放旧@、待回复队列，也不重新识图、学习或触发主动话题。供新问题参考时，历史在输入预算内合并成 `history_archive` 一段只读文本；新聊天消息才进入正常处理流程。
 
@@ -59,40 +58,31 @@ Bot 支持 Windows / Linux / macOS，Python 3.10+；安装脚本使用 uv 安装
 | 入口 | 用途 |
 | --- | --- |
 | `Start-QQ-Group-Bot` | 默认启动 Debug CLI + WebUI，替代原 `Start-QQ-Group-Bot-Debug` |
-| `Start-QQ-NapCat` | 启动已配置的 NapCat；已有本机 WebUI 时避免重复启动 |
 | `Install-Environment` | 安装项目 Python、第三方依赖；初始化缺失配置，保留已有配置和人设 |
-| `Install-NapCat` | Windows 官方 OneKey 安装包；Linux/macOS 使用官方 Docker 镜像 |
 
-旧顶层启动/停止脚本归档到 `ignore/launchers/`，保留原内容供查阅，不作为新入口。`ignore/`、`tools/`、`.venv/`、`launch.local.json`、运行数据和凭据均不纳入 Git。上游 QQ MCP 及 NapCat 内部自己的脚本保留原位置。
+旧顶层启动/停止脚本归档到 `ignore/launchers/`，保留原内容供查阅，不作为新入口。`ignore/`、`tools/`、`.venv/`、`local settings`、运行数据和凭据均不纳入 Git。上游 QQ MCP 及 NapCat 内部自己的脚本保留原位置。
 
 ## 首次安装
 
-Windows 双击 `Install-Environment.cmd`（或 `.bat`）；随后运行 `Install-NapCat.cmd`。PowerShell 也可执行：
 
 ```powershell
 .\Install-Environment.ps1
-.\Install-NapCat.ps1
-.\Start-QQ-NapCat.ps1
 ```
 
 Linux/macOS 在项目目录执行：
 
 ```sh
 sh ./Install-Environment.sh
-sh ./Install-NapCat.sh
-sh ./Start-QQ-NapCat.sh
 ```
 
 环境安装从 [uv 官方来源](https://docs.astral.sh/uv/getting-started/installation/)下载工具到 `tools/uv/`，下载 Python 后创建 `.venv`，安装 `requirements.txt` 并检查依赖。若已有 `qq-mcp/pyproject.toml`，同时安装其依赖；Bot 直接调用 OneBot HTTP，不要求额外启动 MCP 服务。已有 `.venv` 不会删除或重建。脚本失败时返回非零退出码，可以重试。
 
-NapCat 安装来源遵循 [官方安装说明](https://napneko.github.io/guide/boot/Shell)：Windows x64 下载 `NapCat.Shell.Windows.OneKey.zip` 后运行官方 `NapCatInstaller.exe`（按其提示完成 QQ/NapCat 安装）；Linux/macOS 需先安装并启动 Docker Engine/Desktop 与 Compose v2，脚本生成持久化 Compose 并拉取 `mlikiowa/napcat-docker:latest`，支持 amd64/arm64。Windows 也可使用 `Install-NapCat.ps1 -Backend docker`。macOS 当前提供 Docker 入口，不自动修改本机 QQ.app。安装和启动分开，不会在安装后自动发消息。
 
-已有 `launch.local.json` 时安装器保留它，不覆盖已有 NapCat。可复制 `launch.local.example.json` 为 `launch.local.json` 并填写已有 Windows Hook 安装路径；路径相对项目根目录，也支持绝对路径。安装器生成的路径默认相对根目录。迁移时仍需保留 QQ/NapCat 的实际目录或更新此本机配置。
 
 首次设置：
 
-1. 在 NapCat WebUI `http://127.0.0.1:6099/webui` 登录 QQ，开启 OneBot HTTP，配置访问令牌。Docker 模式在容器内监听 `0.0.0.0:3000`，主机仅映射 `127.0.0.1:3000`；WebUI 和 WS 端口也仅映射到本机。随机 WebUI 令牌保存在本地 `runtime/napcat-docker/compose.json`。
-2. 新安装填写 `group-bot/napcat.env` 的 `NAPCAT_HOST` 和 `NAPCAT_TOKEN`。已有安装继续使用 `settings.json` 的 `mcp_env_file`，例如 `../qq-mcp/.env`，不替换既有连接凭据。
+1. 安装 Python 依赖，启动控制台后在行为设置中查看 NoneBot 监听端口和访问令牌，默认监听 `0.0.0.0:8080`。
+2. 在 NapCat WebUI 登录 QQ，添加 WebSocket 客户端，填写 `ws://GPT-Speak所在电脑IP:8080/onebot/v11/ws` 和同一访问令牌，启用数组格式消息。
 3. 修改 `group-bot/settings.json` 的 `group_id`、`chat_group_whitelist`、账号和模型，确认后开启 `enabled`。安装模板默认禁用回复；缺少的人设从 `persona-default.txt` 初始化为GPT 6 Luna白龙娘，回复规则从 `reply_protocol-default.txt` 初始化，已有个人/群级人设保留。
 4. Windows 运行 `Start-QQ-Group-Bot.cmd`；Linux/macOS 运行 `sh ./Start-QQ-Group-Bot.sh`。启动 CLI 并打开 WebUI，终端也会显示地址。无图形界面时使用终端地址。
 
@@ -108,19 +98,16 @@ NapCat 安装来源遵循 [官方安装说明](https://napneko.github.io/guide/b
 
 启动器从项目根目录定位文件，不依赖当前工作目录。优先使用 `.venv`，兼容已有 `qq-mcp/.venv`；也可用 `QQ_BOT_PYTHON` 指定解释器。PowerShell 入口支持 Windows PowerShell 5.1 / PowerShell 7；Linux/macOS 可用 `.sh` 或已安装的 PowerShell 7。
 
-Bot 启动器按实际 OneBot 连接地址决定是否自动启动本地 NapCat：仅 `localhost`、`127.0.0.1` 等回环地址及 `::1` 可以自动启动；远程 IP/域名会跳过本地 Windows、WSL 或 Docker 启动，避免连接远程 QQ 时误启动旧实例。`current` 模式读取所配置 `.env` 的地址；无法确认地址时也跳过。可在 `launch.local.json` 的 `napcat` 对象内设置 `"auto_start": false` 永久关闭伴随启动；显式运行 `Start-QQ-NapCat` 仍按本机启动配置执行。`-DryRun` / `--dry-run` 会显示实际判断结果。
 
 ## 数据与目录
 
 ```text
 qqmcp/
 ├── Start-QQ-Group-Bot.{cmd,bat,ps1,sh}
-├── Start-QQ-NapCat.{cmd,bat,ps1,sh}
 ├── Install-Environment.{cmd,bat,ps1,sh}
-├── Install-NapCat.{cmd,bat,ps1,sh}
 ├── scripts/                       # 共享启动与安装逻辑
 ├── requirements.txt / .venv/
-├── launch.local.json              # 本机NapCat路径（不提交）
+├── local settings              # 本机NapCat路径（不提交）
 ├── group-bot/
 │   ├── settings.json / persona.txt
 │   ├── group-config/<群号>/        # 群级覆盖
@@ -507,9 +494,19 @@ WebUI中的数组和映射配置使用“编辑”按钮打开子窗口：数组
 
 群里发送 `/概率 0.05` 等同CLI的 `/config local set passive_probability 0.05`。`/session stop`、`/session resume`、`/session clear` 按来源群执行，不影响其他群。私聊中的会话操作只作用于当前联系人。其他命令保留CLI本身的作用范围，例如 `/stop` 会退出整个控制台，`/config global ...` 修改全局；路径和主群编号仍按CLI校验要求停机修改。配置及命令结果只保留在鉴权后台，不将密钥或人设内容回显到QQ。修改权限后排队指令会重查权限，崩溃后不自动重放已经开始执行的指令。
 
-## NapCat正向HTTP / WebSocket与MCP
+## NoneBot2 反向连接与 GPT Speak MCP
 
-NapCat 连接默认使用 `http`，主机 `localhost`，端口 `3000`，路径为空，对应 `http://localhost:3000`。路径可留空，直接连接服务根路径。可通过 `napcat_host`（IP/IPv6/域名）、`napcat_port`、`napcat_path`、`napcat_secure` 和 `napcat_token` 自定义连接；选择 `current` 可继承 `napcat.env`。API 超时 `napcat_timeout_seconds` 默认 60 秒。需在 NapCat 开启匹配的 HTTP 或 WebSocket 服务端。选择 `ws` 时，通过实时事件连接接收群聊和私聊消息，API 响应按 echo 匹配，发送结果不确定时不会自动重放请求。[OneBot正向WebSocket协议](https://github.com/botuniverse/onebot-11/blob/master/communication/ws.md)
+启动 `Start-QQ-Group-Bot` 后，控制台统一管理一个 NoneBot2 网关。群聊、私聊、后台发送和 GPT Speak MCP 的发送队列均经过此网关，由官方 `nonebot-adapter-onebot` 管理 API 响应和反向连接。依赖通过 `Install-Environment` 安装。
+
+在行为设置的“NoneBot2 反向连接”中配置监听地址（默认 `0.0.0.0`）和端口（默认 `8080`）。首次启动自动生成 `nonebot_access_token`。在 NapCat WebUI 新增 **WebSocket 客户端**，URL 填 `ws://GPT-Speak所在电脑IP:8080/onebot/v11/ws`，token 填同一令牌，消息格式选择数组，启用该客户端。NapCat 位于 WSL、容器或其他电脑时，URL 必须能从 NapCat 所在环境访问。监听端口需允许来自 NapCat 的连接。`nonebot_bridge_url` 默认 `http://127.0.0.1:8080`，仅供本机群聊和私聊进程访问，修改监听端口时同步修改此地址。
+
+原 NapCat 正向连接字段和消息轮询配置已移除。现有聊天存档继续保留，新启动或反向连接恢复时建立新消息边界，不批量重放旧消息，不定时读取 QQ 群历史。当前仅提供 OneBot v11 适配器，适用于既有个人 QQ 账号。`nonebot-adapter-qq` 面向 QQ 开放平台，需另行提供 AppID / AppSecret。
+
+NoneBot 网关日志位于配置目录的 `nonebot-gateway.log`。API 调用超时由 `nonebot_api_timeout_seconds` 控制，默认 60 秒。发送结果不确定时不会自动重发。此迁移已通过模拟反向客户端集成验证，QQ 登录稳定性仍需实际运行验证。[NoneBot OneBot v11 适配器](https://github.com/nonebot/adapter-onebot)
+
+监听端口配置下的“获取完整客户端 URL”按钮可生成并复制反向 WebSocket 地址。地址根据已保存的监听设置和当前 WebUI 主机生成，远程客户端需使用能访问 GPT Speak 的主机地址。访问令牌仅首次启动随机分配一次，持久保存在本地 `nonebot-credentials.json`；重启和重连沿用原值，空设置恢复已保存值，也允许手动修改。
+
+群聊和私聊顶部均提供“重连 NoneBot”，CLI 对应 `/reconnect nonebot`。该操作重启共享网关，所有群聊与私聊会短暂重连，等待 OneBot 客户端重新连接。连接标识变化会终止旧待回复工作并重新建立新消息边界。
 
 Codex 推荐接入 GPT Speak MCP：使用已安装依赖的 Python 运行 `tools/gpt_speak_mcp_stdio.py`（stdio），可选 `--root` 指定 Bot 配置目录。独立安装依赖用 `python -m pip install -r requirements-mcp.txt`。该入口读取 GPT Speak 的本地聊天存档、连接状态、任务与用量缓存，不直接连接 NapCat，不开启额外轮询，不启动 Bot。群聊/私聊发送进入 GPT Speak 原有发送队列，沿用白名单、屏蔽、仅接收和发送结果不确定时不重发的检查；返回排队结果不代表发送成功。重复请求须复用同一 `request_id`。
 
@@ -523,9 +520,8 @@ startup_timeout_sec = 20
 tool_timeout_sec = 45
 ```
 
-迁移旧接入时，将 `[mcp_servers.qq-napcat]` 的 `enabled` 设为 `false`，使用上述 `gpt-speak` 入口。旧文件名 `tools/napcat_mcp_stdio.py` 现在转到 GPT Speak MCP；`/reconnect mcp` 也检查 GPT Speak MCP。旧的 `napcat_mcp_url`、`napcat_mcp_token` 仅保留配置读取兼容，界面隐藏，新 MCP 不使用它们。stdio 不需要独立 URL 或访问令牌；行为设置显示入口和检查按钮。QQ MCP 虚拟环境可继续作为 Python 依赖环境，已不加载其原 MCP 服务。
 
-WebUI按钮与CLI对应：仅接收 `/receive on|off`，刷新头像 `/avatar refresh`，重连 `/reconnect napcat|mcp`，终止/恢复 `/session stop|resume`，清空上下文 `/session clear`。`/help`、Tab补全及 `/status` 同步更新。更新代码后手动退出并重新启动控制台以加载Python和私聊后台；本次接入参考了提交包的私聊实现，未接入独立主人称呼或原有的全局清理记忆指令。
+WebUI按钮与CLI对应：仅接收 `/receive on|off`，刷新头像 `/avatar refresh`，重连 `/reconnect nonebot|mcp`，终止/恢复 `/session stop|resume`，清空上下文 `/session clear`。`/help`、Tab补全及 `/status` 同步更新。更新代码后手动退出并重新启动控制台以加载Python和私聊后台；本次接入参考了提交包的私聊实现，未接入独立主人称呼或原有的全局清理记忆指令。
 
 ## 任务执行环境（实验性）
 
@@ -571,4 +567,4 @@ Python3镜像构建目录为 `group-bot/task-sandbox`；Ubuntu Podman构建命�
 
 本项目原创代码和文档采用 [MIT License](LICENSE)，Copyright (c) **2026 BingAlpha**。本授权不覆盖第三方程序、参考源码、模型服务或用户图片。
 
-感谢 MaiBot 的群聊交互设计参考与 NapCat 的 QQ 接口。第三方许可证原文、版本与来源见 [licenses/README.md](licenses/README.md)：MaiBot 为 GPLv3，NapCat 使用其自定义许可证。GPT Speak MCP 为本项目自行实现的本地工具入口。
+感谢 MaiBot 的群聊交互设计参考、NoneBot2 框架及 OneBot 适配器。第三方许可证原文与来源见 [licenses/README.md](licenses/README.md)，NoneBot2 与 OneBot 适配器均采用 MIT 许可证。GPT Speak MCP 为本项目自行实现的本地工具入口。

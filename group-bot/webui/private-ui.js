@@ -35,7 +35,24 @@ function initPrivateControls(){
   $('private-text').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('private-composer').requestSubmit();}});
   $('private-text').addEventListener('paste',e=>{const files=[...e.clipboardData.files].filter(f=>f.type.startsWith('image/'));if(files.length){e.preventDefault();addImages(files).catch(showError);}});
   $('private-friends-refresh').onclick=async()=>{try{await helpers.act({action:'private_refresh'},$('private-friends-refresh'));await loadPrivate();}catch(error){showError(error);}};
-  for(const mode of ['napcat','mcp']){const button=helpers.node('button',mode==='napcat'?'重连 NapCat':'检查 GPT Speak MCP');button.type='button';button.dataset.privateService='true';button.title=mode==='napcat'?'只重连私聊服务，不重启群聊':'建立临时GPT Speak MCP会话，读取本地联系人列表；Codex已有连接需在Codex内重连';button.onclick=async()=>{try{if(mode==='mcp'&&!(await helpers.api('/api/config')).mcp_integration)throw Error('请先重启 GPT Speak 控制台，加载新的 GPT Speak MCP 检查功能');await helpers.act({action:'private_reconnect',mode},button);await loadPrivate();}catch(error){showError(error);}};$('private-controls').insertBefore(button,$('private-session-stop'));}
+  const reconnectButton=helpers.node('button','重连 NoneBot');
+  reconnectButton.type='button';reconnectButton.dataset.privateService='true';
+  reconnectButton.title='重启共享NoneBot网关并等待客户端回连；所有群聊和私聊会短暂重连';
+  reconnectButton.onclick=async()=>{
+    try{await helpers.act({action:'private_reconnect',mode:'nonebot'},reconnectButton);await loadPrivate();}
+    catch(error){showError(error);}
+  };
+  $('private-controls').insertBefore(reconnectButton,$('private-session-stop'));
+  const mcpButton=helpers.node('button','检查 GPT Speak MCP');
+  mcpButton.type='button';mcpButton.dataset.privateService='true';
+  mcpButton.title='建立临时GPT Speak MCP会话，读取本地联系人列表；Codex已有连接需在Codex内重连';
+  mcpButton.onclick=async()=>{
+    try{
+      if(!(await helpers.api('/api/config')).mcp_integration)throw Error('请先重启 GPT Speak 控制台，加载 GPT Speak MCP 检查功能');
+      await helpers.act({action:'private_reconnect',mode:'mcp'},mcpButton);await loadPrivate();
+    }catch(error){showError(error);}
+  };
+  $('private-controls').insertBefore(mcpButton,$('private-session-stop'));
   $('private-media-refresh').onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_hydrate',peer:selected},$('private-media-refresh'));await loadPrivate();}catch(error){showError(error);}};
   $('private-session-stop').onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_session',peer:selected,mode:lastData?.session?.paused?'resume':'stop'},$('private-session-stop'));await loadPrivate();}catch(error){showError(error);}};
   $('private-context-clear').onclick=async()=>{if(!selected||!confirm('清空当前好友的短期上下文？长期记忆和知识库保留。'))return;try{await helpers.act({action:'private_session',peer:selected,mode:'clear'},$('private-context-clear'));await loadPrivate();}catch(error){showError(error);}};

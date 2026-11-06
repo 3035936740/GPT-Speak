@@ -1,6 +1,6 @@
 import {initPrivateUI,isPrivateOpen,closePrivateUI} from '/private-ui.js';
 import {knowledgeTools} from '/knowledge-tools.js';
-import {openCollectionEditor,collectionSummary,memoryCollection,collectionDraftInput,settingSwitch,decisionDefaults,roleSettingsSummary} from '/private-settings.js';
+import {openCollectionEditor,collectionSummary,memoryCollection,collectionDraftInput,settingSwitch,decisionDefaults,roleSettingsSummary,nonebotClientURL} from '/private-settings.js';
 let activePrompt='persona',activeScope='global',configSequence=0;const promptDrafts={},configDrafts={};
 
 const $=id=>document.getElementById(id);
@@ -22,8 +22,8 @@ const settingsGroups=[
     ['model','模型与分工','设置日常回复模型和内部判断所用的模型。',
       ['回复模型', 'model reasoning_effort fast_mode text_transport model_timeout_seconds'],
       ['决策与角色分工', 'multi_role_enabled role_models role_timeout_seconds']],
-    ['connection','连接设置','管理 NapCat 消息连接和 GPT Speak MCP 接入。',
-      ['消息连接', 'napcat_connection_mode napcat_host napcat_port napcat_path napcat_secure napcat_token napcat_timeout_seconds poll_seconds'],
+    ['connection','连接设置','管理 OneBot 消息连接和 GPT Speak MCP 接入。',
+      ['NoneBot2 反向连接', 'nonebot_listen_host nonebot_port nonebot_access_token nonebot_bridge_url nonebot_api_timeout_seconds'],
       ['GPT Speak MCP', '@gpt_speak_mcp']]],
   ['聊天行为',
     ['participation','群聊触发与节奏','控制 Bot 何时回应点名、参与聊天或主动开话题。',
@@ -529,7 +529,7 @@ function renderStatus(){if(isPrivateOpen())return;$('task-tab-button').hidden=!s
   if(currentTab!=='status')return;
   const gate=s.participation||{},gateReasons={no_new_messages:'没有待处理的新消息',waiting_messages:'等待更多新消息',frequency_disabled:'参与强度为 0',cooldown:'水群冷却中',planner_backoff:'规划间隔等待',model_budget:'模型额度用尽',reply_budget:'发送额度用尽',direct_call_priority:'先处理点名消息',text_job_running:'上一轮还在处理',no_usable_hook:'没有适合的接话点',message_threshold:'已达到消息门槛',idle_compensation:'群聊空窗补偿',dynamic_score:'动态评分通过'};
   const qqUnchecked=s.enabled===false||group?.enabled===false||group?.stopped||(!s.pid&&!s.online);
-  const vitals=[['QQ 连接',qqUnchecked?'未检测':s.online?'在线':s.waiting_for_qq?'等待登录':'连接中',qqUnchecked?'':s.online?'ok':'warn',qqUnchecked?'群后台尚未运行，不能据此判断 NapCat 是否在线':s.waiting_for_qq?'等待 QQ 登录':''],['Bot 后台',stateText,stateTone,s.pid&&!group?.stopped?'进程 '+s.pid:s.error||''],['今日模型调用',String(s.model_calls_today??0),'',s.model],['本轮参与强度',Math.round((gate.frequency??gate.probability??s.rate)*100)+'%','',gateReasons[gate.reason]||gate.reason||'等待新消息']];
+  const vitals=[['QQ 连接',qqUnchecked?'未检测':s.online?'在线':s.waiting_for_qq?'等待登录':'连接中',qqUnchecked?'':s.online?'ok':'warn',qqUnchecked?'群后台尚未运行，不能据此判断 OneBot 是否在线':s.waiting_for_qq?'等待 QQ 登录':''],['Bot 后台',stateText,stateTone,s.pid&&!group?.stopped?'进程 '+s.pid:s.error||''],['今日模型调用',String(s.model_calls_today??0),'',s.model],['本轮参与强度',Math.round((gate.frequency??gate.probability??s.rate)*100)+'%','',gateReasons[gate.reason]||gate.reason||'等待新消息']];
   const cleanup=s.image_cleanup||{},cleanupNames={interval:'按分钟间隔',daily:'每日定时',expiry:'每张图片单独到期',windows:'Windows 任务计划程序'};
   const sections=[['连接与运行',[['最后一次轮询',clock(s.last_poll)],['冷却模式',s.no_cooldown?'无冷却':'按设置冷却'],['服务模式',s.fast?'Fast':'Standard'],['思考等级',s.effort]]],
     ['正在聊什么',[['当前话题',s.conversation_state?.topic?.text||'—'],['在等谁回应',s.conversation_state?.awaiting?.user_id||'—'],['进行中的任务',(s.conversation_state?.tasks||[]).map(task=>task.lane+' / '+task.stage).join('，')||'—'],['七天内交流',(s.conversation_state?.exchanges||0)+' 次']]],
@@ -670,6 +670,16 @@ function settingRow(key){const cfg=configData.config,meta=configData.fields[key]
   if(Object.hasOwn(configDrafts,draftKey)&&input.type!=='checkbox'&&input.tagName!=='SELECT'){input.value=configDrafts[draftKey];edit.classList.add('dirty');const range=edit.querySelector('input[type=range]');if(range&&input.value!=='')range.value=input.value;}
   if(input.tagName==='INPUT'&&input.type!=='checkbox')input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();save.click();}};
   input.disabled=locked;input.dataset.field=key;input.setAttribute('aria-label',meta.label);save.onclick=()=>saveSetting(key,read(),ctx,save);
+  if(key==='nonebot_port'&&!local){
+    const getURL=node('button','获取完整客户端 URL'),result=node('input');
+    getURL.type='button';result.readOnly=true;result.hidden=true;result.setAttribute('aria-label','完整反向 WebSocket 客户端 URL');
+    getURL.onclick=async()=>{
+      result.value=nonebotClientURL(configData.config,location.hostname);result.hidden=false;
+      try{await navigator.clipboard.writeText(result.value);toast('客户端 URL 已复制');}
+      catch{result.focus();result.select();toast('已生成客户端 URL，可选中复制');}
+    };
+    edit.append(getURL,result);
+  }
   if(key==='knowledge_embedding_provider'&&!local){
     const probe=node('button','测试连接'),status=node('span','','hint embedding-test-status');
     probe.type='button';probe.title='用已保存的 Embedding 配置生成测试向量';
@@ -790,12 +800,12 @@ $('persona').oninput=()=>promptState('有未保存的修改',true);
 $('white-form').onsubmit=event=>{event.preventDefault();const id=$('white-id').value.trim();if(!/^\d+$/.test(id))return toast('请输入纯数字的群号',true);act({action:'whitelist',mode:'add',group_id:id},$('white-add')).then(()=>$('white-id').value='').catch(()=>{});};
 $('white-remove').onclick=()=>{if(confirm('把这个群移出白名单，并停止这个群的 Bot？'))act({action:'whitelist',mode:'remove',group_id:String(selected)},$('white-remove')).catch(()=>{});};
 $('pause').onclick=()=>act({action:'pause'},$('pause')).catch(()=>{});$('restart').onclick=()=>act({action:'restart'},$('restart')).catch(()=>{});
-$('reconnect-napcat').onclick=()=>act({action:'reconnect',mode:'napcat'},$('reconnect-napcat')).catch(()=>{});
 async function checkSpeakMCP(button){
   const info=await api('/api/config');
   if(!info.mcp_integration)throw Error('请先重启 GPT Speak 控制台，加载新的 GPT Speak MCP 检查功能');
   return act({action:'reconnect',mode:'mcp'},button);
 }
+$('reconnect-nonebot').onclick=()=>act({action:'reconnect',mode:'nonebot'},$('reconnect-nonebot')).catch(()=>{});
 $('reconnect-mcp').onclick=()=>checkSpeakMCP($('reconnect-mcp')).catch(error=>toast(error.message,true));
 $('task-container-restart').onclick=()=>{
   const mode=snapshot?.status?.task_container_mode;
@@ -1030,7 +1040,7 @@ $('settings-file').onchange=async()=>{
     const bundle=JSON.parse(await file.text()),data=await api('/api/action',{action:'settings_bundle',mode:'preview',bundle}),p=data.preview;
     const summary='全局变化：'+(p.global_changes.join('、')||'无')+'\n启用群聊：'+p.enabled_groups.join('、')+'\n\n'+p.groups.map(row=>'群 '+row.group+'：'+row.overrides+' 项单独设置，'+row.members+' 个群友标记').join('\n')+'\n\n将覆盖设置包范围内的配置和人设，恢复群设置的继承关系。本机主群编号与程序路径保留。';
     openEditor('导入全部设置 · 预览',[{name:'summary',label:'导入范围',value:summary,long:true,disabled:true},
-      {name:'connection',label:'NapCat连接凭据',value:'off',options:[{value:'off',label:'保留本机连接地址和令牌'},{value:'on',label:'恢复设置包中的连接地址和令牌'}]}],async inputs=>{
+      {name:'connection',label:'OneBot连接凭据',value:'off',options:[{value:'off',label:'保留本机连接地址和令牌'},{value:'on',label:'恢复设置包中的连接地址和令牌'}]}],async inputs=>{
         if(!confirm('确认应用这些设置？应用前会自动备份。启用群聊和运行设置可能随导入改变；主群、连接和WebUI设置需重启控制台生效。'))throw Error('已取消导入');
         await act({action:'settings_bundle',mode:'apply',bundle,expected:p.expected,connection:inputs.connection.value==='on'},$('store-save'));
         configData=null;for(const key of Object.keys(configDrafts))delete configDrafts[key];for(const key of Object.keys(promptDrafts))delete promptDrafts[key];await loadConfig();

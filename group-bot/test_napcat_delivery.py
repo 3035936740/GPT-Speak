@@ -29,6 +29,10 @@ def old_plan():
 
 
 class NapCatDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        # These exercise delivery bookkeeping with a synthetic history feed.
+        feed=patch('napcat_events.poll',new=AsyncMock(return_value=None))
+        feed.start();self.addCleanup(feed.stop)
     def test_native_send_without_id_uses_only_real_echo_in_chat_and_journal(self):
         async def run(folder):
             root=Path(folder);runtime=root/'runtime';runtime.mkdir()
@@ -86,7 +90,8 @@ class NapCatDeliveryTests(unittest.TestCase):
             transport = httpx.MockTransport(lambda request: httpx.Response(200, json=response))
             async with httpx.AsyncClient(transport=transport) as client:
                 with self.assertRaises(NapCatAPIError) as caught:
-                    await bot.api(client, {'NAPCAT_HOST':'http://offline.invalid'}, 'forward_group_single_msg')
+                    with patch('bot.settings',return_value={**bot.settings(),'nonebot_access_token':'test-token'}):
+                        await bot.api(client, {}, 'forward_group_single_msg')
             error = caught.exception
             self.assertEqual(error.retcode, 200)
             self.assertIn('无法找到消息740465444', str(error))

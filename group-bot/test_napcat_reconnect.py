@@ -7,27 +7,31 @@ from unittest.mock import Mock,AsyncMock,patch
 import bot
 from console_config import atomic,read_json,runtime
 from debug_console import Console,Supervisor
-from napcat_reconnect import reconnect
+from connection_controls import reconnect
 
 
 class ReconnectTests(unittest.TestCase):
     def setUp(self):
+        gateway_patch=patch('nonebot_process.GatewayProcess.sync')
+        gateway_patch.start();self.addCleanup(gateway_patch.stop)
+        private_patch=patch('private_supervisor.PrivateSupervisor.sync')
+        private_patch.start();self.addCleanup(private_patch.stop)
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
         atomic(self.root/'settings.json',{**bot.settings(),'group_id':100,'chat_group_whitelist':[100,200],'enabled':True})
         self.ui=Console(self.root,Supervisor(self.root,start=False))
-    def test_explicit_group_reconnect_does_not_stop_other_group(self):
+    def test_group_button_restarts_shared_gateway_and_keeps_worker_pause_state(self):
         self.ui.supervisor.paused={100,200};self.ui.supervisor.retry_after={100:time.monotonic()+99}
-        with patch.object(self.ui.supervisor,'stop_group') as stop,patch.object(self.ui.supervisor,'sync') as sync:
-            reconnect(self.ui,'napcat');stop.assert_called_once_with(100);sync.assert_called_once()
-        self.assertEqual(self.ui.supervisor.paused,{200});self.assertNotIn(100,self.ui.supervisor.retry_after)
+        with patch.object(self.ui.supervisor,'stop_group') as stop,patch.object(self.ui.supervisor.gateway,'restart') as restart:
+            reconnect(self.ui,'nonebot');restart.assert_called_once();stop.assert_not_called()
+        self.assertEqual(self.ui.supervisor.paused,{100,200});self.assertIn(100,self.ui.supervisor.retry_after)
         self.ui.execute('/help reconnect');self.assertIn('mcp',self.ui.notice)
     def test_mcp_action_checks_fresh_session_and_records_actual_result(self):
         folder=runtime(self.root,100);folder.mkdir(exist_ok=True)
-        with patch('napcat_reconnect.probe_mcp',new=AsyncMock(return_value=True)) as probe:
+        with patch('connection_controls.probe_mcp',new=AsyncMock(return_value=True)) as probe:
             result=self.ui.web_action({'action':'reconnect','mode':'mcp','group':100})
             probe.assert_awaited_once_with(self.root,100);self.assertTrue(result['ok'])
         self.assertTrue(read_json(folder/'mcp-connection.json')['ok'])
-        with patch('napcat_reconnect.probe_mcp',new=AsyncMock(side_effect=TimeoutError)):
+        with patch('connection_controls.probe_mcp',new=AsyncMock(side_effect=TimeoutError)):
             with self.assertRaises(ValueError):reconnect(self.ui,'mcp')
         self.assertFalse(read_json(folder/'mcp-connection.json')['ok'])
     def test_unexpected_zero_exit_is_retried_not_marked_as_manual_pause(self):
@@ -38,10 +42,10 @@ class ReconnectTests(unittest.TestCase):
         self.assertGreater(sup.retry_after[100],time.monotonic());sup.sync();self.assertNotIn(100,sup.children)
     def test_private_reconnect_never_restarts_group_workers(self):
         self.ui.config.set('private_reply_enabled','true')
-        with patch.object(self.ui.supervisor.private,'stop') as stop,patch.object(self.ui.supervisor.private,'sync') as sync,patch.object(self.ui.supervisor,'stop_group') as group:
-            self.assertTrue(self.ui.web_action({'action':'private_reconnect','mode':'napcat'})['ok'])
-            stop.assert_called_once();sync.assert_called_once();group.assert_not_called()
-        with patch('napcat_reconnect.probe_mcp',new=AsyncMock(return_value=True)) as probe:
+        with patch.object(self.ui.supervisor.private,'stop') as stop,patch.object(self.ui.supervisor.gateway,'restart') as restart,patch.object(self.ui.supervisor,'stop_group') as group:
+            self.assertTrue(self.ui.web_action({'action':'private_reconnect','mode':'nonebot'})['ok'])
+            restart.assert_called_once();stop.assert_not_called();group.assert_not_called()
+        with patch('connection_controls.probe_mcp',new=AsyncMock(return_value=True)) as probe:
             self.assertTrue(self.ui.web_action({'action':'private_reconnect','mode':'mcp'})['ok'])
             probe.assert_awaited_once_with(self.root,0,private=True)
     def test_existing_waiting_worker_is_not_duplicated(self):

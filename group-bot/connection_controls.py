@@ -31,13 +31,12 @@ async def probe_mcp(root,group,private=False):
     return await asyncio.wait_for(check(),20)
 
 
-def reconnect(ui,mode='napcat'):
-    if mode not in {'napcat','mcp'}:raise ValueError('/reconnect napcat|mcp')
+def reconnect(ui,mode='nonebot'):
+    if mode not in {'nonebot','mcp'}:raise ValueError('/reconnect nonebot|mcp')
     cfg=Config(ui.root,ui.group).load();folder=runtime(ui.root,ui.group)
-    if mode=='napcat':
-        if not cfg['enabled']:raise ValueError('该群未启用，请先在行为设置启用')
-        ui.supervisor.stop_group(ui.group);ui.supervisor.paused.discard(ui.group);ui.supervisor.retry_after.pop(ui.group,None);ui.supervisor.sync()
-        ui.notice='当前群NapCat连接已重新启动，等待QQ登录和群信息验证；其他群不受影响'
+    if mode=='nonebot':
+        ui.supervisor.gateway.restart(Config(ui.root).load())
+        ui.notice='NoneBot网关已重启，等待客户端回连；所有群聊与私聊共用此连接'
     else:
         try:
             asyncio.run(probe_mcp(ui.root,ui.group))
@@ -52,12 +51,11 @@ def reconnect(ui,mode='napcat'):
 
 
 def reconnect_private(ui,mode):
-    if mode not in {'napcat','mcp'}:raise ValueError('私聊重连类型无效')
+    if mode not in {'nonebot','mcp'}:raise ValueError('私聊重连类型无效')
     cfg=Config(ui.root).load();folder=Path(ui.root)/'runtime-private';folder.mkdir(exist_ok=True)
-    if mode=='napcat':
-        if not cfg['enabled'] or not cfg['private_reply_enabled']:raise ValueError('请先开启私信服务')
-        worker=ui.supervisor.private;worker.stop();worker.retry_at=0;worker.sync(cfg)
-        return {'ok':True,'message':'私聊NapCat连接已重新启动，历史消息不会补发；群聊进程未重启'}
+    if mode=='nonebot':
+        ui.supervisor.gateway.restart(cfg)
+        return {'ok':True,'message':'NoneBot网关已重启，等待客户端回连；所有群聊与私聊共用此连接'}
     try:asyncio.run(probe_mcp(ui.root,0,private=True))
     except Exception as error:
         atomic(folder/'mcp-connection.json',{'ok':False,'checked':time.time(),'error_type':type(error).__name__})

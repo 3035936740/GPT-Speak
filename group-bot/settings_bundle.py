@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 import secrets
-from dotenv import dotenv_values,set_key
 from console_config import Config,GLOBAL_ONLY,read_json,runtime
 from storage_io import atomic_write_text
 from runtime_paths import project_path
@@ -28,13 +27,12 @@ def export_bundle(root):
         groups[str(group)]={'settings':read_json(scope/'settings.json'),
             'prompts':{key:(scope/(key+'.txt')).read_text(encoding='utf-8') if (scope/(key+'.txt')).exists() else None for key in PROMPTS},
             'members':read_json(folder/'member-labels.json').get('members',{}),'no_cooldown':(folder/'NO_COOLDOWN').exists()}
-    env=dotenv_values(project_path(cfg['mcp_env_file'],root))
     return {'format':FORMAT,'version':VERSION,'exported_at':datetime.now().isoformat(),
         'global_members':read_json(root/'runtime-shared/member-labels.json').get('members',{}),
         'member_scopes':read_json(root/'runtime-shared/member-labels.json').get('scopes',{}),
         'private_members':read_json(root/'runtime-private/member-labels.json').get('members',{}),
         'settings':cfg,'prompts':{key:Config(root).prompt_path(key).read_text(encoding='utf-8') if Config(root).prompt_path(key).exists() else '' for key in PROMPTS},
-        'groups':groups,'connection':{key:env[key] for key in ('NAPCAT_HOST','NAPCAT_TOKEN') if env.get(key) is not None}}
+        'groups':groups,'connection':{}}
 
 
 class Validator(Config):
@@ -53,6 +51,8 @@ def plan(root,bundle,connection=False):
     if not isinstance(bundle,dict) or bundle.get('format')!=FORMAT or bundle.get('version')!=VERSION:raise ValueError('不支持的设置包格式或版本')
     if len(json.dumps(bundle,ensure_ascii=False).encode())>2800000:raise ValueError('设置包最多2.8MB')
     cfg=bundle.get('settings');groups=bundle.get('groups');prompts=bundle.get('prompts')
+    from console_config import REMOVED_CONNECTION_FIELDS
+    if isinstance(cfg,dict):cfg={key:value for key,value in cfg.items() if key not in REMOVED_CONNECTION_FIELDS}
     if not isinstance(cfg,dict) or not isinstance(groups,dict) or len(groups)>100:raise ValueError('设置或群配置格式无效')
     if set(cfg)-set(current['settings']):raise ValueError('设置包含当前版本不支持的字段')
     cfg={**current['settings'],**cfg}
@@ -114,20 +114,6 @@ def plan(root,bundle,connection=False):
     for identity in set(current['groups'])-set(groups):
         scope=root/'group-config'/identity
         for name in ('settings.json','persona.txt','reply_protocol.txt'):writes[scope/name]=None
-    if connection:
-        values=bundle.get('connection',{})
-        if not isinstance(values,dict) or set(values)-{'NAPCAT_HOST','NAPCAT_TOKEN'}:raise ValueError('连接配置格式无效')
-        if any(not isinstance(value,str) or '\n' in value or '\r' in value or len(value)>4096 for value in values.values()):raise ValueError('连接配置值无效')
-        if 'NAPCAT_HOST' in values:
-            from urllib.parse import urlsplit
-            if urlsplit(values['NAPCAT_HOST']).scheme not in {'http','https'}:raise ValueError('NapCat地址必须是HTTP/HTTPS地址')
-        env_path=project_path(cfg['mcp_env_file'],root)
-        original=env_path.read_text(encoding='utf-8') if env_path.exists() else ''
-        import tempfile
-        with tempfile.TemporaryDirectory() as temporary:
-            target=Path(temporary)/'.env';target.write_text(original,encoding='utf-8')
-            for key,value in values.items():set_key(str(target),key,value)
-            writes[env_path]=target.read_text(encoding='utf-8')
     return writes,{'global_changes':[key for key in cfg if cfg[key]!=current['settings'].get(key)],
         'enabled_groups':cfg['chat_group_whitelist'],'groups':summaries,'connection_restored':bool(connection),
         'preserved_local_paths':['group_id','codex_exe','mcp_env_file'],'expected':fingerprint(current),'selected':cfg['chat_group_whitelist'][0]}

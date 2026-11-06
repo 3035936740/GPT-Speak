@@ -16,8 +16,11 @@ from knowledge_embedding import DEFAULTS as EMBEDDING_DEFAULTS
 
 DEFAULT_WINDOW_CHARS = 19200
 MAX_WINDOW_CHARS = 2147483647
+REMOVED_CONNECTION_FIELDS = {'napcat_connection_mode', 'napcat_host', 'napcat_port',
+    'napcat_path', 'napcat_secure', 'napcat_token', 'napcat_timeout_seconds',
+    'napcat_mcp_url', 'napcat_mcp_token', 'poll_seconds'}
 
-DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['GPT','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
+DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
     'expected_self_id':'169901502',
     'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
@@ -130,6 +133,7 @@ class Config:
     def overrides(self):return read_json(self.scope_root/'settings.json') if self.group_id is not None else {}
     def load(self):
         saved=read_json(self.path)
+        saved={key:value for key,value in saved.items() if key not in REMOVED_CONNECTION_FIELDS}
         base={**DEFAULTS,**saved}
         if 'generated_image_cleanup_interval_minutes' not in saved and 'generated_image_cleanup_interval_hours' in saved:
             base['generated_image_cleanup_interval_minutes']=saved['generated_image_cleanup_interval_hours']*60
@@ -178,6 +182,7 @@ class Config:
         matched=unique(text,list(self.load())+list(ALIASES)+['persona','reply_protocol','cooldown'])
         return ALIASES.get(matched,matched)
     def validate(self,cfg):
+        cfg={key:value for key,value in cfg.items() if key not in REMOVED_CONNECTION_FIELDS}
         cfg={**DEFAULTS,**cfg}
         current=self.load()
         from napcat_connection import validate as validate_connection

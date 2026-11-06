@@ -7,8 +7,8 @@ def retry_delay(failures, *, absent=False):
 
 
 async def wait_retry(folder, cfg, settings, seconds, refresh_name='group-directory-refresh'):
-    keys=('enabled','private_reply_enabled','expected_self_id','napcat_connection_mode',
-          'napcat_host','napcat_port','napcat_path','napcat_secure','napcat_token','mcp_env_file')
+    keys=('enabled','private_reply_enabled','expected_self_id','nonebot_bridge_url',
+          'nonebot_access_token','nonebot_api_timeout_seconds')
     original=tuple(cfg.get(key) for key in keys)
     for _ in range(int(seconds)):
         current=settings()

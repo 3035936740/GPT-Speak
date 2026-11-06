@@ -2209,7 +2209,7 @@ async def _run(smoke=False):
         from latest_messages import LatestMessages,bootstrap
         from forward_messages import ForwardMessages
         forward_reader=ForwardMessages(RUNTIME)
-        message_feed=LatestMessages(cfg.get('napcat_timeout_seconds',60))
+        message_feed=LatestMessages(cfg.get('nonebot_api_timeout_seconds',60))
         from napcat_events import poll as poll_events
         live_events=await poll_events(client,cfg,env)
         if live_events is not None:
@@ -2217,7 +2217,7 @@ async def _run(smoke=False):
             log.info('NapCat live event inbox enabled; startup uses local archive')
         else:
             old = await bootstrap(api,client,env,cfg['group_id'],has_archive=bool(history),
-                                  timeout=cfg.get('napcat_timeout_seconds',60))
+                                  timeout=cfg.get('nonebot_api_timeout_seconds',60))
         message_feed.seed(old.get('messages',[]))
         old['messages']=await forward_reader.batch([m for m in old.get('messages',[]) if message_key(m) not in deleted_ids(RUNTIME)],lambda action,params:api(client,env,action,params),cfg)
         for row in history:remember(str(row.get('_id','')))
@@ -2677,7 +2677,7 @@ async def _run(smoke=False):
                         debug_events.CURRENT.metadata(name)
                     membership_checked=time.monotonic()
                 if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
-                message_feed.timeout=cfg.get('napcat_timeout_seconds',60)
+                message_feed.timeout=cfg.get('nonebot_api_timeout_seconds',60)
                 live_events=await poll_events(client,cfg,env)
                 if live_events is None:
                     result = await message_feed.poll(api,client,env,cfg['group_id'])
@@ -2814,7 +2814,7 @@ async def _run(smoke=False):
                     save_state({'pid':os.getpid(),'online':True,'group_id':cfg['group_id'],'last_poll':datetime.now().isoformat(),
                         'day':day,'model_calls_today':daily_calls,'reply_times':list(reply_times),'recent_bot_replies':list(own_replies),
                         'image_attempt_times':list(image_attempt_times),'receive_only':True})
-                    await asyncio.sleep(cfg['poll_seconds']);continue
+                    await asyncio.sleep(0.5);continue
                 visible_history=clean_data([row for row in history if not row.get('_bot_command')],excluded)
                 incoming=clean_data([row for row in incoming if not row.get('_bot_command')],excluded)
                 from member_policy import owner_priority
@@ -3261,7 +3261,7 @@ async def _run(smoke=False):
                     connection_failures+=1
                     await wait_retry(RUNTIME,cfg,settings,retry_delay(connection_failures,absent=isinstance(exc,QQNotInGroup)))
                     continue
-            await asyncio.sleep(cfg['poll_seconds'])
+            await asyncio.sleep(0.5)
         session_watcher.cancel();await asyncio.gather(session_watcher,return_exceptions=True)
         if sticker_prefill_task and not sticker_prefill_task.done():
             sticker_prefill_task.cancel()

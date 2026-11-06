@@ -82,9 +82,12 @@ class Supervisor:
         self.closed=False
         from private_supervisor import PrivateSupervisor
         self.private=PrivateSupervisor(self.root,WindowsJob if os.name=='nt' else PosixJob)
+        from nonebot_process import GatewayProcess
+        self.gateway=GatewayProcess(self.root,WindowsJob if os.name=='nt' else PosixJob)
     def sync(self):
         if not self.start or self.closed:return
         cfg=self.config.load();groups=[int(group) for group in cfg['chat_group_whitelist']]
+        self.gateway.sync(cfg)
         self.private.sync(cfg)
         for group in list(self.children):
             if group not in groups:self.stop_group(group)
@@ -146,6 +149,7 @@ class Supervisor:
         for group in set(cfg['chat_group_whitelist'])|set(self.children):self.stop_group(group)
         for job in self.jobs.values():job.close()
         self.jobs.clear()
+        self.gateway.close()
 
 
 def alive(pid):
@@ -340,8 +344,8 @@ class Console:
                     (folder/'group-directory-refresh').touch()
                 return {'ok':True,'message':'已请求刷新白名单群聊列表'}
             elif action=='private_reconnect':
-                from napcat_reconnect import reconnect_private
-                return reconnect_private(self,value.get('mode','napcat'))
+                from connection_controls import reconnect_private
+                return reconnect_private(self,value.get('mode','nonebot'))
             elif action=='private_hydrate':
                 from private_media import hydrate
                 return hydrate(self.root,str(value.get('peer','')))
@@ -384,8 +388,8 @@ class Console:
             elif action=='delete':self.execute('/delete '+str(value.get('message_id','')))
             elif action=='restart':self.execute('/restart')
             elif action=='reconnect':
-                from napcat_reconnect import reconnect
-                reconnect(self,str(value.get('mode','napcat')))
+                from connection_controls import reconnect
+                reconnect(self,str(value.get('mode','nonebot')))
             elif action=='pause':
                 self.supervisor.paused.add(group);self.supervisor.stop_group(group);self.notice='当前群已暂停，记录已保存'
             elif action=='command':
@@ -459,7 +463,7 @@ class Console:
                 if len(parts)>=3:choices=['global','group']+(['AI','bot','human','owner','auto','clear'] if parts[1]=='type' else [])
             elif command=='session':choices=['stop','resume','clear']
             elif command=='avatar':choices=['refresh']
-            elif command=='reconnect':choices=['napcat','mcp']
+            elif command=='reconnect':choices=['nonebot','mcp']
             elif command=='receive':choices=['on','off']
             elif command=='sandbox':choices=['status','health','build','reinstall','enable-host','CONFIRM']
             elif command=='help':choices=COMMANDS+['all']
@@ -489,8 +493,8 @@ class Console:
             from debug_avatars import refresh_group
             self.notice=refresh_group(self.root,self.group)['message'];return
         if command=='reconnect':
-            from napcat_reconnect import reconnect
-            reconnect(self,rest.strip() or 'napcat');return
+            from connection_controls import reconnect
+            reconnect(self,rest.strip() or 'nonebot');return
         if command=='receive':
             from receive_mode import set_mode
             option=rest.strip().lower()

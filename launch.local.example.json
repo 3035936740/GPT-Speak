@@ -1,7 +1,0 @@
-{
-  "napcat": {
-    "mode": "windows_hook",
-    "napcat_dir": "vendor/NapCat",
-    "qq_exe": "vendor/QQ/QQ.exe"
-  }
-}
