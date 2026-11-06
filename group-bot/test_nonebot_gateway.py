@@ -62,6 +62,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                             try:
                                 result = await client.get(url + '/gpt-speak/health', headers=headers)
                                 if result.status_code == 200:
+                                    self.assertEqual(result.json()['adapter'],'nonebot.adapters.onebot.v11.adapter.Adapter')
+                                    self.assertEqual(result.json()['plugin'],'nonebot_plugin_gpt_speak')
                                     break
                             except httpx.ConnectError:
                                 pass
@@ -89,6 +91,32 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                                 self.assertEqual((await poll(client, cfg))[0]['message_id'], 71)
                                 self.assertEqual((await poll(private, cfg))[0]['message_id'], 71)
                                 self.assertEqual(await poll(client, cfg), [])
+                            # The official adapter strips @/reply from its working
+                            # message. The plugin must preserve original segments.
+                            rich = {**event, 'message_id':73, 'raw_message':'reply with media', 'message':[
+                                {'type':'reply','data':{'id':'70'}},
+                                {'type':'at','data':{'qq':'3755716291'}},
+                                {'type':'text','data':{'text':'look at these'}},
+                                {'type':'image','data':{'file':'first.png'}},
+                                {'type':'image','data':{'file':'second.png'}},
+                                {'type':'file','data':{'file_id':'document','name':'notes.txt'}}]}
+                            await ws.send(json.dumps(rich))
+                            frame=json.loads(await asyncio.wait_for(ws.recv(),2))
+                            self.assertEqual(frame['action'],'get_msg')
+                            await ws.send(json.dumps({'status':'ok','retcode':0,'echo':frame['echo'], 'data':{
+                                'time':1,'message_type':'group','message_id':70,'real_id':70,
+                                'sender':{'user_id':3755716291},'message':[{'type':'text','data':{'text':'previous'}}]}}))
+                            await asyncio.sleep(.1)
+                            received=(await poll(client,cfg))[0]
+                            self.assertEqual(received['message'],rich['message'])
+                            self.assertTrue(received['to_me'])
+                            # Self-sent reports use the official fallback Event model.
+                            await ws.send(json.dumps({**event,'message_id':74,'post_type':'message_sent','user_id':3755716291}))
+                            await asyncio.sleep(.1)
+                            self.assertEqual((await poll(client,cfg))[0]['post_type'],'message_sent')
+                            await ws.send(json.dumps({**event,'message_id':75,'self_id':111111}))
+                            await asyncio.sleep(.1)
+                            self.assertEqual(await poll(client,cfg),[])
                             async def reply_apis():
                                 frames = [json.loads(await ws.recv()) for _ in range(2)]
                                 for frame in reversed(frames):
@@ -109,6 +137,15 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                             with self.assertRaises(NapCatAPIError):
                                 await request(client, cfg, 'send_group_msg', {})
                             await rejected
+                            heartbeat={'time':3,'self_id':3755716291,'post_type':'meta_event',
+                                'meta_event_type':'heartbeat','interval':30000,'status':{'online':False,'good':True}}
+                            await ws.send(json.dumps(heartbeat))
+                            await asyncio.sleep(.1)
+                            with self.assertRaises(httpx.HTTPStatusError):await poll(client,cfg)
+                            heartbeat['status']['online']=True
+                            await ws.send(json.dumps(heartbeat))
+                            await asyncio.sleep(.1)
+                            self.assertEqual(await poll(client,cfg),[])
                         await asyncio.sleep(.1)
                         with self.assertRaises(httpx.HTTPStatusError):
                             await poll(client, cfg)

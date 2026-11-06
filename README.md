@@ -498,6 +498,8 @@ WebUI中的数组和映射配置使用“编辑”按钮打开子窗口：数组
 
 启动 `Start-QQ-Group-Bot` 后，控制台统一管理一个 NoneBot2 网关。群聊、私聊、后台发送和 GPT Speak MCP 的发送队列均经过此网关，由官方 `nonebot-adapter-onebot` 管理 API 响应和反向连接。依赖通过 `Install-Environment` 安装。
 
+启动入口直接注册官方 `nonebot.adapters.onebot.v11.Adapter`，并用 `nonebot.load_plugin('nonebot_plugin_gpt_speak')` 加载业务插件。GPT Speak 插件通过标准事件预处理器和连接生命周期钩子接收事件，原始 @、引用及图片顺序取自适配器保留的 `original_message`。本机管理接口与事件队列属于 GPT Speak 业务插件。
+
 在行为设置的“NoneBot2 反向连接”中配置监听地址（默认 `0.0.0.0`）和端口（默认 `8080`）。首次启动自动生成 `nonebot_access_token`。在 NapCat WebUI 新增 **WebSocket 客户端**，URL 填 `ws://GPT-Speak所在电脑IP:8080/onebot/v11/ws`，token 填同一令牌，消息格式选择数组，启用该客户端。NapCat 位于 WSL、容器或其他电脑时，URL 必须能从 NapCat 所在环境访问。监听端口需允许来自 NapCat 的连接。`nonebot_bridge_url` 默认 `http://127.0.0.1:8080`，仅供本机群聊和私聊进程访问，修改监听端口时同步修改此地址。
 
 原 NapCat 正向连接字段和消息轮询配置已移除。现有聊天存档继续保留，新启动或反向连接恢复时建立新消息边界，不批量重放旧消息，不定时读取 QQ 群历史。当前仅提供 OneBot v11 适配器，适用于既有个人 QQ 账号。`nonebot-adapter-qq` 面向 QQ 开放平台，需另行提供 AppID / AppSecret。
