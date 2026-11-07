@@ -334,10 +334,29 @@ class Console:
             elif action in {'task_force','ai_reply','image_force'}:
                 from manual_task_requests import enqueue
                 return enqueue(self.root,group,str(value.get('message_id','')),reply=action=='ai_reply',image=action=='image_force')
+            elif action=='member_directory_refresh':
+                from directory_cache import invalidate
+                invalidate(self.root,'members',group)
+                folder=runtime(self.root,group)
+                folder.mkdir(exist_ok=True)
+                (folder/'member-directory-refresh').touch()
+                return {'ok':True}
             elif action=='private_refresh':
+                from directory_cache import invalidate
+                invalidate(self.root,'friends')
                 from private_directory import refresh
                 return refresh(self.root)
+            elif action=='recent_history_fetch':
+                folder=runtime(self.root,group)
+                folder.mkdir(exist_ok=True)
+                marker=folder/'recent-history-fetch'
+                if marker.exists() or (folder/'recent-history-cooldown').exists() and time.time()-(folder/'recent-history-cooldown').stat().st_mtime<60:
+                    raise ValueError('近期记录拉取已排队或仍在60秒冷却中')
+                marker.touch()
+                return {'ok':True,'message':'已排队拉取最近50条；仅补入历史记录，不触发AI回复，结果可在执行记录查看'}
             elif action=='group_directory_refresh':
+                from directory_cache import invalidate
+                invalidate(self.root,'groups')
                 for group_id in Config(self.root).load()['chat_group_whitelist']:
                     folder=runtime(self.root,group_id)
                     folder.mkdir(exist_ok=True)

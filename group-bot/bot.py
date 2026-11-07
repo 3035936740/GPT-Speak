@@ -2617,7 +2617,8 @@ async def _run(smoke=False):
             memory.set_blocked(excluded)
             passive.pending={key:item for key,item in passive.pending.items() if not is_blocked(item,excluded)}
             pending_mentions=deque(item for item in pending_mentions if not is_blocked(item,excluded) and session_allows(RUNTIME,item))
-            if identity_job.done() and time.time()-identities.last_refresh>=600:
+            if identity_job.done() and (time.time()-identities.last_refresh>=cfg.get('member_directory_refresh_seconds',86400) or (RUNTIME/'member-directory-refresh').exists()):
+                (RUNTIME/'member-directory-refresh').unlink(missing_ok=True)
                 identity_job=asyncio.create_task(identities.refresh(client,env,cfg['group_id'],api))
             cfg['_image_memory'] = image_memory
             cfg['_image_reader'] = image_reader
@@ -2667,7 +2668,7 @@ async def _run(smoke=False):
                 await dispatch_large_task(manual_task,cfg,manual_work,lambda status:finish_manual_task(RUNTIME,manual_task,status))
             poll_succeeded = False
             try:
-                if recovery_pending or time.monotonic()-membership_checked>=30 or refresh_groups.exists():
+                if recovery_pending or time.monotonic()-membership_checked>=cfg.get('group_directory_refresh_seconds',86400) or refresh_groups.exists():
                     refresh_groups.unlink(missing_ok=True)
                     login=await api(client,env,'get_login_info')
                     check_account(login,cfg['expected_self_id'])
@@ -2676,6 +2677,22 @@ async def _run(smoke=False):
                     if name and debug_events.CURRENT and name!=read_json(RUNTIME/'debug-group.json').get('name'):
                         debug_events.CURRENT.metadata(name)
                     membership_checked=time.monotonic()
+                history_request=RUNTIME/'recent-history-fetch'
+                if history_request.exists():
+                    history_request.unlink(missing_ok=True)
+                    (RUNTIME/'recent-history-cooldown').touch()
+                    try:
+                        imported=await api(client,env,'get_group_msg_history',{'group_id':cfg['group_id'],'count':50,'_gpt_speak_manual_history':True})
+                        from recent_history_import import merge
+                        added=merge(imported.get('messages',[]),history,self_id,cfg['group_id'],chat_item,deleted_ids(RUNTIME),clear_before)
+                        for item in added:
+                            history.append(item);journal.append(item);remember(str(item['_id']))
+                            debug_events.emit('sent' if item['is_bot'] else 'received',text=item['text'],sender=item['sender'],message_id=item['_id'],historical=True,time=item['_time'],**debug_message_metadata(item,history))
+                        history=deque(sorted(history,key=lambda row:row.get('_time',0)),maxlen=journal.max_messages)
+                        journal.checkpoint(history);checkpoint_seen()
+                        log.info('Manual recent history imported; added=%s; archived only; no AI trigger',len(added))
+                    except Exception as exc:
+                        log.warning('Manual recent history import failed; error_type=%s; detail=%s',type(exc).__name__,safe_log(str(exc))[:200])
                 if not cfg.get('receive_only'):await manual_outbox.drain(api,client,env,record_manual,cfg)
                 message_feed.timeout=cfg.get('nonebot_api_timeout_seconds',60)
                 live_events=await poll_events(client,cfg,env)

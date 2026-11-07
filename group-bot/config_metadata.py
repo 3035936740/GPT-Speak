@@ -188,6 +188,8 @@ FIELDS = {
 HIDDEN_FIELDS={'generated_image_cleanup_interval_hours','napcat_mcp_url','napcat_mcp_token'}
 HIDDEN_FIELDS.add('large_task_host_acknowledged')
 FIELDS.update({
+    'private_history_fetch_enabled': ('拉取远端私聊历史（弃用）', '默认关闭；正常接收的消息保存本机，重启使用本地记录。开启会重新查询远端私聊历史，仅供旧模式兼容。'),
+    'avatar_remote_enabled': ('获取真实QQ头像', '开启后向腾讯qlogo.cn提交群号或QQ号获取头像，不提交聊天内容。缓存时间由QQ头像缓存时间设置，默认1天；关闭后仅使用已有缓存。'),
     'large_task_executor':('任务执行环境','默认兼容单文本文件输出；Docker或Podman在无网络、无宿主目录挂载的Python3容器内处理二进制与多文件。连接失败退回单文本模式，二进制不在宿主执行'),
     'large_task_sandbox_image':('任务容器镜像','可自定义镜像，默认gpt-speak-task:1（Python3）。精简镜像可选择基础Shell执行方式；需预装所选解释器，任务不自动拉取镜像或联网安装依赖'),
     'large_task_sandbox_runtime':('容器执行方式','Python用于Python3镜像，基础Shell用于只有/bin/sh的精简镜像。没有任何解释器的scratch镜像不能执行任务'),
@@ -215,3 +217,10 @@ def metadata(config):
                   'help': FIELDS.get(key, ('', '该字段未提供专门说明，请参照原配置文件'))[1],
                   **({'options':OPTIONS[key]} if key in OPTIONS else {})}
             for key in config}
+
+FIELDS.update({
+    'group_directory_refresh_seconds': ('群列表自动刷新间隔（秒）', '默认86400秒（1天）；范围1～2147483647。全局设置，手动刷新群列表立即更新，不影响正常收发消息。'),
+    'friend_directory_refresh_seconds': ('好友目录自动刷新间隔（秒）', '默认86400秒（1天）；范围1～2147483647。全局设置，手动刷新好友列表或打开联系人标记立即更新。'),
+    'member_directory_refresh_seconds': ('群成员名单自动刷新间隔（秒）', '默认86400秒（1天）；范围1～2147483647。全局设置，打开群友标记立即更新；多个会话共用目录缓存。'),
+    'avatar_cache_seconds': ('QQ头像缓存时间（秒）', '默认86400秒（1天）；范围1～2147483647。全局设置，手动刷新头像立即更新。'),
+})

@@ -90,7 +90,8 @@ export function renderPrivatePanels(data,peer){
 export function initPrivatePanels(options){
   helpers=options;initPrivateData(options);
   initPrivateSettings(options);
-  document.querySelectorAll('[data-private-tab]').forEach(button=>button.onclick=()=>{
+  document.querySelectorAll('[data-private-tab]').forEach(button=>button.onclick=async()=>{
+    if(button.dataset.privateTab==='member'){try{await helpers.act({action:'private_refresh'});await helpers.refresh();}catch(error){console.error(error);}}
     active=button.dataset.privateTab;document.querySelectorAll('[data-private-tab]').forEach(item=>{item.classList.toggle('active',item===button);item.setAttribute('aria-selected',String(item===button));});
     document.querySelectorAll('[data-private-pane]').forEach(item=>item.hidden=item.dataset.privatePane!==active);
     if(current)renderPrivatePanels(current.data,current.peer);

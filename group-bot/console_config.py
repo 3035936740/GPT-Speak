@@ -31,7 +31,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'member_labels_global_enabled':False,
     'owner_commands_enabled':False,'owner_command_prefix':'/','owner_command_aliases':{},
     'private_access_mode':'all','private_user_whitelist':[],'private_user_blacklist':[],
-    'private_reply_enabled':False,'private_use_group_impressions':True,'private_vision_enabled':True,
+    'private_history_fetch_enabled':False,'private_reply_enabled':False,'private_use_group_impressions':True,'private_vision_enabled':True,
     'private_memory_retrieval_mode':'keyword',
     'private_max_replies_per_hour':60,'private_max_model_calls_per_day':200,
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
@@ -77,12 +77,14 @@ ALIASES = {'key':'webui_key','name':'bot_name','aliases':'bot_aliases','rate':'p
 PROTECTED = {'group_id','mcp_env_file','codex_exe'}
 from napcat_connection import DEFAULTS as CONNECTION_DEFAULTS
 DEFAULTS.update(CONNECTION_DEFAULTS)
+from directory_cache import DEFAULTS as DIRECTORY_DEFAULTS
+DEFAULTS.update(DIRECTORY_DEFAULTS)
 from model_attachments import DEFAULTS as ATTACHMENT_DEFAULTS
 DEFAULTS.update(ATTACHMENT_DEFAULTS)
 from large_tasks import DEFAULTS as LARGE_TASK_DEFAULTS
 DEFAULTS.update(LARGE_TASK_DEFAULTS)
 DEFAULTS.update(EMBEDDING_DEFAULTS)
-GLOBAL_ONLY = PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','sticker_admission_rule','sticker_ignore_market_faces','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | set(EMBEDDING_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
+GLOBAL_ONLY = set(DIRECTORY_DEFAULTS) | PROTECTED | {'chat_group_whitelist','webui_host','webui_port','webui_key','member_labels_global_enabled','stickers_enabled','sticker_admission_rule','sticker_ignore_market_faces','large_task_max_concurrent','large_task_daily_limit'} | set(CONNECTION_DEFAULTS) | set(EMBEDDING_DEFAULTS) | {key for key in DEFAULTS if key.startswith('private_')}
 GLOBAL_ONLY.add('expected_self_id')
 
 
@@ -189,6 +191,9 @@ class Config:
         from private_access import validate as validate_access
         from owner_commands import validate as validate_commands
         validate_connection(cfg);validate_access(cfg);validate_commands(cfg)
+        for key in DIRECTORY_DEFAULTS:
+            if type(cfg[key]) is not int or not 1<=cfg[key]<=2147483647:
+                raise ValueError(key+" must be an integer in 1..2147483647 seconds")
         if not re.fullmatch(r'[1-9][0-9]{4,14}',str(cfg['expected_self_id'])):
             raise ValueError('Bot QQ 号须为 5～15 位数字')
         if set(cfg)-set(current):raise ValueError('未知配置字段：'+str(set(cfg)-set(current)))

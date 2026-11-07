@@ -396,6 +396,8 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('此私聊专用人设', (self.root / 'persona.txt').read_text(encoding='utf-8'))
 
     async def test_polling_uses_contact_cooldown_override(self):
+        cfg = self.service.config()
+        atomic(self.root / 'settings.json', {**cfg, 'private_history_fetch_enabled': True})
         save_private_profile(self.root, '11111', 'behavior', {'reply_cooldown_seconds': 0})
         await self.service.handle('11111', self.messages, 'original-marker')
         self.now += 1
@@ -403,6 +405,36 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         await self.service.tick()
         await asyncio.gather(*self.service.pending.values())
         self.assertEqual(len(self.sent), 2)
+
+    async def test_live_messages_use_durable_local_history_without_fetch(self):
+        from unittest.mock import patch
+        import private_chat
+        original = self.api
+        calls = []
+        rows = list(self.messages)
+        class LiveAPI:
+            async def events(inner):
+                result = list(rows)
+                rows.clear()
+                return result
+            async def __call__(inner, action, params=None):
+                calls.append(action)
+                if action == 'get_friend_msg_history':
+                    raise AssertionError('Remote history is disabled')
+                return await original(action, params)
+        self.service.api = LiveAPI()
+        with patch.object(private_chat, 'NapCat', LiveAPI):
+            await self.service.tick()
+            await asyncio.gather(*self.service.pending.values())
+        self.assertNotIn('get_friend_msg_history', calls)
+        self.assertEqual(len(self.sent), 1)
+        from private_chat import PrivateStore
+        reopened = PrivateStore(self.service.folder, self.now)
+        try:
+            self.assertEqual(reopened.raw_history('11111')[0]['message_id'], self.messages[0]['message_id'])
+            self.assertEqual(len(reopened.history('11111')), 2)
+        finally:
+            reopened.db.close()
 
     async def test_http_poll_never_reads_unrelated_recent_group_sessions(self):
         calls=[]

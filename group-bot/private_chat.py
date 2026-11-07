@@ -72,6 +72,7 @@ class PrivateStore:
         self.db.executescript('''
             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE IF NOT EXISTS contacts(peer TEXT PRIMARY KEY, marker TEXT);
+            CREATE TABLE IF NOT EXISTS raw_messages(peer TEXT, id TEXT, stamp REAL, payload TEXT, PRIMARY KEY(peer,id));
             CREATE TABLE IF NOT EXISTS messages(peer TEXT, id TEXT, role TEXT, text TEXT,
                 stamp REAL, PRIMARY KEY(peer,id));
             CREATE TABLE IF NOT EXISTS deliveries(peer TEXT, incoming TEXT, status TEXT,
@@ -102,6 +103,7 @@ class PrivateStore:
             self.set('enabled_at', str(now))
         self.enabled_at = float(self.get('enabled_at'))
         self.db.execute('DELETE FROM messages WHERE stamp<?', (now - 30 * 86400,))
+        self.db.execute('DELETE FROM raw_messages WHERE stamp<?', (now - 30 * 86400,))
         self.db.execute('DELETE FROM private_events WHERE stamp<?', (now - 30 * 86400,))
         self.db.execute('DELETE FROM deliveries WHERE stamp<?', (now - 30 * 86400,))
         self.db.execute('DELETE FROM calls WHERE stamp<?', (now - 2 * 86400,))
@@ -125,6 +127,16 @@ class PrivateStore:
     def mark(self, peer, marker):
         self.db.execute('INSERT OR REPLACE INTO contacts VALUES (?,?)', (str(peer), marker))
         self.db.commit()
+
+    def archive_raw(self, peer, row):
+        self.db.execute('INSERT OR REPLACE INTO raw_messages VALUES (?,?,?,?)',
+                        (str(peer), message_key(row), message_order(row)[0], json.dumps(row, ensure_ascii=False)))
+        self.db.commit()
+
+    def raw_history(self, peer, limit=100):
+        rows = self.db.execute('SELECT payload FROM raw_messages WHERE peer=? ORDER BY stamp DESC,rowid DESC LIMIT ?',
+                               (str(peer), limit)).fetchall()
+        return [json.loads(row['payload']) for row in reversed(rows)]
 
     def known(self, peer):
         return {r['id'] for r in self.db.execute('SELECT id FROM messages WHERE peer=?', (str(peer),))}
@@ -526,7 +538,8 @@ class PrivateChat:
                 self.store.delivery(peer, incoming, 'cancelled')
                 return
             # An operator may have answered directly in QQ while generation was running.
-            latest = await self.api('get_friend_msg_history', {'user_id': int(peer), 'count': 10})
+            latest = (await self.api('get_friend_msg_history', {'user_id': int(peer), 'count': 10})
+                      if cfg.get('private_history_fetch_enabled',False) else {'messages': self.store.raw_history(peer)})
             if any(str(row.get('user_id')) == self.self_id and message_order(row) > message_order(batch[-1])
                    for row in latest.get('messages', [])):
                 self.store.delivery(peer, incoming, 'cancelled')
@@ -592,13 +605,13 @@ class PrivateChat:
         if not self.active(cfg):
             return
         if self.clock() - self.pruned_at >= 3600:
-            for table in ('messages', 'deliveries', 'outbox', 'private_events'):
+            for table in ('messages', 'raw_messages', 'deliveries', 'outbox', 'private_events'):
                 self.store.db.execute('DELETE FROM ' + table + ' WHERE stamp<?', (self.clock() - 30 * 86400,))
             self.store.db.execute('DELETE FROM calls WHERE stamp<?', (self.clock() - 2 * 86400,))
             self.store.db.commit()
             self.pruned_at = self.clock()
         groups = tuple(g for g in cfg['chat_group_whitelist'] if Config(self.root, g).load()['enabled'])
-        if (self.clock() - self.refreshed >= 60 or groups != self.directory_groups or str(self.self_id)!=str(cfg['expected_self_id'])
+        if (self.clock() - self.refreshed >= cfg.get('friend_directory_refresh_seconds',86400) or groups != self.directory_groups or str(self.self_id)!=str(cfg['expected_self_id'])
                 or (self.folder/'directory-refresh.json').exists()):
             await self.refresh(cfg)
             (self.folder/'directory-refresh.json').unlink(missing_ok=True)
@@ -609,8 +622,15 @@ class PrivateChat:
             self.event_contacts.clear()
             raise
         if events is None:
-            contacts = await self.http_contacts()
+            contacts = await self.http_contacts() if cfg.get('private_history_fetch_enabled',False) else []
         else:
+            for row in events:
+                if row.get('message_type') != 'private':continue
+                peer = str(row.get('target_id') or row.get('user_id')) if str(row.get('user_id')) == self.self_id else str(row.get('user_id'))
+                if peer not in self.friends:continue
+                self.store.archive_raw(peer,row)
+                if str(row.get('user_id')) == self.self_id:
+                    self.store.add_message(peer,message_key(row),'assistant',private_text(row),message_order(row)[0])
             self.event_contacts={peer:row for peer,row in self.event_contacts.items()
                 if peer in self.friends and self.clock()-float(row.get('time',0))<=300}
             self.event_contacts.update({str(row.get('user_id')):row for row in events
@@ -634,7 +654,8 @@ class PrivateChat:
             if len(self.pending) >= 2:
                 continue
             try:
-                history = await self.api('get_friend_msg_history', {'user_id': int(peer), 'count': 50})
+                history = (await self.api('get_friend_msg_history', {'user_id': int(peer), 'count': 50})
+                           if contact_cfg.get('private_history_fetch_enabled',False) else {'messages': self.store.raw_history(peer)})
             except Exception as exc:
                 self.errors[peer] = type(exc).__name__
                 continue

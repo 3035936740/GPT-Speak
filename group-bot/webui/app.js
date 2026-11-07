@@ -24,6 +24,7 @@ const settingsGroups=[
       ['决策与角色分工', 'multi_role_enabled role_models role_timeout_seconds']],
     ['connection','连接设置','管理 OneBot 消息连接和 GPT Speak MCP 接入。',
       ['NoneBot2 反向连接', 'nonebot_listen_host nonebot_port nonebot_access_token nonebot_bridge_url nonebot_api_timeout_seconds'],
+      ['QQ\u8d44\u6599\u5237\u65b0\u4e0e\u7f13\u5b58', 'group_directory_refresh_seconds friend_directory_refresh_seconds member_directory_refresh_seconds avatar_cache_seconds'],
       ['GPT Speak MCP', '@gpt_speak_mcp']]],
   ['聊天行为',
     ['participation','群聊触发与节奏','控制 Bot 何时回应点名、参与聊天或主动开话题。',
@@ -42,7 +43,7 @@ const settingsGroups=[
       ['指令机器人识别', 'member_auto_bot_marking_enabled member_auto_bot_command_prefixes member_auto_bot_window_messages member_auto_bot_min_observations'],
       ['自动屏蔽', 'member_model_block_enabled member_model_block_min_messages member_model_block_rules']],
     ['private','私信接入与默认行为','设置私信服务、好友准入和初始偏好。单个好友的设置可在私信页修改。',
-      ['私信准入', 'private_reply_enabled private_access_mode private_user_whitelist private_user_blacklist'],
+      ['私信准入', 'private_reply_enabled private_history_fetch_enabled private_access_mode private_user_whitelist private_user_blacklist'],
       ['回复与参考资料', 'private_reply_cooldown_seconds private_max_reply_chars private_vision_enabled private_use_group_impressions private_memory_retrieval_mode'],
       ['私信额度', 'private_max_replies_per_hour private_max_model_calls_per_day']]],
   ['功能与工具',
@@ -771,7 +772,7 @@ function renderConfig(){
   index.scrollTop=indexScroll;
 }
 
-async function switchTab(tab){closePrivateUI();stashPromptDraft();currentTab=tab;document.querySelectorAll('[data-context-tabs] button').forEach(item=>{const active=item.dataset.tab===tab;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});document.querySelectorAll('.side-nav [data-view]').forEach(item=>item.classList.toggle('active',item.dataset.view===tab));document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.id==='tab-'+tab));try{if(snapshot)renderStatus();await loadActivePane();}catch(error){toast(error.message,true);}}
+async function switchTab(tab){if(tab==='members'&&selected)await act({action:'member_directory_refresh',group:selected});closePrivateUI();stashPromptDraft();currentTab=tab;document.querySelectorAll('[data-context-tabs] button').forEach(item=>{const active=item.dataset.tab===tab;item.classList.toggle('active',active);item.setAttribute('aria-selected',String(active));});document.querySelectorAll('.side-nav [data-view]').forEach(item=>item.classList.toggle('active',item.dataset.view===tab));document.querySelectorAll('.tab').forEach(item=>item.classList.toggle('active',item.id==='tab-'+tab));try{if(snapshot)renderStatus();await loadActivePane();}catch(error){toast(error.message,true);}}
 async function loadActivePane(){if(currentTab==='tasks')await loadTasks();else if(['settings','persona'].includes(currentTab))await loadConfig();else if(currentTab==='knowledge')await loadKnowledge();else if(currentTab==='database')await loadDatabase();else if(currentTab==='stickers')await loadStickers();else if(currentTab==='system')await loadSystem();else if(currentTab==='members')await loadMembers();}
 document.querySelectorAll('[data-context-tabs] [data-tab]').forEach(button=>button.onclick=()=>switchTab(button.dataset.tab));
 document.querySelectorAll('.side-nav [data-view]').forEach(button=>button.onclick=()=>switchTab(button.dataset.view));
@@ -1023,6 +1024,8 @@ $('knowledge-file').onchange=async()=>{
 $('session-stop').onclick=async()=>{try{await act({action:'session',mode:snapshot?.status?.session_paused?'resume':'stop',group:selected},$('session-stop'));}catch{}};
 $('receive-only').onclick=()=>act({action:'receive_only',enabled:!snapshot?.status?.receive_only,group:selected},$('receive-only')).catch(()=>{});
 $('group-directory-refresh').onclick=()=>act({action:'group_directory_refresh'},$('group-directory-refresh')).catch(()=>{});
+const recentHistoryButton=node('button','拉取近期聊天记录');recentHistoryButton.type='button';recentHistoryButton.title='手动补入最近50条，按消息ID去重，仅作为历史背景，不触发AI回复';$('group-directory-refresh').after(recentHistoryButton);
+recentHistoryButton.onclick=()=>act({action:'recent_history_fetch',group:selected},recentHistoryButton).catch(()=>{});
 $('avatar-refresh').onclick=async()=>{const button=$('avatar-refresh');button.disabled=true;try{const failed=await refreshVisibleAvatars(true);toast(failed?'部分头像未能更新，已保留原头像；请稍后重试':'头像已刷新',Boolean(failed));}catch(error){toast(error.message,true);}finally{button.disabled=false;}};
 $('settings-export').onclick=async()=>{
   const button=$('settings-export');button.disabled=true;

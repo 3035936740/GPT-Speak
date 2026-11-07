@@ -110,6 +110,11 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                             received=(await poll(client,cfg))[0]
                             self.assertEqual(received['message'],rich['message'])
                             self.assertTrue(received['to_me'])
+                            # Reuse the original adapter's reply lookup without a second QQ request.
+                            quoted = await asyncio.wait_for(request(client, cfg, 'get_msg', {'message_id': 70}), 1)
+                            self.assertEqual(quoted['sender']['user_id'], 3755716291)
+                            self.assertEqual(str(quoted['group_id']), str(event['group_id']))
+                            self.assertEqual(quoted['message'][0]['data']['text'], 'previous')
                             # Self-sent reports use the official fallback Event model.
                             await ws.send(json.dumps({**event,'message_id':74,'post_type':'message_sent','user_id':3755716291}))
                             await asyncio.sleep(.1)

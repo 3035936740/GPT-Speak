@@ -76,7 +76,7 @@ def cached_avatar(root,cfg,kind,account,refresh=False):
     key=kind+'-'+account;failure_key=(str(root.resolve()),key)
     folder=root/'runtime/avatar-cache';path=folder/(key+'.bin')
     with _lock:
-        if not refresh and path.exists() and time.time()-path.stat().st_mtime<300:return path.read_bytes(),'image/png'
+        if not refresh and path.exists() and time.time()-path.stat().st_mtime<cfg.get('avatar_cache_seconds',86400):return path.read_bytes(),'image/png'
         if not refresh and time.time()-_failures.get(failure_key,0)<60:
             if path.exists():return path.read_bytes(),'image/png'
             raise ValueError('头像暂不可用')

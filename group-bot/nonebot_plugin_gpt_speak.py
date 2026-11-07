@@ -13,6 +13,11 @@ from pydantic import BaseModel
 
 from console_config import Config as ProjectConfig
 from nonebot_inbox import Inbox
+from directory_cache import DirectoryCache, cache_seconds
+from quoted_message_cache import QuotedMessageCache
+
+directory_cache = DirectoryCache()
+quoted_messages = QuotedMessageCache()
 
 
 class Config(BaseModel):
@@ -36,6 +41,8 @@ async def collect_event(bot: Bot, event: Event):
     if bot.self_id != expected or str(event.self_id) != expected:
         return
     row = model_dump(event)
+    if row.get('notice_type') in {'group_recall', 'friend_recall'}:
+        quoted_messages.recall(bot.self_id, row.get('message_id'))
     if row.get('meta_event_type') == 'heartbeat':
         online = (row.get('status') or {}).get('online')
         if online is False and inbox.online:
@@ -47,6 +54,13 @@ async def collect_event(bot: Bot, event: Event):
         # Its original_message retains the full ordered OneBot message.
         if 'original_message' in row:
             row['message'] = row.pop('original_message')
+        quoted_messages.remember(bot.self_id, row)
+        reply = row.get('reply')
+        if isinstance(reply, dict):
+            reply = {**reply, 'user_id': (reply.get('sender') or {}).get('user_id')}
+            if row.get('group_id') is not None:
+                reply['group_id'] = row['group_id']
+            quoted_messages.remember(bot.self_id, reply)
         inbox.append(row)
 
 
@@ -84,6 +98,15 @@ async def events(request: Request, epoch: str = '', cursor: int = 0):
     except OverflowError as exc:
         raise HTTPException(409, str(exc)) from exc
 
+@app.post('/gpt-speak/directory-refresh')
+async def directory_refresh(request: Request):
+    authorize(request)
+    value = await request.json()
+    if not isinstance(value, dict) or value.get('scope') not in {'friends', 'groups', 'members'}:
+        raise HTTPException(400, 'Invalid directory refresh scope')
+    directory_cache.clear(value['scope'], value.get('group'))
+    return {'ok': True}
+
 @app.post('/gpt-speak/api/{action}')
 async def api(action: str, request: Request):
     authorize(request)
@@ -97,10 +120,16 @@ async def api(action: str, request: Request):
     if not isinstance(params, dict):
         raise HTTPException(400, 'Parameters must be an object')
     # Live push is authoritative. Workers never fetch history in this mode.
-    if action == 'get_group_msg_history':
+    if action == 'get_group_msg_history' and not params.pop('_gpt_speak_manual_history', False):
         return dict(status='ok', retcode=0, data={'messages': []})
+    if action == 'get_group_msg_history':
+        params = {'group_id': int(params['group_id']), 'count': 50}
     try:
-        data = await bot.call_api(action, **params)
+        current_cfg = ProjectConfig(get_plugin_config(Config).gpt_speak_root).load()
+        if action == 'get_msg':
+            data = await quoted_messages.get(bot, params)
+        else:
+            data = await directory_cache.call(bot, action, params, cache_seconds(current_cfg, action))
         return dict(status='ok', retcode=0, data=data)
     except Exception as exc:
         from nonebot.adapters.onebot.v11.exception import ActionFailed

@@ -16,6 +16,7 @@ CATEGORIES = [('private', '私信'), ('access', '白名单与黑名单'), ('iden
               ('reply', '接话风格'), ('image', '识图'), ('knowledge', '知识库'),
               ('memory', '记忆与上下文'), ('limits', '额度'), ('debug', '界面与记录')]
 FIELDS = {
+    'history_fetch_enabled': field('private', '拉取远端私聊历史（弃用）', '默认关闭。优先使用每次实时收到并保存到本机的聊天记录，重启后继续使用本地对话窗口；开启仅兼容旧历史拉取方式，会额外查询QQ。', 'private_history_fetch_enabled', default=False),
     'access_mode': field('access', '私聊接入模式', '默认全部已加好友的授权群群友；黑名单始终优先。陌生人和临时会话不接入。', 'private_access_mode', 'string', options={'all':'全部授权群好友（排除黑名单）','whitelist':'仅白名单内的授权群好友'}, shared=True),
     'user_whitelist': field('access', '私聊白名单', '点击编辑，用＋逐项添加QQ号、−删除；仅白名单模式下生效。', 'private_user_whitelist', 'qq_list', default=[], shared=True),
     'user_blacklist': field('access', '私聊黑名单', '点击编辑，用＋逐项添加QQ号、−删除；禁止这些账号的自动回复和手动发送。', 'private_user_blacklist', 'qq_list', default=[], shared=True),

@@ -160,6 +160,7 @@
   "private_user_whitelist": [],
   "private_user_blacklist": [],
   "private_reply_enabled": false,
+  "private_history_fetch_enabled": false,
   "private_memory_retrieval_mode": "keyword",
   "private_use_group_impressions": true,
   "private_vision_enabled": true,
