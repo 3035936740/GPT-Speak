@@ -8,7 +8,8 @@ def lane(row):return 'chat' if row.get('kind') in {'sent','received'} else 'flow
 
 def bounded(records,cfg,runtime=None):
     from image_context import compress
-    records=compress(records,runtime)
+    from recent_history_import import deduplicate_events
+    records=compress(list(deduplicate_events(records)),runtime)
     totals={'chat':0,'flow':0};counts={'chat':0,'flow':0};closed=set();kept=[]
     limit=cfg['console_max_text_chars'];capacity=cfg['console_max_records']
     for original in reversed(list(records)):

@@ -2684,7 +2684,9 @@ async def _run(smoke=False):
                     try:
                         imported=await api(client,env,'get_group_msg_history',{'group_id':cfg['group_id'],'count':50,'_gpt_speak_manual_history':True})
                         from recent_history_import import merge
-                        added=merge(imported.get('messages',[]),history,self_id,cfg['group_id'],chat_item,deleted_ids(RUNTIME),clear_before)
+                        events = debug_events.CURRENT
+                        added=merge(imported.get('messages',[]),history,self_id,cfg['group_id'],chat_item,
+                                    deleted_ids(RUNTIME),clear_before,events.rows if events else ())
                         for item in added:
                             history.append(item);journal.append(item);remember(str(item['_id']))
                             debug_events.emit('sent' if item['is_bot'] else 'received',text=item['text'],sender=item['sender'],message_id=item['_id'],historical=True,time=item['_time'],**debug_message_metadata(item,history))
