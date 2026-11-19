@@ -159,7 +159,7 @@ async def _generate(cfg,target,pages,api,model,runtime,context=()):
     if target.get('_file_task_repair') and not target.get('_task_inputs') and not any(p.get('source_type')=='file' and p.get('body') for p in pages):
         return None,{'allowed':False,'status':'missing_source','reason':'未读取到引用文件的正文，无法据此修订；请重新提供原文件'}
     reason=size_rejection(request,cfg)
-    status=({'allowed':False,'status':'rejected','reason':reason} if reason else {'allowed':True} if target.get('_local_only') else await permission(api,cfg['group_id'],target.get('_self_id') or cfg.get('expected_self_id')))
+    status=({'allowed':False,'status':'rejected','reason':reason} if reason else {'allowed':True} if target.get('_local_only') else await permission(api,cfg['group_id'],target.get('_self_id')))
     if not status['allowed']:return None,status
     if any(row.get('status') in {'blocked','ambiguous_subject','insufficient'} for row in target.get('_person_context',[])):
         return None,{'status':'missing_person_evidence','reason':'指定群友缺少可用证据，不生成虚构人物文件'}

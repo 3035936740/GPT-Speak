@@ -34,14 +34,26 @@ def headers(cfg):
 
 async def request(client, cfg, action, params):
     from napcat_errors import NapCatAPIError
+    request_headers = client_headers(client, cfg)
     response = await client.post(cfg['nonebot_bridge_url'].rstrip('/') + '/gpt-speak/api/' + action,
-                                headers=headers(cfg), json=params or {},
+                                headers=request_headers, json=params or {},
                                 timeout=cfg.get('nonebot_api_timeout_seconds', 60) + 5)
     response.raise_for_status()
     result = response.json()
     if result.get('retcode') != 0 or result.get('status') == 'failed':
         raise NapCatAPIError(action, result)
-    return result.get('data')
+    data = result.get('data')
+    if action == 'get_login_info' and isinstance(data, dict) and data.get('user_id'):
+        client._nonebot_self_id = str(data['user_id'])
+    return data
+
+
+def client_headers(client, cfg):
+    result = headers(cfg)
+    identity = getattr(client, '_nonebot_self_id', None)
+    if identity:
+        result['X-GPT-Speak-Bot'] = identity
+    return result
 
 
 async def poll(client, cfg):
@@ -50,7 +62,7 @@ async def poll(client, cfg):
     epoch, cursor = previous[1:] if previous and previous[0] == key else ('', 0)
     try:
         response = await client.get(key[0].rstrip('/') + '/gpt-speak/events',
-                                    headers=headers(cfg), params={'epoch': epoch, 'cursor': cursor},
+                                    headers=client_headers(client, cfg), params={'epoch': epoch, 'cursor': cursor},
                                     timeout=10)
         response.raise_for_status()
         result = response.json()

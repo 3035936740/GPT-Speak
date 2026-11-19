@@ -46,6 +46,11 @@ def metadata(db,peer,identity,public=True):
     return result
 
 
+def preview_path(folder, peer, identity, slot):
+    key=hashlib.sha256((str(peer)+'\n'+str(identity)+'\n'+str(slot)).encode()).hexdigest()
+    return Path(folder)/'preview-cache'/(key+'.bin')
+
+
 def image(root,peer,identity,slot):
     from private_view import contacts
     from image_sources import validate_source
@@ -60,8 +65,7 @@ def image(root,peer,identity,slot):
         raw=read_image(root/'runtime-private/manual',{'id':values[slot]['local_request']},values[slot])
         with Image.open(io.BytesIO(raw)) as picture:return raw,Image.MIME[picture.format]
     url=values[slot]['url'];validate_source(url)
-    key=hashlib.sha256((str(peer)+'\n'+str(identity)+'\n'+str(slot)).encode()).hexdigest()
-    folder=root/'runtime-private/preview-cache';path=folder/(key+'.bin')
+    path=preview_path(root/'runtime-private',peer,identity,slot);folder=path.parent
     if path.exists():raw=path.read_bytes()
     else:
         with httpx.Client(trust_env=False,timeout=10,follow_redirects=False) as client:
@@ -96,3 +100,56 @@ def hydrate(root,peer):
         for row in result.get('messages',[]):
             if str(row.get('message_id') or row.get('real_id')) in known:store_metadata(db,peer,row)
     return {'ok':True,'message':'已补全当前私聊近期消息的图片与引用；不会重放历史回复'}
+
+
+def fetch_recent(root, peer):
+    import asyncio
+    import time
+    from console_config import read_json
+    from private_chat import NapCat, message_key, message_order, private_text
+    from private_events import emit
+    from private_view import contacts
+
+    root = Path(root)
+    if peer not in contacts(root):
+        raise ValueError('联系人不在授权好友列表')
+    folder = root / 'runtime-private'
+    self_id = str(read_json(folder / 'directory.json').get('self_id') or '')
+
+    async def read():
+        api = NapCat(root)
+        try:
+            login = await api('get_login_info')
+            if not self_id or str(login.get('user_id')) != self_id:
+                raise ValueError('QQ 账号已切换，请先刷新好友列表')
+            return await api('get_friend_msg_history', {'user_id': int(peer), 'count': 50})
+        finally:
+            await api.close()
+
+    rows = asyncio.run(read()).get('messages') or []
+    added = 0
+    with closing(sqlite3.connect(folder / 'private-chat.sqlite3')) as db:
+        session = db.execute('SELECT value FROM meta WHERE key=?', ('session:' + peer,)).fetchone()
+        cutoff = max(time.time() - 30 * 86400, json.loads(session[0]).get('stamp', 0) if session else 0)
+        for row in sorted(rows, key=message_order)[-50:]:
+            uid = str(row.get('user_id') or (row.get('sender') or {}).get('user_id') or '')
+            identity, stamp, body = message_key(row), message_order(row)[0], private_text(row)
+            if uid not in {peer, self_id} or not identity or stamp <= cutoff or not body:
+                continue
+            if (row.get('message_type', 'private') != 'private' or row.get('group_id')
+                    or (uid == self_id and str(row.get('target_id') or peer) != peer)):
+                continue
+            role = 'assistant' if uid == self_id else 'user'
+            key = 'message:' + peer + ':' + identity
+            inserted = emit(db, peer, 'sent' if role == 'assistant' else 'received', body,
+                            stamp=stamp, details={'message_id': identity, 'historical': True}, key=key)
+            if inserted:
+                db.execute('INSERT OR IGNORE INTO messages VALUES (?,?,?,?,?)', (peer, identity, role, body, stamp))
+                added += 1
+            db.execute('INSERT OR IGNORE INTO raw_messages VALUES (?,?,?,?)',
+                       (peer, identity, stamp, json.dumps(row, ensure_ascii=False)))
+            store_metadata(db, peer, row)
+        db.execute('DELETE FROM messages WHERE peer=? AND id NOT IN '
+                   '(SELECT id FROM messages WHERE peer=? ORDER BY stamp DESC,rowid DESC LIMIT 100)', (peer, peer))
+        db.commit()
+    return {'ok': True, 'message': f'已补入 {added} 条私聊记录，不触发回复'}

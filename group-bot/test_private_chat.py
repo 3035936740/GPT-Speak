@@ -81,6 +81,18 @@ class PrivateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.store.history('22222'), [])
         self.assertEqual(len(self.service.store.history('11111')), 2)
 
+    async def test_long_private_reply_is_split_and_each_part_is_saved(self):
+        parts = ['This is the first paragraph', 'This is the second paragraph']
+
+        async def reply(prompt, cfg):
+            return {'should_reply': True, 'text': '\n\n'.join(parts)}
+
+        self.service.responder = reply
+        await self.service.handle('11111', self.messages, 'marker1')
+        await self.service.handle('11111', self.messages, 'marker1')
+        self.assertEqual([row['message'][0]['data']['text'] for row in self.sent], parts)
+        self.assertEqual([row['text'] for row in self.service.store.history('11111')[1:]], parts)
+
     async def test_public_profile_on_demand_is_not_an_operator_note(self):
         import profile_queries
         profile_queries._cache.clear()

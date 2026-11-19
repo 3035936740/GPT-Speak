@@ -280,7 +280,8 @@ class PrivateChat:
         if peer not in self.friends or peer == self.self_id:
             return False
         cfg=self.config()
-        if self.self_id and str(self.self_id)!=str(cfg['expected_self_id']):
+        from napcat_errors import account_allowed
+        if self.self_id and not account_allowed(self.self_id,cfg['expected_self_id']):
             return False
         if not self.common_groups(peer):
             return False
@@ -446,6 +447,9 @@ class PrivateChat:
         self.store.event(peer, 'decision', '参考群友印象：' + profile.get('familiarity', '暂无印象'),
             details={'observations': sum(row.get('message_count', 0) for row in profile.get('observations', [])),
                      'interests': sum(len(row.get('interests', [])) for row in profile.get('observations', []))})
+        identity = ""
+        sending = False
+        account = self.self_id
         try:
             if not owner_reply:self.store.call_started(now)
             instruction = self.store.instruction(peer)
@@ -475,8 +479,11 @@ class PrivateChat:
             public_profiles,avatars=([],[]) if owner_reply else await lookup(cfg,
                 {'text':'\n'.join(private_text(row) for row in batch),'_uid':peer,'_self_id':self.self_id},[],profile_api,
                 scope=str(self.root)+':private:'+peer,permitted=profile_permitted,active=profile_active)
-            async with private_vision.prepare([] if owner_reply else batch, cfg, self.folder,
-                    lambda kind, text, **data: self.store.event(peer, kind, text, **data),avatars=avatars) as (paths, image_context):
+            visual_rows = [] if owner_reply else batch
+            if visual_rows and cfg['private_vision_enabled']:
+                visual_rows = private_vision.with_quotes(visual_rows, self.store.raw_history(peer))
+            async with private_vision.prepare(visual_rows, cfg, self.folder,
+                    lambda kind, text, **data: self.store.event(peer, kind, text, **data),avatars=avatars,peer=peer) as (paths, image_context):
                 current_local = private_profiles.profile(self.store.db, peer)
                 current_cfg = private_profiles.effective(self.config(), current_local)
                 if not self.active(current_cfg) or not self.can_chat(peer) or local != current_local or cfg['private_vision_enabled'] != current_cfg['private_vision_enabled'] or not same_access(cfg,current_cfg):
@@ -547,25 +554,48 @@ class PrivateChat:
             if not owner_reply and not self.store.budget(current_cfg, peer, self.clock(), model=False):
                 self.store.delivery(peer, incoming, 'cancelled')
                 return
-            # A durable sending marker prevents an uncertain timeout/crash from sending twice.
-            self.store.delivery(peer, incoming, 'sending', reply=text)
-            try:
-                result = await self.api('send_private_msg', {'user_id': int(peer),
-                    'message': [{'type': 'text', 'data': {'text': text}}], 'auto_escape': True})
-            except Exception as exc:
-                self.store.delivery(peer, incoming, 'uncertain', error=type(exc).__name__)
-                self.errors[peer] = '发送结果未确认；未自动重发'
-                return
-            identity = str((result or {}).get('message_id') or '')
-            if not identity:
-                self.store.delivery(peer, incoming, 'uncertain', error='missing_message_id')
-                return
-            self.store.delivery(peer, incoming, 'sent', sent_id=identity)
+            from reply_behavior import reply_chunks
+            from message_delivery import typing_delay
             from message_time import sent_timestamp
-            self.store.add_message(peer, identity, 'assistant', text, sent_timestamp(result,self.clock()))
+            allow_burst = not owner_reply and current_cfg['private_burst_reply_enabled'] and current_cfg['private_max_reply_parts'] > 1
+            parts = reply_chunks({}, text, cfg['private_max_reply_chars'], True,
+                                 maximum=current_cfg['private_max_reply_parts']) if allow_burst and '```' not in text else [text]
+            for index, part in enumerate(parts):
+                params = {'user_id': int(peer), 'message': [{'type': 'text', 'data': {'text': part}}],
+                          'auto_escape': True}
+                if index:
+                    await asyncio.sleep(typing_delay({'params': params}))
+                    fresh_local = private_profiles.profile(self.store.db, peer)
+                    fresh = private_profiles.effective(self.config(), fresh_local)
+                    if (self.self_id != account or not self.active(fresh) or not self.can_chat(peer)
+                            or not fresh['private_burst_reply_enabled'] or index >= fresh['private_max_reply_parts']
+                            or fresh_local != local or not same_access(cfg, fresh)
+                            or instruction != self.store.instruction(peer)
+                            or session != self.store.get('session:'+peer)
+                            or not profile_groups <= set(self.impression_groups(peer))):
+                        self.store.delivery(peer, incoming, 'sent', sent_id=identity, error='burst_interrupted')
+                        return
+                # Persist the send intent before each request. A timeout never replays this burst.
+                self.store.delivery(peer, incoming, 'sending', reply=text, sent_id=identity)
+                sending = True
+                try:
+                    response = await self.api('send_private_msg', params)
+                except Exception as exc:
+                    self.store.delivery(peer, incoming, 'uncertain', error=type(exc).__name__)
+                    self.errors[peer] = type(exc).__name__
+                    return
+                sent_id = str((response or {}).get('message_id') or '')
+                if not sent_id:
+                    self.store.delivery(peer, incoming, 'uncertain', error='missing_message_id')
+                    return
+                sending = False
+                identity = sent_id
+                self.store.add_message(peer, identity, 'assistant', part, sent_timestamp(response,self.clock()))
+            self.store.delivery(peer, incoming, 'sent', sent_id=identity)
             self.errors.pop(peer, None)
         except asyncio.CancelledError:
-            self.store.delivery(peer, incoming, 'cancelled')
+            status = 'uncertain' if sending else 'sent' if identity else 'cancelled'
+            self.store.delivery(peer, incoming, status, sent_id=identity)
             raise
         except Exception as exc:
             self.store.delivery(peer, incoming, 'failed', error=type(exc).__name__)
@@ -610,8 +640,9 @@ class PrivateChat:
             self.store.db.execute('DELETE FROM calls WHERE stamp<?', (self.clock() - 2 * 86400,))
             self.store.db.commit()
             self.pruned_at = self.clock()
+        from napcat_errors import account_allowed
         groups = tuple(g for g in cfg['chat_group_whitelist'] if Config(self.root, g).load()['enabled'])
-        if (self.clock() - self.refreshed >= cfg.get('friend_directory_refresh_seconds',86400) or groups != self.directory_groups or str(self.self_id)!=str(cfg['expected_self_id'])
+        if (self.clock() - self.refreshed >= cfg.get('friend_directory_refresh_seconds',86400) or groups != self.directory_groups or not account_allowed(self.self_id,cfg['expected_self_id'])
                 or (self.folder/'directory-refresh.json').exists()):
             await self.refresh(cfg)
             (self.folder/'directory-refresh.json').unlink(missing_ok=True)
@@ -620,6 +651,7 @@ class PrivateChat:
             events=await self.api.events() if isinstance(self.api,NapCat) else None
         except Exception:
             self.event_contacts.clear()
+            self.refreshed = 0
             raise
         if events is None:
             contacts = await self.http_contacts() if cfg.get('private_history_fetch_enabled',False) else []

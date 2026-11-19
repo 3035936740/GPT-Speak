@@ -365,12 +365,15 @@ class Console:
             elif action=='private_reconnect':
                 from connection_controls import reconnect_private
                 return reconnect_private(self,value.get('mode','nonebot'))
+            elif action=='private_recent_history_fetch':
+                from private_media import fetch_recent
+                return fetch_recent(self.root,str(value.get('peer','')))
             elif action=='private_hydrate':
                 from private_media import hydrate
                 return hydrate(self.root,str(value.get('peer','')))
             elif action=='private_avatar_refresh':
                 from debug_avatars import private_avatar
-                peer=str(value.get('peer',''));own=str(Config(self.root).load().get('expected_self_id'))
+                peer=str(value.get('peer',''));own=str(read_json(self.root/'runtime-private/directory.json').get('self_id') or '')
                 for identity in (peer,own):private_avatar(self.root,peer,identity,True)
                 return {'ok':True,'message':'当前联系人和Bot头像已刷新'}
             elif action=='private_session':

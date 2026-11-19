@@ -16,6 +16,8 @@ CATEGORIES = [('private', '私信'), ('access', '白名单与黑名单'), ('iden
               ('reply', '接话风格'), ('image', '识图'), ('knowledge', '知识库'),
               ('memory', '记忆与上下文'), ('limits', '额度'), ('debug', '界面与记录')]
 FIELDS = {
+    'burst_reply_enabled': field('reply', '分段发送', '自动回复较长时按语义拆成多条，逐条发送。默认开启。', 'private_burst_reply_enabled', default=True),
+    'max_reply_parts': field('reply', '分段发送条数上限', '一次自动回复最多发几条。默认6条，可设1～10条。', 'private_max_reply_parts', 'integer', default=6, low=1, high=10),
     'history_fetch_enabled': field('private', '拉取远端私聊历史（弃用）', '默认关闭。优先使用每次实时收到并保存到本机的聊天记录，重启后继续使用本地对话窗口；开启仅兼容旧历史拉取方式，会额外查询QQ。', 'private_history_fetch_enabled', default=False),
     'access_mode': field('access', '私聊接入模式', '默认全部已加好友的授权群群友；黑名单始终优先。陌生人和临时会话不接入。', 'private_access_mode', 'string', options={'all':'全部授权群好友（排除黑名单）','whitelist':'仅白名单内的授权群好友'}, shared=True),
     'user_whitelist': field('access', '私聊白名单', '点击编辑，用＋逐项添加QQ号、−删除；仅白名单模式下生效。', 'private_user_whitelist', 'qq_list', default=[], shared=True),
@@ -39,7 +41,7 @@ FIELDS = {
     'high_eq_enabled': field('reply', '高情商接话', '理解倾诉和夸奖，避免客服式解释或被吐槽后顶嘴。', 'high_eq_enabled'),
     'peer_reply_enabled': field('reply', '自然接话风格', '顺着当前好友的话题自然接话，减少分析玩梗动机。', 'peer_reply_enabled'),
     'friendly_tease_probability': field('reply', '朋友间玩笑偏好', '0关闭主动调侃；其余为模型参考的语气偏好。', 'friendly_tease_probability', 'number', low=0, high=1),
-    'vision_enabled': field('image', '私聊识图', '读取此好友新私信中的图片，结合文字回答；关闭时不下载、不附图给模型。', 'private_vision_enabled', default=True),
+    'vision_enabled': field('image', '私聊识图', '读取此好友新私信中的图片及本地引用图，结合文字回答；关闭时不下载、不附图给模型。', 'private_vision_enabled', default=True),
     'image_summary_level': field('image', '图片摘要等级', '默认简略；平衡尽量完整识别可见文字和细节；详细另列可能意图，推测与事实分开。只控制图片理解深度，不要求每条回复逐项描述。', 'image_summary_level', 'string', default='brief', options={'brief':'简略','balanced':'平衡','detailed':'详细'}),
     'max_images_per_call': field('image', '单次识图数量上限（张）', '选择本轮最新的图片；动图读取首帧。', 'max_images_per_call', 'integer', low=1, high=4),
     'max_image_bytes': field('image', '单张图片大小上限（字节）', '超大或损坏图片跳过并写入执行日志；默认8MiB。', 'max_image_bytes', 'integer', low=1024, high=16777216),

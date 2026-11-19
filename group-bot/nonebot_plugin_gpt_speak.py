@@ -30,7 +30,10 @@ __plugin_meta__ = PluginMetadata(
     type='application', config=Config, supported_adapters={'~onebot.v11'})
 
 cfg = ProjectConfig(get_plugin_config(Config).gpt_speak_root).load()
-expected = str(cfg['expected_self_id'])
+from napcat_errors import account_allowed
+allowed = cfg['expected_self_id']
+active = ''
+connections = {}
 token = cfg['nonebot_access_token']
 inbox = Inbox()
 driver = get_driver()
@@ -38,7 +41,7 @@ driver = get_driver()
 
 @event_preprocessor
 async def collect_event(bot: Bot, event: Event):
-    if bot.self_id != expected or str(event.self_id) != expected:
+    if bot.self_id != active or str(event.self_id) != active:
         return
     row = model_dump(event)
     if row.get('notice_type') in {'group_recall', 'friend_recall'}:
@@ -66,13 +69,23 @@ async def collect_event(bot: Bot, event: Event):
 
 @driver.on_bot_connect
 async def connected(bot):
-    if bot.self_id == expected:
+    global active
+    if not account_allowed(bot.self_id, allowed):
+        return
+    connections[bot.self_id] = bot
+    if not active:
+        active = bot.self_id
         inbox.reset(True)
 
 @driver.on_bot_disconnect
 async def disconnected(bot):
-    if bot.self_id == expected:
-        inbox.reset(False)
+    global active
+    if connections.get(bot.self_id) is not bot:
+        return
+    del connections[bot.self_id]
+    if bot.self_id == active:
+        active = next(iter(connections), '')
+        inbox.reset(bool(active))
 
 app = get_app()
 
@@ -84,13 +97,20 @@ def authorize(request):
 async def health(request: Request):
     authorize(request)
     adapter_type = type(get_adapter(Adapter))
-    return dict(service='gpt-speak-nonebot', online=inbox.online, self_id=expected,
+    return dict(service='gpt-speak-nonebot', online=inbox.online, self_id=active,
                 adapter=adapter_type.__module__ + '.' + adapter_type.__name__,
                 plugin=__name__)
+
+def require_active(request):
+    pinned = request.headers.get('x-gpt-speak-bot')
+    if pinned and pinned != active:
+        raise HTTPException(409, 'Active QQ account changed')
+
 
 @app.get('/gpt-speak/events')
 async def events(request: Request, epoch: str = '', cursor: int = 0):
     authorize(request)
+    require_active(request)
     try:
         return inbox.read(epoch, cursor)
     except ConnectionError as exc:
@@ -113,9 +133,11 @@ async def api(action: str, request: Request):
     if not inbox.online:
         raise HTTPException(503, 'QQ reverse connection is offline')
     try:
-        bot = nonebot.get_bot(expected)
+        bot = nonebot.get_bot(active)
     except KeyError as exc:
         raise HTTPException(503, 'Expected QQ account is not connected') from exc
+    if action != 'get_login_info':
+        require_active(request)
     params = await request.json()
     if not isinstance(params, dict):
         raise HTTPException(400, 'Parameters must be an object')

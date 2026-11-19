@@ -49,7 +49,7 @@ export function openCollectionEditor({title,value,key='',itemType,itemTemplate,c
   const body=make('div',undefined,'collection-body'),description=make('p',note||'逐项编辑，保存后生效；关闭窗口不会应用更改。','page-note');
   body.append(description);
   let pending=false;
-  const roleMap=key==='role_models',qqList=itemType==='qq_list'||/^private_user_(white|black)list$/.test(key),numericList=key==='chat_group_whitelist',nameList=itemType==='name_list';
+  const roleMap=key==='role_models',qqList=key==='expected_self_id'||itemType==='qq_list'||/^private_user_(white|black)list$/.test(key),numericList=key==='chat_group_whitelist',nameList=itemType==='name_list';
   const labels={...roleNames,model:'模型',reasoning_effort:'思考等级',fast_mode:'Fast'};
   const maxItems=numericList?30:key==='member_auto_bot_command_prefixes'?32:qqList?1000:nameList?10:roleMap?3:key==='owner_command_aliases'?100:Infinity;
   const modelNames = [...(context.models ?? []).map(model=>model.name),

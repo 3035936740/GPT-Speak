@@ -13,13 +13,15 @@ import private_settings
 import private_access
 from private_events import emit
 from debug_history import bounded
+from debug_references import text_chars
+from napcat_errors import account_allowed
 
 
 def contacts(root):
     root = Path(root)
     directory = read_json(root / 'runtime-private/directory.json')
-    expected = str(Config(root).load().get('expected_self_id', '169901502'))
-    if directory.get('self_id') and str(directory['self_id']) != expected:
+    expected = str(directory.get('self_id') or '')
+    if expected and not account_allowed(expected, Config(root).load()['expected_self_id']):
         return {}
     cfg=Config(root).load()
     return {uid: row for uid, row in directory.get('contacts', {}).items()
@@ -37,7 +39,7 @@ def view(root, peer='', kind='all'):
     folder = root / 'runtime-private'
     directory=read_json(folder/'directory.json')
     unavailable=dict(directory.get('unavailable_contacts',{}))
-    if directory.get('self_id') and str(directory['self_id'])!=str(cfg['expected_self_id']):
+    if directory.get('self_id') and not account_allowed(directory['self_id'],cfg['expected_self_id']):
         unavailable.update({uid:{**row,'groups':[],'unavailable_reason':'等待刷新当前账号好友列表'}
                             for uid,row in directory.get('contacts',{}).items()})
     visible={**unavailable,**allowed}
@@ -52,7 +54,7 @@ def view(root, peer='', kind='all'):
               'settings_base': private_settings.values(cfg), 'settings_defaults': {}, 'settings_default_overrides': {},
               'bot_name': cfg['bot_name'], 'can_chat': False, 'access_reason': '',
               'member_scope':'global' if cfg.get('member_labels_global_enabled') else 'private','scoped_marks':True}
-    result.update(self_id=str(cfg.get('expected_self_id','169901502')),avatar_enabled=cfg.get('avatar_remote_enabled',False),
+    result.update(self_id=str(directory.get('self_id') or ''),avatar_enabled=cfg.get('avatar_remote_enabled',False),
         directory_updated=read_json(folder/'directory.json').get('updated_at',0),session={})
     path = folder / 'private-chat.sqlite3'
     db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5) if path.exists() else None
@@ -97,14 +99,23 @@ def view(root, peer='', kind='all'):
                     result['system_instruction'] = instruction['text'] if instruction else ''
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='private_events'").fetchone():
                     events = []
-                    for row in reversed(db.execute('SELECT * FROM private_events WHERE peer=? ORDER BY id DESC LIMIT 1200', (peer,)).fetchall()):
+                    for row in reversed(db.execute('SELECT * FROM private_events WHERE peer=? ORDER BY stamp DESC,id DESC LIMIT 1200', (peer,)).fetchall()):
                         events.append({'id': row['id'], 'kind': row['kind'], 'text': row['text'],
                             'stamp': row['stamp'], 'time': row['stamp'], 'level': row['level'], 'details': json.loads(row['details'])})
                     def matches(event, mode):
                         return mode == 'all' or (event['kind'] in {'sent', 'received'} if mode == 'chat'
                             else event['kind'] == 'system' if mode == 'system' else event['kind'] not in {'sent', 'received', 'system'})
                     result['event_counts'] = {mode: sum(matches(event, mode) for event in events) for mode in ('all', 'chat', 'flow', 'system')}
-                    result['events'] = bounded([e for e in events if matches(e, kind)], effective)
+                    window = bounded([e for e in events if matches(e, kind)], effective)
+                    usage_mode = 'flow' if kind == 'flow' else 'chat'
+                    usage_window = window if kind in ('all', usage_mode) else bounded(
+                        [e for e in events if matches(e, usage_mode)], effective)
+                    result['record_window'] = {
+                        'stored': db.execute('SELECT count(*) FROM private_events WHERE peer=?', (peer,)).fetchone()[0],
+                        'chars': sum(text_chars(event) for event in usage_window if matches(event, usage_mode)),
+                        'limit': effective['console_max_text_chars'],
+                    }
+                    result['events'] = window
                     from private_media import metadata
                     for event in result['events']:
                         if event['kind'] in {'sent','received'}:

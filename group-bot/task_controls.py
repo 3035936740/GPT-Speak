@@ -201,7 +201,7 @@ async def send(root,group,identity,confirmed=False):
         async with NapCatHTTPClient() as client:
             env=dotenv_values(cfg['mcp_env_file'])
             async def api(action,params):return await request(client,env,action,params,Config(root,int(group)).load()) or {}
-            access=await permission(api,int(group),cfg.get('expected_self_id'))
+            access=await permission(api,int(group),None)
             if not access['allowed']:raise ValueError(access['reason'])
             latest=Config(root,int(group)).load()
             if latest.get('receive_only') or not latest.get('enabled') or state(folder).get('paused'):raise ValueError('发送权限已改变')

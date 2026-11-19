@@ -22,7 +22,7 @@ REMOVED_CONNECTION_FIELDS = {'napcat_connection_mode', 'napcat_host', 'napcat_po
 
 DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GPT 6','GPT','露娜','白龙娘','白龙','龙娘','大肥龙'],'avatar_remote_enabled':False,
     'stickers_enabled':True,
-    'expected_self_id':'169901502',
+    'expected_self_id':[],
     'decision_model':'inherit_reply','decision_reasoning_effort':'low','decision_fast_mode':False,
     'model_avatar_query_enabled':True,'model_profile_query_enabled':True,'profile_query_cache_seconds':300,
     'tool_workflow_enabled':True,'tool_workflow_max_steps':4,'web_answer_max_chars':300,
@@ -35,6 +35,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'private_memory_retrieval_mode':'keyword',
     'private_max_replies_per_hour':60,'private_max_model_calls_per_day':200,
     'private_reply_cooldown_seconds':8,'private_max_reply_chars':600,
+    'private_burst_reply_enabled':True,'private_max_reply_parts':6,
     'memory_retrieval_mode':'keyword',
     'knowledge_enabled':True,'knowledge_retrieval_mode':'keyword','knowledge_chat_retrieval_enabled':True,'knowledge_max_chars':0,
     'high_eq_enabled':True,
@@ -136,7 +137,9 @@ class Config:
     def load(self):
         saved=read_json(self.path)
         saved={key:value for key,value in saved.items() if key not in REMOVED_CONNECTION_FIELDS}
+        from napcat_errors import account_ids
         base={**DEFAULTS,**saved}
+        base['expected_self_id'] = account_ids(base['expected_self_id'])
         if 'generated_image_cleanup_interval_minutes' not in saved and 'generated_image_cleanup_interval_hours' in saved:
             base['generated_image_cleanup_interval_minutes']=saved['generated_image_cleanup_interval_hours']*60
         if self.group_id is not None:
@@ -194,8 +197,8 @@ class Config:
         for key in DIRECTORY_DEFAULTS:
             if type(cfg[key]) is not int or not 1<=cfg[key]<=2147483647:
                 raise ValueError(key+" must be an integer in 1..2147483647 seconds")
-        if not re.fullmatch(r'[1-9][0-9]{4,14}',str(cfg['expected_self_id'])):
-            raise ValueError('Bot QQ 号须为 5～15 位数字')
+        from napcat_errors import account_ids
+        cfg['expected_self_id'] = account_ids(cfg['expected_self_id'])
         if set(cfg)-set(current):raise ValueError('未知配置字段：'+str(set(cfg)-set(current)))
         for key,value in cfg.items():
             if key in PROTECTED and value!=current[key]:raise ValueError('运行路径/主群编号请停机后修改原配置文件')
@@ -264,6 +267,7 @@ class Config:
         except ValueError:raise ValueError('WebUI监听地址必须是IPv4或IPv6，例如127.0.0.1、0.0.0.0、::')
         if type(cfg['webui_port']) is not int or not 0<=cfg['webui_port']<=65535:raise ValueError('WebUI端口范围0~65535，0表示随机端口')
         if type(cfg['max_reply_parts']) is not int or not 1<=cfg['max_reply_parts']<=10:raise ValueError('单次回复文字条数范围1~10')
+        if type(cfg['private_max_reply_parts']) is not int or not 1<=cfg['private_max_reply_parts']<=10:raise ValueError('私聊分段条数范围1～10')
         if type(cfg['max_stickers_per_reply']) is not int or not 1<=cfg['max_stickers_per_reply']<=5:raise ValueError('单次回复表情张数范围1~5')
         if not 30<=cfg['passive_window_seconds']<=180:raise ValueError('水群待处理消息有效期范围30~180秒')
         if not 5<=cfg['passive_round_seconds']<=120:raise ValueError('水群统计轮次范围5~120秒')

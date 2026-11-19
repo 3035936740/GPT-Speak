@@ -54,6 +54,12 @@ function initPrivateControls(){
   };
   $('private-controls').insertBefore(mcpButton,$('private-session-stop'));
   $('private-media-refresh').onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_hydrate',peer:selected},$('private-media-refresh'));await loadPrivate();}catch(error){showError(error);}};
+  const recentHistory=document.createElement('button');
+  recentHistory.type='button';
+  recentHistory.textContent='拉取近期聊天记录';
+  recentHistory.title='手动补入当前好友最近50条记录，不触发自动回复';
+  $('private-media-refresh').before(recentHistory);
+  recentHistory.onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_recent_history_fetch',peer:selected},recentHistory);await loadPrivate();}catch(error){showError(error);}};
   $('private-session-stop').onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_session',peer:selected,mode:lastData?.session?.paused?'resume':'stop'},$('private-session-stop'));await loadPrivate();}catch(error){showError(error);}};
   $('private-context-clear').onclick=async()=>{if(!selected||!confirm('清空当前好友的短期上下文？长期记忆和知识库保留。'))return;try{await helpers.act({action:'private_session',peer:selected,mode:'clear'},$('private-context-clear'));await loadPrivate();}catch(error){showError(error);}};
   $('private-receive-only').onclick=async()=>{if(!selected)return;try{await helpers.act({action:'private_setting',peer:selected,scope:'contact',key:'reply_enabled',value:lastData?.contact_settings?.reply_enabled===false},$('private-receive-only'));await loadPrivate();}catch(error){showError(error);}};
@@ -121,7 +127,9 @@ async function loadPrivate(){
   const events=(data.events||[]).filter(row=>!query||(row.text+' '+row.kind+' '+JSON.stringify(row.details||{})).toLowerCase().includes(query));
   const filtered=events.filter(row=>!$('private-level')||$('private-level').value==='all'||($('private-level').value==='ERROR'?row.level==='ERROR':['WARNING','ERROR'].includes(row.level)));
   renderPrivateRecords($('private-messages'),data,peer,filtered,setReply);
-  $('private-log-count').textContent=filtered.length+' / '+(data.event_counts?.all||0)+' 条记录';
+  const recordWindow=data.record_window||{};
+  const usage=recordWindow.limit===0?(recordWindow.chars||0)+' 字（不限）':(recordWindow.chars||0)+' / '+(recordWindow.limit??'—')+' 字';
+  $('private-log-count').textContent='显示 '+filtered.length+' 条 · 本地共保存 '+(recordWindow.stored??data.event_counts?.all??0)+' 条，'+(privateKind==='flow'?'执行窗口 ':'对话窗口 ')+usage;
   const panel=$('private-impression'),profile=data.impression||{},profileKey=JSON.stringify([peer,profile.observations,profile.familiarity]);
   if(panel.dataset.signature!==profileKey){
     panel.dataset.signature=profileKey;panel.replaceChildren();

@@ -10,8 +10,25 @@ class QQNotInGroup(ValueError):
     pass
 
 
+def account_ids(value):
+    values = value if isinstance(value, list) else [value] if value not in (None, '') else []
+    result = []
+    for entry in values:
+        identity = str(entry).strip()
+        if not re.fullmatch(r'[1-9][0-9]{4,14}', identity):
+            raise ValueError('Invalid Bot QQ number: ' + identity)
+        if identity not in result:
+            result.append(identity)
+    return result
+
+
+def account_allowed(identity, expected):
+    allowed = account_ids(expected)
+    return bool(identity) and (not allowed or str(identity) in allowed)
+
+
 def check_account(login, expected):
-    if str(login.get('user_id')) != str(expected):
+    if not account_allowed(login.get('user_id'), expected):
         raise QQAccountMismatch(f'Bot QQ 号不匹配，配置为 {expected}，NapCat 登录为 {login.get("user_id") or "未知"}')
 
 

@@ -43,7 +43,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                 port = sock.getsockname()[1]
             cfg.update(nonebot_port=port, nonebot_listen_host='127.0.0.1',
                        nonebot_bridge_url=f'http://127.0.0.1:{port}',
-                       nonebot_access_token='integration-secret', expected_self_id='3755716291')
+                       nonebot_access_token='integration-secret', expected_self_id=['3755716291','2799724874'])
             (root / 'settings.json').write_text(json.dumps(cfg), encoding='utf-8')
             with (root / 'gateway.log').open('wb') as log:
                 from debug_console import WindowsJob, PosixJob
@@ -165,6 +165,14 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                             await ws.send(json.dumps(event))
                             await asyncio.sleep(.1)
                             self.assertEqual((await poll(client, cfg))[0]['message_id'], 72)
+                        async with connect(f'ws://127.0.0.1:{port}/onebot/v11/ws',
+                            additional_headers={**headers, 'X-Self-ID': '2799724874'}):
+                            await asyncio.sleep(.1)
+                            url = f'http://127.0.0.1:{port}/gpt-speak'
+                            health = await client.get(url+'/health', headers=headers)
+                            self.assertEqual(health.json()['self_id'], '2799724874')
+                            stale = await client.get(url+'/events', headers={**headers, 'X-GPT-Speak-Bot':'3755716291'})
+                            self.assertEqual(stale.status_code, 409)
                 finally:
                     process.terminate()
                     process.wait(timeout=10)

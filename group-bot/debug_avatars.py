@@ -20,7 +20,9 @@ def refresh_group(root,group):
     from console_config import atomic
     cfg=Config(root,group).load()
     if not cfg.get('avatar_remote_enabled'):raise ValueError('请先开启头像联网')
-    targets=[('group',str(group)),('user',str(cfg.get('expected_self_id','169901502')))]
+    targets=[('group',str(group))]
+    own=read_json(runtime(root,group)/'state.json').get('self_id')
+    if own:targets.append(('user',str(own)))
     def fetch(target):
         try:avatar(root,group,*target,refresh=True);return True
         except (ValueError,OSError):return False
@@ -66,7 +68,7 @@ def avatar(root,group,kind,account,refresh=False):
 def private_avatar(root,peer,account,refresh=False):
     from private_view import contacts
     root=Path(root);cfg=Config(root).load();account=qq_id(account)
-    if str(peer) not in contacts(root) or account not in {str(peer),str(cfg.get('expected_self_id'))}:raise ValueError('私聊头像账号无效')
+    if str(peer) not in contacts(root) or account not in {str(peer),str(read_json(root/'runtime-private/directory.json').get('self_id') or '')}:raise ValueError('私聊头像账号无效')
     if not cfg.get('avatar_remote_enabled'):
         cfg={**cfg,'avatar_remote_enabled':any(Config(root,g).load().get('avatar_remote_enabled',False) for g in contacts(root)[str(peer)]['groups'])}
     return cached_avatar(root,cfg,'user',account,refresh)
