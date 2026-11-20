@@ -11,7 +11,7 @@ import math
 from contextlib import contextmanager
 from PIL import Image
 from console_config import Config, runtime, atomic
-from emoji_library import EmojiLibrary
+from emoji_library import EmojiLibrary, metadata_complete
 from sticker_filter import approved, EMOTIONS
 
 TABLES={'notes':'记忆 / 表达','people':'群友资料','sources':'学习来源','manual_messages':'Bot手动消息',
@@ -220,7 +220,7 @@ def sticker_view(root,query='',offset=0,state='all',kind='all',emotion=''):
         rows.append({'id':key,'kind':item.get('kind'),'title':title,'label':item.get('label',''),
             'description':item.get('description',''),'emotion':item.get('emotion',''),'use_when':item.get('use_when',''),
             'package_name':item.get('package_name',''),'emoji_name':item.get('emoji_name',name),
-            'state':'approved' if market or approved(item) else 'unreviewed','uses':item.get('uses',0),
+            'state':'approved' if (market or approved(item)) and metadata_complete(item) else 'unreviewed','uses':item.get('uses',0),
             'manual_admission':bool(item.get('manual_admission')),
             'content_hash':item.get('content_hash',''),'time':item.get('time',0)})
     for key,item in lib.rejected.items():

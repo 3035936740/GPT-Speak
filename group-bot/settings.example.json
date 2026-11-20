@@ -60,6 +60,7 @@
   "model_timeout_seconds": 30,
   "vision_timeout_seconds": 60,
   "image_timeout_seconds": 150,
+  "task_image_wait_timeout_seconds": 30,
   "mcp_env_file": "../qq-mcp/.env",
   "codex_exe": "auto",
   "max_prompt_chars": 19200,

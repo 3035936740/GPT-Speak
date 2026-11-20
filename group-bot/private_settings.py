@@ -46,6 +46,7 @@ FIELDS = {
     'max_images_per_call': field('image', '单次识图数量上限（张）', '选择本轮最新的图片；动图读取首帧。', 'max_images_per_call', 'integer', low=1, high=4),
     'max_image_bytes': field('image', '单张图片大小上限（字节）', '超大或损坏图片跳过并写入执行日志；默认8MiB。', 'max_image_bytes', 'integer', low=1024, high=16777216),
     'vision_timeout_seconds': field('image', '识图超时（秒）', '附图回复在文字超时之外增加此预算。', 'vision_timeout_seconds', 'integer', low=1, high=7200),
+    'task_image_wait_timeout_seconds': field('image', '任务参考图片等待超时（秒）', '图生图及图片任务等待参考图片和识别结果就绪，默认30秒。', 'task_image_wait_timeout_seconds', 'integer', low=1, high=7200),
     'knowledge_enabled': field('knowledge', '检索当前私聊知识库', '只检索当前好友的专属知识。', '_private_knowledge_enabled', default=True),
     'knowledge_retrieval_mode': field('knowledge','知识库检索模式','关键词索引为默认；向量和混合模式使用全局 Embedding 设置。','knowledge_retrieval_mode','string',default='keyword',options={'keyword':'关键词索引','vector':'向量 RAG','hybrid':'关键词＋向量 RAG'}),
     'knowledge_max_chars': field('knowledge', '知识库检索字符预算', '0表示全部匹配、不设独立检索上限；提供给模型时仍受总输入限制。', 'knowledge_max_chars', 'integer', low=0, high=12000),

@@ -52,12 +52,17 @@ def original(root, group, message_id, key):
         if path.is_file():
             archive.put(path.read_bytes(), key)
             return path
-    env = dotenv_values(project_path(cfg['mcp_env_file'], root))
-    if not env.get('NAPCAT_HOST'): raise ValueError('原图未缓存，NapCat连接配置不可用')
     try:
         with httpx.Client(trust_env=False, timeout=15) as client:
-            response = client.post(env['NAPCAT_HOST'].rstrip('/') + '/get_msg',
-                headers={'Authorization': 'Bearer ' + env.get('NAPCAT_TOKEN', '')}, json={'message_id': str(message_id)})
+            from nonebot_bridge import DEFAULTS, headers
+            bridge_cfg = {**DEFAULTS, **cfg}
+            request_headers = headers(bridge_cfg)
+            identity = read_json(folder / 'state.json').get('self_id')
+            if identity:
+                request_headers['X-GPT-Speak-Bot'] = str(identity)
+            response = client.post(bridge_cfg['nonebot_bridge_url'].rstrip('/') + '/gpt-speak/api/get_msg',
+                headers=request_headers, json={'message_id': str(message_id)},
+                timeout=bridge_cfg['nonebot_api_timeout_seconds'] + 5)
             response.raise_for_status(); result = response.json()
             if result.get('retcode') != 0: raise ValueError('QQ原消息不可读取，原图尚未缓存')
             message = result.get('data') or {}

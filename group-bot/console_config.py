@@ -51,6 +51,7 @@ DEFAULTS = {'bot_name':'白色大肥龙', 'bot_aliases':['Luna','GPT 6 Luna','GP
     'member_reference_type_enabled':True,'member_reference_aliases_enabled':True,'member_reference_note_enabled':True,
     'member_model_type_enabled':False,'member_model_aliases_enabled':False,'member_model_note_enabled':False,
     'model_timeout_seconds':30,'vision_timeout_seconds':60,'image_timeout_seconds':150,
+    'task_image_wait_timeout_seconds':30,
     'chat_image_display':'image',
     'webui_host':'127.0.0.1','webui_port':0,'webui_key':'',
     'max_reply_parts':6,'max_stickers_per_reply':3,
@@ -228,7 +229,7 @@ class Config:
         for key in ('member_model_block_rules','member_prompt_owner','member_prompt_human','member_prompt_AI','member_prompt_bot'):
             if not isinstance(cfg[key],str) or len(cfg[key])>1000:raise ValueError(key+' 最多1000字')
         for key in ('model_timeout_seconds','vision_timeout_seconds','image_timeout_seconds','large_task_timeout_seconds',
-                    'large_task_prepare_notice_timeout_seconds','large_task_step_timeout_seconds'):
+                    'large_task_prepare_notice_timeout_seconds','large_task_step_timeout_seconds','task_image_wait_timeout_seconds'):
             if not 1<=cfg[key]<=7200:raise ValueError(key+' 范围1～7200秒')
         if not 100<=cfg['console_max_records']<=100000:raise ValueError('控制台记录条数范围100~100000')
         if type(cfg['console_max_text_chars']) is not int or not 0<=cfg['console_max_text_chars']<=MAX_WINDOW_CHARS:

@@ -23,6 +23,13 @@ from storage_io import atomic_write_text
 
 AUTHORIZED_GROUP_IDS = {985569438, 855374626}
 
+def metadata_complete(item):
+    return (all(isinstance(item.get(field), str) and item[field].strip()
+                for field in ('label', 'description', 'use_when'))
+            and item['label'].strip() not in {'[动画表情]', '[群表情包]', '[商城表情]'}
+            and not item['label'].strip().startswith('[未获取表情包名')
+            and item.get('emotion') in EMOTIONS)
+
 
 def authorized_groups():
     return set(read_json(Path(__file__).with_name('settings.json')).get('chat_group_whitelist',list(AUTHORIZED_GROUP_IDS)))
@@ -148,6 +155,7 @@ class EmojiLibrary:
         self.hashes = self._read(self.hashes_path)
         self.classifier = classifier
         self.style_reviewer = None
+        self.metadata_reviewer = None
         self.allow_candidate=lambda data:True
         self.usage_by_key = {}
         self.review_min_count=5;self.review_step=3;self.upload_retry_seconds=300
@@ -386,7 +394,8 @@ class EmojiLibrary:
             if key not in self.queued and not self.queue.full():
                 self.queue.put_nowait((key,dict(data)));self.queued.add(key)
             return
-        if canonical not in self.items and key not in self.queued and not self.queue.full():
+        incomplete = canonical in self.items and self.metadata_reviewer and not metadata_complete(self.items[canonical])
+        if (canonical not in self.items or incomplete) and key not in self.queued and not self.queue.full():
             self.queue.put_nowait((key, dict(data)))
             self.queued.add(key)
         elif canonical in self.items:
@@ -415,7 +424,8 @@ class EmojiLibrary:
                 packet['summary'] = str(packet['summary'] or '[商城表情]')[:50]
                 key = 'm' + hashlib.sha256(packet['emoji_id'].encode()).hexdigest()[:16]
                 if self.is_excluded(key):continue
-                if key not in self.items and not style_checked and self.admission_rule():
+                needs_metadata = self.metadata_reviewer and not metadata_complete(self.items.get(key, {}))
+                if not style_checked and (key not in self.items and self.admission_rule() or needs_metadata):
                     if data.get('url'):
                         source={name:msg.get(name) for name in ('user_id','group_id')}
                         if len(segments)==1:source['message_id']=msg.get('message_id')
@@ -423,7 +433,7 @@ class EmojiLibrary:
                         self.offer_candidate({**data,'_market_message':source,'_source_user_id':str(msg.get('user_id',''))})
                     continue
                 previous = self.items.get(key, {})
-                item = {**previous,'id': key, 'kind': 'market_face', 'label':previous.get('label',packet['summary']) if previous.get('metadata_edited') else packet['summary'], 'data': packet, 'time': time.time()}
+                item = {**previous,'id': key, 'kind': 'market_face', 'label':previous.get('label',packet['summary']) if previous.get('metadata_edited') or metadata_complete(previous) else packet['summary'], 'data': packet, 'time': time.time()}
                 item['package_name']=str(previous.get('package_name') if previous.get('metadata_edited') else data.get('emoji_package_name') or data.get('package_name') or previous.get('package_name') or '')[:80]
                 item['emoji_name']=str((previous.get('emoji_name') or previous.get('label') or packet['summary']) if previous.get('metadata_edited') else data.get('emoji_name') or data.get('name') or previous.get('emoji_name') or packet['summary']).strip('[]')[:80]
                 for field in ('source_message_id', 'source_group_id'):
@@ -554,6 +564,28 @@ class EmojiLibrary:
             except (OSError,ValueError,KeyError):continue
 
     async def collector(self, client):
+        if self.metadata_reviewer:
+            for key in list(self.items):
+                item = self.items.get(key, {})
+                if metadata_complete(item) or item.get('metadata_edited') or not item.get('path'):
+                    continue
+                path = asset_path(item, 'path', self.root)
+                if not path.is_file() or self.is_excluded(key, item.get('content_hash')):
+                    continue
+                try:
+                    from sticker_prefill import checked
+                    values = checked(await self.metadata_reviewer(path))
+                    if not metadata_complete(values):
+                        continue
+                    with self.transaction():
+                        current = self.items.get(key)
+                        if self.enabled() and current and not current.get('metadata_edited') and not self.is_excluded(key, current.get('content_hash')):
+                            current.update(values)
+                            self.save()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    continue
         while True:
             key, data = await self.queue.get()
             reviewed=False
@@ -594,7 +626,8 @@ class EmojiLibrary:
                     existing = self.hashes.get(digest)
                     usage=self.usage_by_key.get(key,{})
                     reconsider=existing in self.rejected and self.rejected[existing].get('asset_type') in {'photo','uncertain','other'} and usage.get('seen_count',0)>=max(self.review_min_count,self.rejected[existing].get('review_seen_count',0)+self.review_step)
-                    if not market and (existing in self.items or existing in self.rejected) and not reconsider:
+                    needs_metadata = self.metadata_reviewer and existing in self.items and not metadata_complete(self.items[existing])
+                    if not market and (existing in self.items or existing in self.rejected) and not reconsider and not needs_metadata:
                         self.aliases[key] = existing
                         if existing in self.items:
                             self.items[existing]['time'] = time.time()
@@ -620,9 +653,22 @@ class EmojiLibrary:
                         reviewed=True
                         continue
                     if verdict is not True:continue
+                metadata = {}
+                if self.metadata_reviewer:
+                    with tempfile.TemporaryDirectory(prefix='metadata-', dir=self.root) as folder:
+                        candidate = Path(folder) / ('candidate.' + extension)
+                        candidate.write_bytes(raw)
+                        from sticker_prefill import checked
+                        metadata = checked(await self.metadata_reviewer(candidate))
+                        if not metadata_complete(metadata):
+                            continue
                 if market:
                     if not self.is_excluded(key,digest):
                         self.observe(market,style_checked=True)
+                        with self.transaction():
+                            if key in self.items and not self.items[key].get('metadata_edited'):
+                                self.items[key].update(metadata)
+                                self.save()
                     continue
                 if not rule and self.classifier is not None:
                     entry=verdict
@@ -655,6 +701,8 @@ class EmojiLibrary:
                     existing = self.hashes.get(digest)
                     if existing in self.items:
                         self.aliases[key] = existing
+                        if metadata and not self.items[existing].get('metadata_edited'):
+                            self.items[existing].update(metadata)
                         self.save()
                         continue
                     path = self.root / (canonical + '.' + extension)
@@ -674,6 +722,8 @@ class EmojiLibrary:
                         'use_when': str(entry.get('use_when', ''))[:30], 'classified_at': time.time()}
                     if local_upload:
                         self.items[canonical].update(data.get('_sticker_metadata',{}))
+                    elif metadata:
+                        self.items[canonical].update(metadata)
                     self.prune()
                     self.save()
                     reviewed=True

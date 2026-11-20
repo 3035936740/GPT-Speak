@@ -52,7 +52,7 @@ const settingsGroups=[
       ['发送偏好', 'sticker_reply_probability no_words_sticker_probability followup_sticker_probability sticker_recent_suppression_strength max_stickers_per_reply'],
       ['收录与共享', 'shared_sticker_library sticker_admission_rule sticker_ignore_market_faces sticker_repeat_review_min_count sticker_repeat_review_step sticker_upload_retry_seconds']],
     ['image','识图与绘图','设置图片理解、生成和生成图片的保留方式。',
-      ['识图与摘要', 'background_image_reading_enabled image_direct_original_enabled image_summary_level image_summary_window_messages max_images_per_call max_image_bytes vision_timeout_seconds'],
+      ['识图与摘要', 'background_image_reading_enabled image_direct_original_enabled image_summary_level image_summary_window_messages max_images_per_call max_image_bytes vision_timeout_seconds task_image_wait_timeout_seconds'],
       ['同图复读', 'image_repeat_window_messages image_repeat_min_count image_repeat_pair_confidence image_repeat_full_streak'],
       ['绘图与额度', 'image_generation_enabled image_backend image_timeout_seconds image_cooldown_seconds max_images_per_hour max_images_per_day'],
       ['生成图片清理', 'generated_image_ttl_hours generated_image_cleanup_mode generated_image_cleanup_interval_minutes generated_image_cleanup_daily_time generated_image_windows_schedule']],
