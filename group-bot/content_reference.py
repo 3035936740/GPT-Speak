@@ -67,7 +67,7 @@ def resolve(target, context, *, for_drawing=False):
             return {**source,'images':images,'links':list(dict.fromkeys(source['links']+own['links'])),
                 'image_keys':{**source['image_keys'],**own['image_keys']},'image_sizes':{**source['image_sizes'],**own['image_sizes']},
                 'attachment_order':[('image',i) for i in range(len(images))]}
-    if own['links'] or own['images'] or own['files']:
+    if own['links'] or own['images'] or own['files'] or own['image_hashes']:
         return own
     quoted = target.get('_quoted_message') or next((m for m in context
         if target.get('_reply_id') and m.get('_id') == target['_reply_id']), None)

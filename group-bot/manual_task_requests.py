@@ -6,6 +6,45 @@ import sqlite3
 import time
 from console_config import Config,runtime,pid_alive,read_json,deleted_ids
 
+
+def find_target(folder, group, message_id):
+    from storage_io import read_text
+    target = None
+    for filename in ('debug-events.jsonl', 'recent-chat.jsonl'):
+        try:
+            lines = read_text(Path(folder) / filename).splitlines()
+        except FileNotFoundError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if filename == 'recent-chat.jsonl':
+                if str(row.get('_id')) == str(message_id) and str(row.get('_group_id', group)) == str(group):
+                    target = {**(target or {}), **row}
+                continue
+            if (row.get('kind') != 'received' or str(row.get('message_id')) != str(message_id)
+                    or str(row.get('group_id', group)) != str(group)):
+                continue
+            quote = row.get('quote') or {}
+            target = {'_id': str(message_id), '_uid': str(row.get('user_id') or ''),
+                '_time': row.get('time', 0), 'sender': row.get('sender', ''),
+                'text': row.get('text', ''), 'is_bot': False, '_group_id': group,
+                '_reply_id': row.get('reply_id', ''), '_image_count': row.get('image_count', 0),
+                '_image_hashes': row.get('image_hashes', []), '_files': row.get('files', []),
+                '_record_only': row.get('record_only', False),
+                '_quoted_message': {'_id': quote.get('message_id', ''), 'sender': quote.get('sender', ''),
+                                    'text': quote.get('text', '')} if quote.get('found') else {}}
+    if target and target.get('_image_count') and not target.get('_image_hashes'):
+        from image_archive import message_image_keys
+        memory = read_json(Path(folder) / 'image-memory.json')
+        target['_image_hashes'] = memory.get('messages', {}).get(str(message_id), []) or message_image_keys(
+            group, message_id, target['_image_count'])
+    return target
+
 def queue_path(folder, reply):
     return Path(folder)/('manual-ai-replies.sqlite3' if reply else 'manual-tasks.sqlite3')
 
@@ -25,13 +64,9 @@ def enqueue(root,group,message_id,*,reply=False,image=False):
     from session_control import state
     if state(folder).get('paused'):raise ValueError('请先恢复当前会话')
     if not pid_alive(read_json(folder/'state.json').get('pid')):raise ValueError('本群后台尚未运行')
-    path=folder/'recent-chat.jsonl';target=None
-    for line in path.read_text(encoding='utf-8').splitlines() if path.exists() else []:
-        try:row=json.loads(line)
-        except ValueError:continue
-        if str(row.get('_id'))==str(message_id):target=row
+    target = find_target(folder, group, message_id)
     if not target or target.get('is_bot') or str(message_id) in deleted_ids(folder):
-        raise ValueError('仅可处理近期存档中群友发送的消息')
+        raise ValueError('当前群本地记录中找不到可处理的群友消息，请刷新聊天记录')
     if reply and target.get('_record_only'):raise ValueError('此消息类型仅供查看')
     from member_policy import blocked_accounts,is_blocked
     if is_blocked(target,blocked_accounts(folder)):raise ValueError('该账号已屏蔽，不能交给模型处理')

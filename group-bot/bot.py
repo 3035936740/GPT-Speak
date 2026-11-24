@@ -563,7 +563,7 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
             original_images = True
     from model_attachments import select as select_attachments,limits as attachment_limits,notice as attachment_notice
     urls,files,omitted=select_attachments(reference,cfg)
-    archive_keys = reference.get('image_hashes', []) if as_image and not urls else []
+    archive_keys = reference.get('image_hashes', []) if not urls and (as_image or addressed) else []
     if archive_keys:
         available=max(0,attachment_limits(cfg)[0]-len(files))
         omitted+=max(0,len(archive_keys)-available)
@@ -615,7 +615,7 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
         if people:target['_person_context']=people;target['_ephemeral_content']=True
         for uid, label in avatars:
             avatar_url = 'https://q1.qlogo.cn/g?b=qq&s=640&nk=' + uid
-            if original_images:
+            if original_images or archive_keys:
                 if len(urls) + len(files) >= attachment_limits(cfg)[0]:
                     break
                 urls.append(avatar_url)
@@ -627,13 +627,13 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
         attached_labels = []
         cache = cfg.get('_image_memory')
         cached = [{'image_index':index+1, **summary} for index,summary in enumerate(
-            cache.for_message(reference.get('source_id'),reference.get('image_hashes',[]))) ] if cache and not urls else []
+            cache.for_message(reference.get('source_id'),reference.get('image_hashes',[]))) ] if cache and (archive_keys or not urls) else []
         cache_inputs = []
         path_indexes = []
         image_limit=max(0,attachment_limits(cfg)[0]-len(files))
         if not as_image and not original_images:
             image_limit=min(cfg.get('max_images_per_call',2),image_limit)
-        avatar_start = len(urls) - len(avatar_labels) if original_images else 0
+        avatar_start = len(urls) - len(avatar_labels) if original_images or archive_keys else 0
         for index, url in enumerate(urls[:image_limit]):
             from model_attachments import too_large
             if url is None:
@@ -641,12 +641,14 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
                     archive=cfg.get('_image_archive')
                     source=archive.get(archive.digest(archive_keys[index],archive_keys[index])) if archive else None
                     if source is None:
-                        raise ValueError('Archived image unavailable')
+                        from debug_images import original
+                        source = await asyncio.to_thread(original, ROOT, cfg['group_id'],
+                                                         reference.get('source_id'), archive_keys[index])
                     if too_large(source.stat().st_size,cfg):
                         attachment_status.append(attachment_notice(index+1,cfg));continue
                     path=Path(folder)/(str(index)+source.suffix)
                     path.write_bytes(source.read_bytes())
-                except (OSError,ValueError):
+                except (OSError, ValueError, httpx.HTTPError):
                     attachment_status.append(attachment_notice(index+1,cfg,'unavailable'));continue
                 paths.append(path)
                 attached_labels.append(f'[图片{index+1}]')
@@ -781,8 +783,8 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
             target['_ephemeral_content'] = True
             target['_content_source_id'] = reference.get('source_id')
         if paths:
-            if not original_images:
-                adjusted['text'] = adjusted['text'].replace('[图片，未读取内容]', '[图片，已附加]')
+            if any(label == '群消息图片' or label.startswith('[图片') for label in attached_labels):
+                adjusted['text'] = re.sub(r'\[图片[，,](?:未读取内容|读取中|读取失败)\]', '[图片，已附加]', adjusted['text'])
             trigger += '；前面的附图是实际读取的群图或头像，content_reference标明来源和顺序'
             if avatar_labels:
                 trigger += '；实际附图顺序：' + '、'.join(attached_labels)
@@ -992,7 +994,8 @@ async def _generate_for_message(client, cfg, context, trigger, target, as_image=
         sheet = Path(folder) / 'available-stickers.jpg'
         group_images = sum(label == '群消息图片' or label.startswith('[图片') for label in attached_labels)
         avatar_images = len(paths) - group_images
-        has_sheet = (not original_images and adjusted.get('_reply_style', {}).get('sticker_policy') != 'text_only'
+        has_sheet = (not original_images and not (group_images and target.get('_manual_reply_started'))
+            and adjusted.get('_reply_style', {}).get('sticker_policy') != 'text_only'
             and EmojiLibrary.contact_sheet(adjusted.get('_media_choices', []), sheet))
         if has_sheet:
             paths.append(sheet)

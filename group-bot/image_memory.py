@@ -49,9 +49,8 @@ class ImageMemory:
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp = self.path.with_suffix('.tmp')
-        temp.write_text(json.dumps(self.data, ensure_ascii=False), encoding='utf-8')
-        temp.replace(self.path)
+        from storage_io import atomic_write_text
+        atomic_write_text(self.path, json.dumps(self.data, ensure_ascii=False))
 
     def prune(self):
         seq = self.data['sequence']

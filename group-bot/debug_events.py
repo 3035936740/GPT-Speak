@@ -84,17 +84,17 @@ class DebugEvents:
 
     def _save(self, cfg):
         self.rows=deque(bounded(self.rows,cfg,self.runtime))
-        temp=self.path.with_suffix('.tmp')
         try:
-            temp.write_text(''.join(json.dumps(item,ensure_ascii=False,separators=(',',':'))+'\n'
-                for item in self.rows),encoding='utf-8');temp.replace(self.path)
+            from storage_io import atomic_write_text
+            atomic_write_text(self.path, ''.join(json.dumps(item,ensure_ascii=False,separators=(',',':'))+'\n'
+                for item in self.rows))
         except OSError:
-            temp.unlink(missing_ok=True)
+            pass
 
     def metadata(self, name):
         data = {'group_id': self.group_id, 'name': clean(name)[:100]}
-        path = self.runtime/'debug-group.json'; temp = path.with_suffix('.tmp')
-        temp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8'); temp.replace(path)
+        from storage_io import atomic_write_text
+        atomic_write_text(self.runtime/'debug-group.json', json.dumps(data, ensure_ascii=False))
         self.emit('group', text=data['name'])
 
     def close(self):
